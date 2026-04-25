@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+**/api_keys/*.actual
+**/api_keys/*.json
+!**/api_keys/.gitkeep
+!**/api_keys/README.md
+
+# Verification artifacts may contain sensitive screenshots / account info
+provider_verification/artifacts/
+!provider_verification/artifacts/.gitkeep
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+postgres-data/
+timescale-data/
+
+# Generated data
+memos/output/
+*.parquet
+*.csv
+!docs/**/*.csv
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+.AppleDouble
+.LSOverride
+
+# Project-specific
+checkpoints/draft/
+.cache/
+
+# Claude Code local
+.claude/settings.local.json
