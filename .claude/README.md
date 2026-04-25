@@ -7,7 +7,8 @@ This directory is the operator interface to the equity research system. Per the 
 ```
 .claude/
 ├── commands/              # Slash-command entry points (operator interface)
-│   └── <name>.md          # /name → loads and follows this procedure
+│   ├── run.md             # 🎯 Master orchestrator — wraps all other skills
+│   └── <other>.md         # 12 specialized commands (still independently invocable)
 ├── agents/                # Subagents (isolated context for adversarial pairs + grading)
 │   └── <name>.md          # Invoked by commands or other agents via Task tool
 └── references/            # Cross-cutting reference content
@@ -28,6 +29,24 @@ This directory is the operator interface to the equity research system. Per the 
 Other components (DailyMonitor, MacroCycle, PMSupervisor) live as commands in main context — they don't have the bull/bear adversarial dependency that requires isolation.
 
 ## Operator workflows
+
+### Master entry point: `/run`
+
+**This is the single skill that wraps all other skills.** Most days, `/run` is the only command an operator types — it auto-detects phase (v0.1 build vs v0.5+ operations) and cadence (daily/weekly/monthly/quarterly) and routes to the appropriate sub-skills in the right order.
+
+```
+/run                  # auto-detect phase + cadence
+/run status           # read-only status report
+/run daily            # force daily cadence
+/run weekly           # force daily + weekly
+/run monthly          # force weekly + monthly
+/run quarterly        # force all layers
+/run build-day        # v0.1 explicit build mode
+```
+
+The orchestrator handles idempotency (won't re-run completed cadences), cost tracking, MCP availability checks, reconciliation, and unified output. It never auto-executes trades or auto-activates LearningLoop — those remain operator-confirmed actions.
+
+The 12 individual slash commands below are still independently invocable for ad-hoc use; `/run` is the wrapper that knows the canonical sequencing.
 
 ### v0.1 (current — paper-only foundation)
 

@@ -47,7 +47,8 @@ See [`BUILD_LOG.md`](BUILD_LOG.md) Day 1 entry for full rationale.
 The system runs entirely through Claude Code slash commands and subagents. No Python orchestration layer. External systems connected via MCP servers (see [`.claude/references/mcp-required.md`](.claude/references/mcp-required.md)).
 
 Architecture in [`.claude/`](.claude/README.md):
-- **12 slash commands** — operator interface (`/research-company`, `/daily-monitor`, `/macro-cycle`, `/evaluate`, `/quarterly-reunderwrite`, `/entry-check`, `/exit-check`, `/size`, `/weekly-buildlog`, `/checkpoint`, `/wash-sale-harvest`, `/backtest`)
+- **`/run` — master orchestrator** that wraps all other skills into a single workflow keyed to phase + calendar position. Most days, this is the only command typed.
+- **12 specialized slash commands** — independently invocable (`/research-company`, `/daily-monitor`, `/macro-cycle`, `/evaluate`, `/quarterly-reunderwrite`, `/entry-check`, `/exit-check`, `/size`, `/weekly-buildlog`, `/checkpoint`, `/wash-sale-harvest`, `/backtest`)
 - **3 subagents** — context isolation where it matters (`company-deep-dive`, `bear-case`, `evaluator`)
 - **13 reference files** — cross-cutting content (Evidence Index schema, contamination check, process rubric, position sizing formula, exit triggers, prediction resolution, MCP requirements, 7 industry addenda, etc.)
 
