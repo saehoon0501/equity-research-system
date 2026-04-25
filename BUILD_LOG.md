@@ -72,6 +72,24 @@ v2-final §4.3 specified LangGraph as the harness. Path A means the harness is C
 
 *What changes operationally:* prompts live in .claude/agents/ markdown files with YAML frontmatter, not in a Python prompt registry. Versioning happens via git history of those files.
 
+**4. Skills-only operational interface — post-Day-1 revision.**
+
+Original Day-1 plan: Python orchestration layer wrapping Claude Code subagents (with the Python implementing the daily heartbeat, Evidence Index write hooks, mechanical contamination check, etc.).
+
+Revised: pure Claude Code-native interface. The operator runs the system entirely through slash commands and subagent invocations. No Python orchestration layer. External systems (market APIs, fundamentals, filings, macro, persistence) connected via MCP servers. See `.claude/references/mcp-required.md` for the required MCP list.
+
+*Architecture:*
+- `.claude/commands/` — 12 slash command entry points (operator interface)
+- `.claude/agents/` — 3 subagents where context isolation matters: CompanyDeepDive, BearCase, Evaluator
+- `.claude/references/` — cross-cutting reference content loaded by commands and agents
+- `.claude/README.md` — three-layer architecture documentation
+
+*Why subagents preserved (not skills only):* The bull/bear adversarial pair (CompanyDeepDive vs BearCase) needs context isolation to avoid sycophancy collapse. Path A already weakened the v2-final §1.3 model-family diversity defense; running the pair in main shared context (no subagent isolation) would weaken it further. The three subagent contexts preserve what isolation we have.
+
+*Implementation timeline impact:* The original v0.1 week 6 task was "agent harness scaffolding (Python wrappers around subagent calls)." Under skills-only, week 6 becomes: (a) end-to-end test that an operator can invoke `/research-company` and get back a memo through the full mechanical contamination check, (b) verification that the mechanical check is actually enforced as a hard gate in this skills-only architecture (open question: where does the post-sample hook attach when agents are subagents invoked from a slash command? Answered week 6 day 1 by inspecting Claude Code's hook surface or implementing as wrapper logic in the slash command itself).
+
+*Reversibility:* if skills-only architecture proves unable to enforce the mechanical contamination check reliably, fall back to a thin Python wrapper in week 6 that orchestrates subagents and runs the post-sample hooks externally. The architectural commitments (mandatory Evidence Index population, mechanical check, process rubric hard gates) remain intact regardless of substrate.
+
 ### §9.3 commitment statement
 
 > ⚠️ **TO BE WRITTEN BY OPERATOR IN OWN WORDS — DO NOT LEAVE BLANK**
@@ -124,9 +142,27 @@ v2-final §4.3 specified LangGraph as the harness. Path A means the harness is C
 - ✓ docs/ populated: v2-final-spec.md, phasing-plan.md, implementation-sequencing.md
 - ✓ src/ structure with planning README
 - ✓ checkpoints/ created (empty; populated at C1, C2, C3)
-- ✓ §9.2 first commit (pending)
+- ✓ §9.2 first commit (commit `de7000a`)
+- ✓ docs/harness-reference.md added (commit `b6af330`) — Claude Code architecture as week-6 prep
+- ✓ Skills-only pivot (decision 4 above) authored as full architecture:
+  - `.claude/commands/` — 12 slash commands authored
+  - `.claude/agents/` — 3 subagents authored (company-deep-dive, bear-case, evaluator)
+  - `.claude/references/` — 13 reference files authored (Evidence Index schema, contamination check, process rubric, position sizing formula, exit triggers, prediction resolution, daily-monitor tier routing, MCP requirements, 7 industry addenda)
+  - `.claude/README.md` — three-layer architecture documentation
 
 **Notes:** This is the disciplined-now version of you. The repo's git history begins with discipline (BUILD_LOG.md + design docs + verification scaffolding) before any feature code. That ordering is intentional per implementation-sequencing.md §9.2.
+
+The skills-only pivot (decision 4) is a substantial architectural change from the original Day-1 plan. It happened on Day 1 itself, before any week-1 build work started, so it doesn't count as a mid-build scope change. Documented here as the new baseline; future weeks reference this revised architecture.
+
+**Outstanding Day 1 items still required from operator (unchanged by pivot):**
+1. Write §9.3 commitment statement in own words (placeholder block in this file)
+2. Capture Anthropic verification artifacts per `provider_verification/anthropic.md` checklist
+3. Provision TimescaleDB + Postgres locally (Docker simplest)
+
+After those land, week 1 day 2+ work begins. Under skills-only, week 1 work is leaner because there's no Python harness to scaffold:
+- Database provisioning + Evidence Index DDL ready to apply
+- Initial MCP wiring for Postgres
+- Verify slash commands are discoverable by Claude Code at `.claude/commands/`
 
 ### Actual scope completed (end of week update — fill in 2026-05-02)
 

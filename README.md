@@ -42,6 +42,17 @@ All agents run on Anthropic via Claude Code subagent infrastructure. v2-final §
 
 See [`BUILD_LOG.md`](BUILD_LOG.md) Day 1 entry for full rationale.
 
+## Skills-only operational interface (Day 1 revision)
+
+The system runs entirely through Claude Code slash commands and subagents. No Python orchestration layer. External systems connected via MCP servers (see [`.claude/references/mcp-required.md`](.claude/references/mcp-required.md)).
+
+Architecture in [`.claude/`](.claude/README.md):
+- **12 slash commands** — operator interface (`/research-company`, `/daily-monitor`, `/macro-cycle`, `/evaluate`, `/quarterly-reunderwrite`, `/entry-check`, `/exit-check`, `/size`, `/weekly-buildlog`, `/checkpoint`, `/wash-sale-harvest`, `/backtest`)
+- **3 subagents** — context isolation where it matters (`company-deep-dive`, `bear-case`, `evaluator`)
+- **13 reference files** — cross-cutting content (Evidence Index schema, contamination check, process rubric, position sizing formula, exit triggers, prediction resolution, MCP requirements, 7 industry addenda, etc.)
+
+The bull/bear adversarial isolation (CompanyDeepDive vs BearCase) is preserved through subagent context boundaries, not Python orchestration. See [`.claude/README.md`](.claude/README.md) for the full three-layer architecture.
+
 ---
 
 ## Phase scope
@@ -67,8 +78,12 @@ equity-research-system/
 ├── BUILD_LOG.md                    # Project's operational record (load-bearing)
 ├── README.md                       # This file
 ├── .gitignore
-├── .claude/
-│   └── agents/                     # Subagent definitions (built week 7+)
+├── .claude/                        # Skills layer (operator interface)
+│   ├── README.md                   # Three-layer architecture documentation
+│   ├── commands/                   # 12 slash commands (operator entry points)
+│   ├── agents/                     # 3 subagents (CompanyDeepDive, BearCase, Evaluator)
+│   └── references/                 # Cross-cutting reference content
+│       └── industry-addenda/       # Banks, REITs, biotech, insurance, energy, software, hardware
 ├── provider_verification/          # API training-data verification artifacts
 │   ├── README.md
 │   ├── anthropic.md                # Path A: only Anthropic verified at v0.1
@@ -78,12 +93,13 @@ equity-research-system/
 ├── docs/
 │   ├── v2-final-spec.md
 │   ├── phasing-plan.md
-│   └── implementation-sequencing.md
-├── src/
+│   ├── implementation-sequencing.md
+│   └── harness-reference.md        # Claude Code architecture reference (week-6 prep)
+├── src/                            # Python infrastructure (lighter scope under skills-only)
 │   ├── README.md                   # Describes planned structure per build week
-│   ├── data_layer/                 # Built week 2 (interface) + week 4 (impl)
+│   ├── data_layer/                 # Built week 2 (interface)
 │   ├── evidence_index/             # Built week 3 (load-bearing)
-│   ├── agent_harness/              # Built week 6 (Claude Code wrappers per Path A)
+│   ├── agent_harness/              # Reduced scope: minimal under skills-only
 │   └── backtesting/                # Built weeks 10–11
 ├── tests/
 └── memos/                          # Sample memos generated week 12 onward
