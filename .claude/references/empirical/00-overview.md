@@ -108,13 +108,14 @@ That linear arrow is the *intent*. The refined operational model below grounds e
 | # | Phase | Primary lane | Input artifact | Output artifact | Gate criteria | Common failure modes |
 |---|---|---|---|---|---|---|
 | **S0** | Regime context (sidecar) | L1 | rates/credit/FX/commodities/vol cross-asset | regime classification + shift probability | refresh ≤5 trading days old | anchor-drift on regime view; over-extrapolating recent regime |
-| **S1** | Calibration history (sidecar) | — | per-agent prediction outcomes | Brier-trend per agent (rolling 90d) | applied as conviction haircut | not haircutting overconfident agents |
-| **S2** | Counterfactual ledger (sidecar) | — | every PASS/exit/trim | baseline-tracked perf vs SPY/sector/EWWatchlist/60-40 | mandatory write on every disposition decision | survivorship-bias drift if not maintained |
+| **S1** | Calibration history (sidecar) | — | per-agent prediction outcomes | Brier-trend per agent (rolling 90d) | applied as conviction haircut at v0.5+ | not haircutting overconfident agents |
+| **S2** | Counterfactual ledger (sidecar) | — | every PASS/exit/trim/MODE-tag | baseline-tracked perf vs SPY/sector/EWWatchlist/60-40 + mode-tagged outcome scoring | mandatory write on every disposition decision | survivorship-bias drift if not maintained |
 | **S3** | Tax bucket (sidecar) | — | per-position cost basis + acquisition date | LT/ST status + wash-sale window | feeds P9 exit shape | tax-blind exits → 3.5%/yr Munger drag |
+| **S4** | Smart-money signal monitor (sidecar) | L7 | EDGAR Form 4 + 13F + 13D/G + options-flow | opportunistic-insider clusters / drawdown-period institutional accumulation / activist filings — fires events into P3 + P4 | only Tier-A signals with mode-relevance filter | unconditional 13F replication (folklore — explicitly discarded) |
 | **P1** | Trend capture | L1, L2 | regime + breadth + flow + thematic news | candidate themes with magnitude/horizon estimate | empirical antecedent in L1 + variant-vs-consensus + identifiable beneficiaries | extrapolation, hedgehog framing |
 | **P2** | Scenario writing 3/5/10y | L2 | theme + regime | 2-3 distinct falsifiable scenarios, granular probs, kill criteria | scenarios distinct + each has invalidator | single-path determinism; recency anchoring |
-| **P3** | Name discovery | L3 | scenario + L3-e Tier-A signals + L3-d red-flags | 5-15 fit-scored candidates | fraud signature 3+/6 = exit; era-mismatch = PASS | survivorship bias (counterfactual-blind) |
-| **P4** | Deep dive (bull ⊥ bear) | v2-final §1.2 | candidate name | CompanyDeepDive memo + BearCase critique + PMSupervisor synthesis | default PASS; ADD requires earned conviction; haircut by S1 | pressure-driven BUY; same-author motivated reasoning |
+| **P3** | Name discovery | L3 + L7 | scenario + L3-e Tier-A signals + L3-d red-flags + S4 smart-money triggers | 5-15 fit-scored candidates | fraud signature 3+/6 = exit; era-mismatch = PASS | survivorship bias (counterfactual-blind) |
+| **P4** | Deep dive (5-style debate) | v2-final §1.2 + L8 | candidate name | 5 style-agent memos (Value/Growth/Quality/Macro-Regime/Quant-Technical) → Phase B locked claims → Phase C conditional negotiation → Phase D PMSupervisor synthesis preserving dissent → Evaluator hard-gate | mode-conditional discipline per L8 mode-weight matrix; PMSupervisor never forces consensus | sycophantic collapse to consensus; persona drift mid-debate; pressure-driven BUY |
 | **P5** | Watchlist add | v2-final §1.2; L4 | PMSupervisor ADD | watchlist row {conviction, size band, kill criteria, catalysts} | conviction ≥0.4 post-haircut | no kill-criteria pre-commit (Annie Duke L4) |
 | **P6** | Disposition determination | L6 | watchlist name + vol regime + trend strength + reflexivity + tax | swing / long / both label + stop type (time vs thesis-break) | L6 22-row decision-table classification explicit | collapsing all timeframes into "today's price" (Mellers/Tetlock) |
 | **P7** | Entry execution | L5 | watchlist name + disposition | STRONG_ENTRY / ENTRY_OK / WAIT / DO_NOT_ENTER + invalidation level | entry only on STRONG/OK; size scaled in approved band | encoding chart-pattern folklore (L5 discard list) |
@@ -176,6 +177,12 @@ Empirically validated technical patterns only. **55 sources (after deepening), 4
 ### [L6 — Multi-horizon disposition (swing / invest / both)](L6-horizon-disposition.md)
 Decision rules per name × per timeframe. **86 sources (after deepening), 45 patterns, 10 disagreements, D.2 (11-row PM book-structure table) + D.3 (16 additional rows extending master decision table).** Anchored on Druckenmiller's documented framework, Soros reflexivity, Buffett 1990 letter, Munger sit-on-hands tax math, Lynch six categories, Tudor Jones 21 rules, Klarman 10-15 holdings rule, Livermore pyramiding, Mauboussin position sizing. Deepening added: **Kelly + fractional Kelly empirical track record** (Thorp at Princeton-Newport, MacLean-Thorp-Ziemba editorial work — fractional Kelly 1/2 or 1/4 as empirical default); Vince's optimal-f / leverage-space portfolio; **pod-shop mechanics** (Citadel/Millennium/Point72 risk-capital allocation, drawdown-stops, pod-vs-permanent-capital structural difference); **tax depth** (LT/ST math at different income brackets, harvest-as-strategy, wash-sale/IRA mechanics, state taxes); **Buffett 4-case study** (KO right + IBM wrong + airlines contested + AAPL right-so-far) as disposition-shift teaching cases; PM book archetypes (Tepper/Loeb/Pershing/Greenlight); behavioral horizon (Benartzi-Thaler myopic loss aversion, Samuelson time-diversification); Cole vol regime + Calmar ratio; anti-martingale (add on winners) vs martingale empirical comparison. **Section D's expanded characteristic→disposition table is the operational artifact for downstream skill builders.** Munger's 13.3% vs 9.75% tax math (3.5%/yr structural drag favoring long-term for true compounders); time-stop (Tudor Jones) vs thesis-break-only (Marks/Buffett) is the cleanest mechanical separator between swing and long-term.
 
+### [L7 — Smart-money / institutional flow tracking](L7-smart-money.md)
+What signals about big-institutional positioning empirically deliver alpha vs which are folklore. **29 sources (20 Tier 1, 9 Tier 2), patterns split into "do-survive" / "don't-survive" with mode-relevance tagging.** **Top-3 do-survive signals:** (1) Cohen-Malloy-Pomorski "opportunistic" insider purchases — ~82bp/month value-weighted (~10%+/yr abnormal returns); (2) institutional accumulation during drawdowns + reasonable valuation (LSV 1994 + Coval-Stafford 2007 forced-flow channel) — directly maps to operator's B/B' mode ride-along; (3) activist 13D filings with known activists — Brav-Jiang ~7.2% (-20,+20) window. **Top-3 don't-survive signals (folklore):** (1) Pure 13F replication of large-cap rallies (GURU/ALFA underperform S&P by 0.5-1.3%/yr); (2) CNBC-publicized unusual options activity (Jiang-Strong show *negative* long-run abnormal returns post-segment); (3) Unfiltered whale-watching without entry/valuation filters. **Mode mapping:** opportunistic-insider clusters = cross-mode; LSV-style drawdown-period institutional accumulation = B/B' modes; 13G new-5%-holder = C-mode (where small caps don't show in major 13Fs). **McLean-Pontiff post-publication decay (~35-50%) means stated effect sizes should be discounted accordingly.**
+
+### [L8 — Multi-style debate as decision architecture](L8-multi-style-debate.md)
+Empirical foundation for replacing classical bull/bear adversarial memo construction with a 5-style debate. **29 sources (23 Tier 1, 6 Tier 2), 20 patterns, 8 disagreements, refined style taxonomy (D.1) + refined mode-weighting matrix with empirical justification per cell (D.2).** Anchored on AQR Style Premia framework (Asness-Moskowitz-Pedersen "Value and Momentum Everywhere", "Investing With Style"), Fama-French 2015 5-factor (RMW dominance — Quality is empirically the strongest factor), Hou-Xue-Zhang 2020 (65-82% of anomalies fail replication — don't proliferate styles), AQR "Sin a Little" (factor timing modestly profitable but very noisy — equal-weight defaults; small tilts only at extremes), Mauboussin "Measuring the Moat" (operationalized Quality framework), Bridgewater Idea Meritocracy (believability-weighted ex-post adjustment), and the multi-agent debate AI literature: IBM Project Debater (Slonim Nature 2021), Du et al. ICML 2024, ChatEval (persona diversity > count), "Talk Isn't Always Cheap" ICML 2025 (debate can DEGRADE accuracy via peer pressure), "Peacemaker or Troublemaker" 2025 (sycophancy is dominant failure mode of MAD). **Locked recommendation: 5 styles** — Value (with Distressed/Contrarian variant folded in via cash-as-option rule) / Growth / Quality-Moat / Macro-Regime (split from Technical) / Quant-Technical (split from Macro). **Activist-Catalyst rejected as 6th** (operator can't deploy activist capital at <$1M; treat as analytical lens within Value/Growth/Quality). **Critical architectural finding:** PMSupervisor MUST NOT force consensus — Bridgewater believability-weighting + preserved-disagreement is the validated pattern; Evaluator with hard-gates sits OUTSIDE the debate as non-debating anchor.
+
 ---
 
 ## Cross-lane synthesis
@@ -214,9 +221,20 @@ Patterns that recur across multiple lanes — these are the load-bearing claims 
 - **Implication:** any skill that produces probability-like outputs should be built to use granular numbers and to update them in small increments per catalyst, not as binary flips.
 
 ### S7. **Survivorship bias defense via counterfactual ledger is load-bearing** (L3 + L4)
-- L3 sub-file `d`: 16 named counterfactuals — companies that *looked like* multi-baggers and went to zero. Fraud signature codified.
+- L3 sub-file `d`: 32 named counterfactuals (after deepening) — companies that *looked like* multi-baggers and went to zero. Fraud signature codified.
 - L4: pattern that "winners get sold, losers ridden" (disposition effect) is empirically backwards from optimal — the only defense is pre-committed kill criteria.
 - **Implication:** every name-discovery skill must check candidate-vs-counterfactual resemblance, not just candidate-vs-winner resemblance. Both reference populations matter.
+
+### S8. **Smart-money signals work conditionally — discipline-of-conditions is where the edge lives** (L7 + L4)
+- L7 top-survives: opportunistic-insider clusters (Cohen-Malloy-Pomorski) + LSV-style institutional accumulation during drawdowns with reasonable valuation. These work because the conditioning filters (opportunistic vs routine; drawdown vs rally) preserve information that unconditional 13F-replication destroys.
+- L4: trigger-based refresh (catalyst calendar + materiality threshold) is the same discipline pattern at the per-name level — events drive action, not timer-based polling.
+- **Implication:** L7 signals are entry-condition gates, not standalone alpha — they sharpen P3 (name discovery) and P4 (deep dive) inputs. Folklore signals (rally-period 13F replication, CNBC options-flow segments) are explicitly discarded.
+
+### S9. **Multi-style debate produces alpha only with persona diversity AND preserved disagreement** (L8 + cross-lane)
+- L8 ChatEval: persona diversity > count; same-role agents degrade performance.
+- L8 "Talk Isn't Always Cheap" + "Peacemaker or Troublemaker": debate can DEGRADE accuracy via peer pressure / sycophancy — the dominant failure mode of multi-agent debate.
+- L4 + L8: Bridgewater Idea Meritocracy is the validated practitioner pattern — believability-weighted ex-post adjustment; PMSupervisor preserves disagreement, doesn't force consensus.
+- **Implication:** the 5-style debate architecture must (a) lock persistent persona identities, (b) lock load-bearing claims and non-negotiables in Phase B, (c) have PMSupervisor explicitly preserve dissent in Phase D, (d) keep the Evaluator as a non-debating hard-gate anchor outside the debate.
 
 ---
 
@@ -228,11 +246,13 @@ Which lanes to load when building a skill for a given question:
 |---|---|---|
 | What regime are we in? | L1 | L2 (probabilistic framing) |
 | Write a 3/5/10y scenario for a thesis | L2 | L1 (regime context); L3-e (company-arc patterns by era) |
-| Is this a "next Palantir" candidate? | L3 (especially `e-cross-era-patterns.md` + `d-cyclicals-and-misses.md`) | L1 (era-fit) |
-| Should I refresh my view today? | L4 | L1 (catalyst awareness); L2 (incremental update math) |
-| When/at what price do I enter or exit? | L5 | L6 (disposition determines stop type) |
+| Is this a "next Palantir" candidate? | L3 (especially `e-cross-era-patterns.md` + `d-cyclicals-and-misses.md`) | L1 (era-fit); L7 (smart-money confirmation if 13G filings or insider clusters) |
+| Should I refresh my view today? | L4 | L1 (catalyst awareness); L2 (incremental update math); L7 (insider/institutional event triggers) |
+| When/at what price do I enter or exit? | L5 | L6 (disposition determines stop type); L7 (opportunistic-insider entry filter) |
 | Is this name a swing trade or long-term hold (or both)? | L6 (esp. Section D decision table) | L3 (company archetype); L5 (regime/trend signal) |
-| Daily monitoring digest for held names | L4 | L1 (regime change), L5 (signal change) |
+| Daily monitoring digest for held names | L4 | L1 (regime change), L5 (signal change), L7 (smart-money signal events) |
+| **How do 5 style-agents weigh in on this name?** | **L8** (mode-weight matrix) | All other lanes feed into per-agent reasoning |
+| **What's the smart-money signal on this name (mode-conditional)?** | **L7** (signal classifier) | L1 (regime confirmation); L4 (refresh trigger) |
 
 A typical downstream skill loads 2–3 lanes — not the whole library.
 
@@ -279,5 +299,6 @@ The two can coexist:
   - L5: Moskowitz at 6, Pedersen at 4 (deliberate trade-off — the prompt named Carry by Koijen-Moskowitz-Pedersen-Vrugt explicitly; refusing canonical AQR papers would impoverish the lane)
   - L6: Druckenmiller at 6 distinct interviews (different host sites); Thorp at 6 (3 solo + 3 in MacLean-Thorp-Ziemba editorial collaboration — distinct works)
   - All exceptions are anti-monoculture-acceptable, not single-source dominance.
-- **Total scale (after deepening):** ~470+ sources across 6 lanes; 215+ patterns; 60+ disagreements; 16+ structured D-tables.
+- **Total scale (after deepening + L7 + L8):** ~530+ sources across 8 lanes; 250+ patterns; 75+ disagreements; 20+ structured D-tables.
+- **L7 + L8 added** under operator's Section-1 consensus-review (Q&A session): L7 codifies smart-money signals with mode-relevance (do-survive: opportunistic insider clusters, drawdown-period institutional accumulation, activist 13D; don't-survive: rally-period 13F replication, CNBC options-flow segments, unfiltered whale-watching). L8 codifies multi-style debate replacing classical bull/bear, with refined 5-style taxonomy (Value/Growth/Quality/Macro-Regime/Quant-Technical) and empirically-justified mode-weighting matrix anchored on Fama-French RMW dominance, Asness "Sin a Little" equal-weight prior, and multi-agent debate AI literature on persona-diversity and sycophancy-mitigation.
 - **Re-validation triggers:** (1) downstream skill discovers a Tier-1 claim has shifted; (2) annual re-check of L3 counterfactuals as new failure modes emerge; (3) major regime change that may invalidate L1 lead-lag relationships; (4) AQR / academic factor literature publishes a meaningful update to L5's "what survives" classification; (5) new PM letters / Buffett AGM transcripts that add to L4's case-study catalog.
