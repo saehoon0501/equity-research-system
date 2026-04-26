@@ -7,28 +7,152 @@ This file is the entry point. It (a) maps each lane to the operator's investment
 
 ---
 
-## How this maps to the operator's investment funnel
+## The operator's investment funnel — refined model
 
-Operator's stated workflow:
+The operator's original stated workflow:
 
 ```
-news/indexes/futures → capture a trend → write a scenario for the coming 3/5/10 years
-   → research stocks likely to be the next "Palantir case" → put them on the watchlist
-   → technical analysis for entry and exit → repeat daily for updates
-   (balanced: shift the view when warranted, don't be stubborn — also don't churn)
-   → per held name: decide swing trade vs long-term investment vs both
+news/indexes/futures → capture a trend → 3/5/10y scenario → "next Palantir" candidates
+   → watchlist → technical entry/exit → daily refresh (shift vs stubborn balance)
+   → per held name: swing / long / both
 ```
 
-Lane-to-phase mapping:
+That linear arrow is the *intent*. The refined operational model below grounds each step in empirical findings (L1-L6 references), specifies inputs/outputs/gates, and adds the structural elements the lanes' patterns demand: **regime as always-on sidecar (not just step 1), explicit loop-back paths, survivorship-bias gate before watchlist-add, multi-horizon disposition as overlay (not terminal), counterfactual ledger always tracking PASS-and-exit decisions.**
 
-| Funnel phase | Lane |
-|---|---|
-| capture a trend (news/indexes/futures) | **L1 — Regime capture from cross-asset signals** |
-| write a 3/5/10y scenario | **L2 — Probabilistic scenario writing** |
-| research the "next Palantir" candidates | **L3 — Successful-company pattern library** |
-| daily refresh balance (shift vs stubborn) | **L4 — View-refresh discipline** |
-| technical analysis for entry/exit | **L5 — Technical execution playbooks** |
-| swing vs long-term vs both per name | **L6 — Multi-horizon disposition** |
+### Refined funnel (with sidecars + loops)
+
+```
+                 ┌──────────────────── SIDECARS (always-on) ──────────────────┐
+                 │ S0  Regime context        (L1) → piped to every phase       │
+                 │ S1  Calibration history   (Brier per agent → conviction haircut)│
+                 │ S2  Counterfactual ledger (every PASS/exit baseline-tracked) │
+                 │ S3  Tax bucket per name   (LT/ST + wash-sale window)         │
+                 └─────────────────────────────────────────────────────────────┘
+                                       │
+                                       ▼
+   ┌─►  P1  TREND CAPTURE  ────────────────────────────────────────  L1, L2
+   │       in:   regime read + sector breadth + thematic news clusters
+   │       out:  candidate themes (magnitude est, horizon est)
+   │       gate: theme has empirical antecedent in L1 + variant-vs-consensus
+   │             + identifiable beneficiary names; else PASS
+   │
+   │   ┌─►  P2  SCENARIO WRITING  3/5/10y  ─────────────────────────  L2
+   │   │     in:   theme + regime context
+   │   │     out:  2-3 distinct falsifiable scenarios, granular
+   │   │           probabilities (60/40 not 75/25), pre-defined kill criteria
+   │   │     gate: scenarios distinct + each has invalidator + consensus
+   │   │           mismatch documented; else loop back to P1
+   │   │
+   │   │   ┌─►  P3  NAME DISCOVERY  (next-Palantir)  ─────────────────  L3
+   │   │   │     in:   scenario + L3-e Tier-A signals + L3-d red-flag set
+   │   │   │     out:  5-15 candidates per theme, fit-to-pattern scored
+   │   │   │     gate: ┌─ fraud signature (3+/6) ─→ EXIT to counterfactual
+   │   │   │           │  ledger
+   │   │   │           ├─ right-thing-wrong-decade ─→ PASS (era mismatch)
+   │   │   │           └─ Tier-A signals strong + red flags 0-2 → P4
+   │   │   │
+   │   │   │   ┌─►  P4  DEEP DIVE  (memo + adversarial bear)  ──────  v2-final §1.2
+   │   │   │   │     CompanyDeepDive subagent (bull) ⊥ BearCase subagent
+   │   │   │   │     PMSupervisor synthesis  →  ADD / WATCH / PASS
+   │   │   │   │     gate:  default PASS;  ADD requires earned conviction
+   │   │   │   │            haircut by S1 calibration history
+   │   │   │   │     PASS → S2 counterfactual ledger (track vs SPY)
+   │   │   │   │
+   │   │   │   │   ┌─► P5  WATCHLIST ADD ──────────────────────────  v2-final
+   │   │   │   │   │     out: Postgres row {conviction, size band,
+   │   │   │   │   │          kill criteria, catalysts, resolution dates}
+   │   │   │   │   │
+   │   │   │   │   ┌─►  P6  DISPOSITION DETERMINATION  ────────────  L6 (always-on per name)
+   │   │   │   │   │     classify: swing / long / both
+   │   │   │   │   │     basis: vol regime + trend strength + reflexivity
+   │   │   │   │   │            + L6 22-row decision table + tax bucket
+   │   │   │   │   │     output: horizon label + disposition-conditional
+   │   │   │   │   │             stop type (time-stop vs thesis-break)
+   │   │   │   │   │
+   │   │   │   │   │   ┌─►  P7  ENTRY EXECUTION ──────────────────  L5 (only patterns that survive)
+   │   │   │   │   │   │     in:  L5 4-factor (trend / 200DMA distance /
+   │   │   │   │   │   │          volume / cycle modifier)
+   │   │   │   │   │   │     out: STRONG_ENTRY / ENTRY_OK / WAIT / DO_NOT
+   │   │   │   │   │   │     gate: scaled within approved size band;
+   │   │   │   │   │   │           DO_NOT loops back to P5 watch
+   │   │   │   │   │   │
+   │   │   │   │   │   │ ╔═══════════════════════════════════════════════════════════╗
+   │   │   │   │   │   │ ║  P8  DAILY REFRESH (the loop) ──────────  L4              ║
+   │   │   │   │   │   │ ║  in:  news/filings sweep + price + catalyst calendar      ║
+   │   │   │   │   │   │ ║  out: per-name materiality {1, 2, 3}                      ║
+   │   │   │   │   │   │ ║       trigger-based, not timer-based                       ║
+   │   │   │   │   │   │ ║                                                            ║
+   │   │   │   │   │   │ ║  M1: log + monitor                                         ║
+   │   │   │   │   │   │ ║  M2: targeted memo-section update ─────► loops to P4      ║
+   │   │   │   │   │   │ ║  M3: full reunderwrite ────────────────► forces P4 + P5   ║
+   │   │   │   │   │   │ ║  Regime change in S0 ──────────────────► forces P1→P2 chain║
+   │   │   │   │   │   │ ╚═══════════════════════════════════════════════════════════╝
+   │   │   │   │   │   │
+   │   │   │   │   │   ▼
+   │   │   │   │   │  P9  EXIT  ─────────────────────────────────────  v2-final §2.3, L4, L6
+   │   │   │   │   │      in:  thesis-pillar-fail flag (highest priority,
+   │   │   │   │   │           never tax-suppressed) | exit signal eval
+   │   │   │   │   │           | tax bucket S3
+   │   │   │   │   │      out: NONE / TRIM / FULL_EXIT / WAIT_FOR_LT_THRESHOLD
+   │   │   │   │   │      → S2 counterfactual ledger (track post-exit perf)
+   │   │   │   │   │
+   │   │   │   │   └──── (any exit/PASS/trim feeds counterfactual ledger S2)
+   │   │   │   └──── (calibration update from realized outcomes feeds S1)
+   │   │   └──── (regime shift from S0 forces re-entry at P1/P2)
+   │   └──── (loop-back: scenarios fail kill criteria → re-write or abandon)
+   └──── (loop-back: no candidate names pass P3 gate → theme PASS)
+```
+
+### Per-phase specification
+
+| # | Phase | Primary lane | Input artifact | Output artifact | Gate criteria | Common failure modes |
+|---|---|---|---|---|---|---|
+| **S0** | Regime context (sidecar) | L1 | rates/credit/FX/commodities/vol cross-asset | regime classification + shift probability | refresh ≤5 trading days old | anchor-drift on regime view; over-extrapolating recent regime |
+| **S1** | Calibration history (sidecar) | — | per-agent prediction outcomes | Brier-trend per agent (rolling 90d) | applied as conviction haircut | not haircutting overconfident agents |
+| **S2** | Counterfactual ledger (sidecar) | — | every PASS/exit/trim | baseline-tracked perf vs SPY/sector/EWWatchlist/60-40 | mandatory write on every disposition decision | survivorship-bias drift if not maintained |
+| **S3** | Tax bucket (sidecar) | — | per-position cost basis + acquisition date | LT/ST status + wash-sale window | feeds P9 exit shape | tax-blind exits → 3.5%/yr Munger drag |
+| **P1** | Trend capture | L1, L2 | regime + breadth + flow + thematic news | candidate themes with magnitude/horizon estimate | empirical antecedent in L1 + variant-vs-consensus + identifiable beneficiaries | extrapolation, hedgehog framing |
+| **P2** | Scenario writing 3/5/10y | L2 | theme + regime | 2-3 distinct falsifiable scenarios, granular probs, kill criteria | scenarios distinct + each has invalidator | single-path determinism; recency anchoring |
+| **P3** | Name discovery | L3 | scenario + L3-e Tier-A signals + L3-d red-flags | 5-15 fit-scored candidates | fraud signature 3+/6 = exit; era-mismatch = PASS | survivorship bias (counterfactual-blind) |
+| **P4** | Deep dive (bull ⊥ bear) | v2-final §1.2 | candidate name | CompanyDeepDive memo + BearCase critique + PMSupervisor synthesis | default PASS; ADD requires earned conviction; haircut by S1 | pressure-driven BUY; same-author motivated reasoning |
+| **P5** | Watchlist add | v2-final §1.2; L4 | PMSupervisor ADD | watchlist row {conviction, size band, kill criteria, catalysts} | conviction ≥0.4 post-haircut | no kill-criteria pre-commit (Annie Duke L4) |
+| **P6** | Disposition determination | L6 | watchlist name + vol regime + trend strength + reflexivity + tax | swing / long / both label + stop type (time vs thesis-break) | L6 22-row decision-table classification explicit | collapsing all timeframes into "today's price" (Mellers/Tetlock) |
+| **P7** | Entry execution | L5 | watchlist name + disposition | STRONG_ENTRY / ENTRY_OK / WAIT / DO_NOT_ENTER + invalidation level | entry only on STRONG/OK; size scaled in approved band | encoding chart-pattern folklore (L5 discard list) |
+| **P8** | Daily refresh (loop) | L4 | news/filings/price/catalyst calendar | per-name materiality {1,2,3} | trigger-based not timer-based; M3 forces P4 reunderwrite | timer-based refresh → anchor drift; ostrich effect (L4 Pattern #8) |
+| **P9** | Exit | v2-final §2.3; L4; L6 | thesis-pillar-fail flag OR exit signal + S3 tax bucket | NONE / TRIM / FULL_EXIT / WAIT_FOR_LT_THRESHOLD | thesis-pillar-fail HIGHEST priority, never tax-suppressed | hold-loser-too-long (Marks pole) vs cut-winner-too-early (Druckenmiller pole) — L4 Section C |
+
+### Key design properties of the refined funnel
+
+1. **Regime is a sidecar, not a phase.** S0 feeds every phase. P1's trend-capture, P3's era-fit check, P6's disposition determination, P8's loop-trigger all consult the same regime read. This codifies cross-lane synthesis S2 ("macro/regime enables micro success — right thing in right decade").
+
+2. **Survivorship bias is a P3 gate, not an afterthought.** L3-d's 16-name counterfactual catalog and the canonical fraud signature (3+/6 = exit) are evaluated *before* deep-dive resources are spent. Big firms typically check counterfactuals only at retro post-mortems.
+
+3. **Disposition (P6) is an overlay applied early and re-evaluated continuously**, not a terminal phase. The same name has a swing label vs long-term label that determines the *type* of stop (time-stop vs thesis-break stop, per L6 Pattern #10), and this is set at P5 watchlist-add — not at exit.
+
+4. **Daily refresh (P8) is trigger-based, not timer-based.** Catalyst-calendar events + materiality scoring drive refresh, not a daily clock. This is L4 Pattern #8 (ostrich effect defense) + Pattern #11 (process-vs-outcome separation): refreshing on noise destroys decision quality.
+
+5. **Counterfactual ledger (S2) records every PASS, every exit, every trim.** Tracks performance relative to baselines from the date of the decision. This is the survivorship-bias-defense at the system level — we evaluate the decision-making process, not just the kept positions.
+
+6. **Loop-back paths are explicit.** Scenarios that fail kill criteria → loop to P1 or abandon. Materiality-3 daily-refresh events → loop to P4 reunderwrite. Regime shifts in S0 → force re-entry at P1/P2 chain. The funnel is a graph with cycles, not a linear pipeline.
+
+7. **The two adversarial schools are surfaced, not hidden.** L4 Section C's hold-through (Marks/Klarman) vs cut-fast (Druckenmiller/Soros) polarity governs P9's exit shape. Per cross-lane synthesis S4, this is regime-conditional — not absolute. The funnel doesn't pick a winner; it makes the choice explicit at the position level via L6.
+
+8. **Tax-aware as a first-class sidecar.** S3 + P9 enforce the LT/ST distinction Munger documented (3.5%/yr structural drag if ignored, per L6 Pattern #6). The funnel doesn't pretend taxes are negligible.
+
+### Lane-to-phase mapping (refined)
+
+| Funnel phase | Primary lane | Supporting lanes |
+|---|---|---|
+| **S0** Regime context (sidecar) | L1 | L2 (probabilistic framing) |
+| **P1** Trend capture | L1, L2 | L3-e (theme-to-name candidates) |
+| **P2** Scenario writing 3/5/10y | L2 | L1 (regime context); L3-e (multi-decade company arcs by era) |
+| **P3** Name discovery | L3 (esp. e + d) | L1 (era fit) |
+| **P4** Deep dive | v2-final §1.2 | L3 (case analogs) |
+| **P5** Watchlist add | v2-final | L4 (kill-criteria pre-commit) |
+| **P6** Disposition | L6 | L3 (company archetype); L5 (regime/trend signal) |
+| **P7** Entry execution | L5 | L6 (disposition determines stop type) |
+| **P8** Daily refresh | L4 | L1 (regime change), L5 (signal change) |
+| **P9** Exit | v2-final §2.3; L4; L6 | — |
 
 ---
 
