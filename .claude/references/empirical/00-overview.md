@@ -130,6 +130,10 @@ A typical downstream skill loads 2–3 lanes — not the whole library.
 
 ---
 
+## Related strategic docs
+
+- **[`docs/big-finance-comparison.md`](../../../docs/big-finance-comparison.md)** — phase-by-phase comparison of what big finance shops (Druckenmiller / Tepper / Citadel / Tiger / etc.) actually utilize for each step of the operator's funnel vs what our system uses. Identifies where we're knowingly accepting gaps and where we're structurally different by design. Read this when deciding which gap to close next.
+
 ## Coexistence with `docs/v2-final-spec.md`
 
 This library was produced under operator's framework: top-down macro/regime → thematic scenario → name discovery → multi-horizon technical execution. That framework is **distinct from but not contradictory to** the existing v2-final paradigm (bottom-up PASS-default quality compounders, 3y IRR distributions, watchlist contract).
