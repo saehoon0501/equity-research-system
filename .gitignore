@@ -64,3 +64,6 @@ checkpoints/draft/
 
 # Claude Code local
 .claude/settings.local.json
+
+# Working notes (not committed)
+.scratch/
