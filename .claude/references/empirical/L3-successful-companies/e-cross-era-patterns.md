@@ -161,3 +161,112 @@ When a name-discovery skill produces a candidate, run it against the patterns ab
 The candidate must clear Tier-A or strong Tier-B + zero strong red flags + favorable era-fit to qualify as a serious multi-bagger candidate.
 
 This checklist is not infallible — survivorship bias means we are pattern-matching primarily on winners. But it shifts the base rate by deliberately incorporating the failure-mode catalog from sub-file d into the screening.
+
+---
+
+# DEEPENING PASS — Pattern re-test against post-2020 counterfactuals
+
+After expanding subfile d's counterfactual catalog (SPAC era, meme era, recent IPO blowups, crypto era) and adding new compounder cases to subfiles a-c, the 20-pattern table is re-tested. Some confidence levels are updated; new patterns are added.
+
+## Section A.2 — Additional sources (synthesis-oriented)
+
+- [Yale Journal on Regulation — Was the SPAC Crash Predictable?](https://www.yalejreg.com/bulletin/was-the-spac-crash-predictable/) — academic post-mortem on a structural pattern failure (SPAC mechanism) [Tier 1]
+- [SSRN Bruck — SPACs: Spectacular Investments or Speculative Bets? (2022 working paper)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4051204) — academic empirical SPAC underperformance [Tier 1]
+- [Warrington/UF — IPOs and SPACs: Recent Developments (Ritter et al.)](https://site.warrington.ufl.edu/ritter/files/IPOs-and-SPACs.pdf) — academic IPO/SPAC literature review [Tier 1]
+- [University of Chicago Law Review — The Hertz Maneuver (and the Limits of Bankruptcy Law)](https://lawreview.uchicago.edu/online-archive/hertz-maneuver-and-limits-bankruptcy-law) — academic on absolute-priority-rule pattern [Tier 1]
+- [Hindenburg Research — Nikola report (Sept 2020)](https://hindenburgresearch.com/nikola/) — fraud-pattern primary [Tier 1]
+- [Hindenburg Research — Clover Health report (Feb 2021)](https://hindenburgresearch.com/clover/) — fraud-pattern primary [Tier 1]
+- [USC Business Law Digest — FTX's End Game: How Sam Bankman Fried Became a Sad Bankrupt Fraud](https://lawforbusiness.usc.edu/ftxs-end-game-how-sam-bankman-fried-became-a-sad-bankrupt-fraud/) — academic legal post-mortem on canonical fraud reproduction [Tier 1]
+
+---
+
+## Section B.2 — New cross-era patterns
+
+### HIGH-confidence patterns (additions)
+
+21. **[The fraud signature pattern (existing #8) is invariant across sectors and decades — confirmed strongly by FTX.]** Re-test of Section B Pattern #8 against the 2022 FTX collapse: every component of the original 6-element signature (mystique + governance void + accounting innovations + secrecy + dismissed bears + related-party transactions) reproduced with crypto-era specifics. The 2001 Enron / 2018 Theranos / 2016 Valeant / 2019 WeWork → 2022 FTX progression confirms the *signature is sector-invariant*. The Section D pattern table row for fraud signature is upgraded from "all 4 cases support" to "5 cases support across 4 sectors and 25-year span." *Confidence: HIGH (further reinforced).*
+
+22. **[SPAC-mechanism structural defect: a sector-wide failure pattern, not just individual fraud.]** The 2020-2022 SPAC vintage's average -54% to -67% post-merger return (academic finding from Bruck SSRN, Yale JReg) is not just a collection of fraud cases (Nikola, Lordstown, Hyzon, Clover) — it is a *structural* finding that the SPAC sponsor-promote mechanism creates over-projection incentives. The L3-screening implication: any de-SPAC name carries a structural liability discount that should not be ignored, even absent fraud-specific red flags. This is a new pattern not present in the original 20 (the original lane focused on individual-case fraud signatures, not mechanism-level structural failures). *Confidence: HIGH.*
+
+23. **[Meme-stock distortion is a regime signal, not a fundamental signal.]** Adds GME, AMC, BBBY, Hertz to the empirical record. The pattern: socially-coordinated retail flow can decouple price from fundamentals for 6-24 months, after which fundamentals reassert (BBBY → bankruptcy 2023, Hertz → equity wiped in restructuring, GME → continued retail decline). The L3-implication: a name in active meme-distortion phase is *not* evaluable on subfile-a/b/c criteria during the distortion; the prudent approach is to wait for re-anchoring or avoid entirely. This connects to but is distinct from the original Pattern #16 (narrative reflexivity) — meme distortion is a stronger, more transient form. *Confidence: HIGH.*
+
+24. **[Crypto-era boom-bust (Coinbase as paradigm) is a regime/cycle trade, NOT a "right thing in right decade" play.]** Original Pattern #20 (right thing in right decade) frames era-fit as a positive multi-bag mechanism. The 2020-2022 crypto-era test confirms an important refinement: the *underlying asset class* (crypto) had era-fit, but the *publicly-traded equity vehicles* (COIN, MSTR-as-Bitcoin-proxy, MARA, RIOT) operated as leveraged-cycle ETFs rather than secular compounders. Pattern #20 is therefore qualified: era-fit applies to companies that *structurally capture* the secular shift (CUDA, AWS, mobile-OS) — not to companies that merely *trade exposure to* it. Trading-volume-dependent business models in cyclical asset classes inherit the cycle, not the secular trend. *Confidence: HIGH (refines existing Pattern #20).*
+
+25. **[Same-era same-sector divergence: thesis correctness is necessary but not sufficient.]** Lyft vs. Uber (-82% vs +96% from IPO close as of 2025), Box vs. MongoDB (+37% vs multi-bag), Cloudera (taken private) vs. Snowflake (publicly-traded category leader despite reset), Allbirds (-99%) vs. Warby Parker (recovering compounder). Each pair: same era, same broad sector thesis, vastly different outcomes. The mechanism: *winner-takes-most economics within the right era still requires sub-pattern selection* — broader optionality, faster path to scale economics, durable switching costs, founder-aligned capital allocation. The L3-screening implication: when two same-era same-sector candidates exist, the presence of a thesis-validated peer is the *minimum* not the *sufficient* condition. *Confidence: HIGH.*
+
+### MEDIUM/CONTESTED additions
+
+26. **[The "post-crisis turnaround compounder" archetype (CMG-Niccol, DPZ-Doyle).]** A specific sub-pattern: when a consumer brand suffers a discrete brand-damaging event (E. coli, "our pizza is bad" customer perception), an outsider-CEO with operating credibility can produce 10-100x returns by (a) public-acknowledgement reset, (b) operational fix, (c) tech-enabled distribution upgrade, (d) menu/product innovation. Cross-cases: Niccol's CMG (~800% return), Doyle's DPZ (~100,000% total return since 2008 trough). Test cases pending: Niccol's Starbucks tenure (2024-), other recent appointments. The pattern is real but base-rate-uncertain (most brand-damaged consumer companies don't recover). *Confidence: MEDIUM (asymmetric outcomes; identifying the right CEO is hard ex ante).*
+
+27. **[The "managed scarcity" luxury moat (Hermès) is a distinct compounder pattern from brand-pricing-power (KO, NKE).]** Hermès caps Birkin/Kelly production at 70K/year, lets secondary-market prices float to 2-3x retail, and explicitly refuses growth that would dilute scarcity. This is a stronger and more durable moat than conventional brand-pricing-power because the product itself is supply-constrained at the manufacturer level. Cross-reference subfile b's distinction between cult-brand premium (LULU, NKE, AAPL-as-consumer) and managed-scarcity luxury (Hermès, Ferrari, very high-end watchmakers). The pattern is rare but very durable when present. *Confidence: HIGH for the pattern; HIGH for Hermès specifically; MEDIUM for the broader luxury sector (LVMH's volume model is the more common variant).*
+
+28. **[The capital-equipment 20-year compounding moat (ASML).]** Different from software/network moats (subfile a Pattern #5 / e Pattern #6) and different from brand moats (subfile b). ASML's monopoly arises from cumulative R&D + supplier-codevelopment + customer-codevelopment over 20+ years that no competitor can compress. Test of replicability: KLA, AMAT (other semicap leaders) have similar but less-extreme positions; the EUV-monopoly is the extreme case. The L3-implication: in deep-tech capital equipment, time itself can be the moat — a pattern absent from the original 20. *Confidence: HIGH (specific to ASML/EUV); MEDIUM for broader replicability.*
+
+---
+
+## Section D.2 — Pattern table updates
+
+The following confidence-level updates and new rows extend the original Section D table. Original rows remain valid; updates are additive.
+
+### Confidence-level updates to existing rows
+
+| Pattern | Original confidence | Updated confidence | Reason for update |
+|---|---|---|---|
+| Founder-CEO tenure ≥15 years | HIGH | HIGH (reinforced) | New cases (Luddy/ServiceNow founder-restart-at-50, Benioff/CRM 27 years, Chang/TSMC 31 years CEO+chair) confirm the pattern across more eras |
+| Per-share value as explicit primary metric | HIGH | HIGH (reinforced) | Added Markel/Gayner, Brookfield/Flatt, Exor/Elkann all explicitly use NAV-per-share as primary metric |
+| Fraud signature: mystique + novel accounting + governance + dismissed bears | HIGH | HIGH (strongly reinforced) | FTX/SBF reproduces all 6 components with crypto-era specifics; pattern confirmed sector-invariant across 25-year span |
+| Right business in right decade | HIGH (principle); MEDIUM (forward) | HIGH (principle); MEDIUM (forward, refined) | Coinbase test: era-fit applies to companies that *structurally capture* the secular shift, NOT to companies that merely *trade exposure to* it. Pattern #20 refined accordingly |
+| Narrative reflexivity converts to compounding | CONTESTED | CONTESTED (further qualified) | Meme-stock cases (GME, AMC, BBBY) added as evidence for the *failure mode* of reflexivity — when no fundamental anchor exists, reflexivity unwinds. AMZN's 2000-02 survival contrasts: AMZN had real-economics anchor; meme stocks didn't |
+| Founder/CEO equity ≥5% retained | HIGH for negative; MEDIUM positive | HIGH for negative; MEDIUM positive (reinforced) | SBF/FTX had founder equity but built fraud; reinforces "presence is positive but absence is more diagnostic" framing. Cohen/BBBY had stake but exited at peak — adds "exit timing also matters" sub-criterion |
+| Valuation discipline at entry | MEDIUM | MEDIUM (reinforced) | Snowflake -41% from IPO 5 years on, Lucid -81% from peak, Coinbase -92% trough, Allbirds -99% — all reinforce that great-thesis companies bought at peak valuations destroy capital |
+| Cyclical capital discipline | MEDIUM | MEDIUM | Coinbase added as cyclical example mis-categorized as secular; CHK-style over-leverage warning extended to crypto-mining names (MARA, RIOT, CORZ-style) |
+
+### New rows added to pattern table
+
+| Pattern | Cases supporting | Cases contradicting | Cross-era validity | Confidence | When to apply |
+|---|---|---|---|---|---|
+| SPAC-mechanism structural defect | Nikola, Lordstown, Clover, Lucid, Hyzon, Beachbody, Bird, Romeo, MicroMobility — academic 54-67% avg loss | A few SPACs were defensible (DKNG modest, occasionally good biotech) | 2019-2022 era-specific | HIGH | Apply liability-discount to ALL de-SPAC names regardless of individual merits |
+| Meme-stock distortion = regime signal | GME, AMC, BBBY, Hertz | n/a (cases that survived meme distortion did so via separate fundamental anchor — e.g., AMC's later capital raises are surviving but equity-diluted) | 2020-2024 era | HIGH | A meme-active name is not evaluable on subfile a/b/c criteria during distortion |
+| Crypto-era trading-volume-dependent = cyclical not secular | COIN (-92% peak-to-trough), MSTR-Bitcoin-proxy, MARA, RIOT | Crypto-infra (custody, ETF wrappers) may differ; live test | 2020-2026 era | HIGH for trading-fee-dependent | Distinguish "infra layer" from "transaction-volume layer" |
+| Same-era same-sector divergence requires sub-pattern selection | UBER vs LYFT, MDB vs BOX, NOW vs CLDR, Warby vs Allbirds | Some sectors winner-takes-all (V/MA duopoly = both win); n=2+ sometimes both lose (PTON, BYND) | All eras | HIGH | Within the right era, prefer broader optionality + durable lock-in + founder-aligned capital allocation |
+| Post-crisis turnaround compounder | CMG/Niccol, DPZ/Doyle | Many failed turnarounds (JCP, GAP cycles, GE-Immelt) | Consumer eras specifically | MEDIUM (asymmetric) | Identify CEO with operating credibility + public-admission willingness; rare ex ante |
+| Managed scarcity luxury moat | RMS (Hermès), Ferrari (RACE), high-end watch independents | LVMH volume model is more common; can't be replicated by trying | All eras | HIGH for the rare-pattern; MEDIUM for replicability | Look for capped-production policy + founder-family control + secondary-market premium |
+| Capital-equipment 20-year compounding moat | ASML (EUV), KLA, AMAT (lesser) | Less-cumulative semicap names did not achieve same moat | Tech-deep era | HIGH (for ASML); MEDIUM (broader) | Look for cumulative R&D + supplier-codevelopment time as itself the barrier |
+| Hindenburg-pattern short-research as L3 free DD | Nikola, Lordstown, Clover (all vindicated 6-24 months) | Pre-vindication, the research was dismissed by the named companies | 2017-2025 (Hindenburg active) | HIGH | Search published short research before accepting recent IPO/SPAC name |
+| BRK template reproducible at smaller scale | MKL, BAM, CSU, Investor AB, Exor, L | Many would-be replicators failed (failed insurance allocators, hedge-fund-as-public-vehicle) | All eras | HIGH | Look for: insurance/holdings float + concentrated portfolio + decade+ tenure allocator + per-share NAV as metric |
+
+---
+
+## Section D.3 — Pattern interactions surfaced by the deepening
+
+The deepening pass surfaced two pattern *interactions* that are themselves predictive:
+
+**Interaction A: Fraud signature × SPAC mechanism = compound liability.** When the SPAC structural defect (Pattern 22 above) intersects with the canonical fraud signature (Pattern 8), the result is the Nikola/Clover/Hyzon cluster — all SPACs that were also frauds. The interaction is multiplicative, not additive: SPAC structural defects mean fraud-pattern checking should be *more* (not less) rigorous for de-SPAC names, because the disclosure regime is asymmetrically lax compared to traditional IPOs.
+
+**Interaction B: Meme distortion × bankruptcy proximity = absolute-priority-rule violation.** When a meme-distorted name is also approaching bankruptcy (Hertz 2020, BBBY 2022-23), retail buyers at distortion-elevated prices have negative expected return because the absolute priority rule will eventually wipe their equity. The combination is not just risky — it is *mathematically* losing absent unlikely outcomes. UChicago Law Review's "Hertz Maneuver" academic paper formalizes this.
+
+These interactions add a layer to the candidate-evaluation checklist: compound-pattern interactions can be more diagnostic than individual-pattern checks.
+
+---
+
+## Updated candidate-evaluation checklist (deepening additions)
+
+The original checklist (Tier-A signals, Tier-B signals, red flags, era-fit) is augmented by:
+
+**Additional red flags (any of these = high alert)**
+- De-SPAC vintage 2019-2022 (apply structural-liability discount even absent specific fraud)
+- Trading-volume-dependent business in cyclical asset class (COIN, MSTR-style; treat as cyclical not secular)
+- Active meme-distortion phase (price decoupled from fundamentals; defer evaluation)
+- Bankruptcy proximity + retail-driven price elevation (Hertz pattern; absolute-priority-rule applies)
+- Same-era same-sector candidate exists with substantially better fundamentals or clearer moat (sub-pattern selection failure)
+
+**Additional Tier-A signals (strong positive)**
+- BRK-template structural alignment: insurance/holdings float + concentrated portfolio + per-share-NAV-as-metric + decade+ allocator tenure
+- Capital-equipment-style cumulative moat: 20+ years of R&D + supplier-codevelopment that competitors cannot compress
+- Managed-scarcity luxury moat: capped production + family control + secondary-market premium
+- Founder-restart-at-50+ pattern: experienced operator with sector domain depth founding a focused, small-team product
+
+**Additional cross-references for due diligence**
+- Search Hindenburg, Citron, Spruce Point, Muddy Waters archives for any prior-published short thesis
+- Read post-merger SPAC PIPE documents (often more candid than S-4 forward projections)
+- Compare same-era same-sector peer's outcome before sizing position

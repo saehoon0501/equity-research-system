@@ -108,3 +108,68 @@ Scope: cross-era US tech multi-baggers — PC era (MSFT, AAPL), internet era (AM
 - CSCO included as deliberate **controlled comparison** — same era, same dominance, different stock outcome. Critical for survivorship-bias defense.
 - ADBE and CRM included as practitioner choices because the SaaS transition pattern is repeatedly cited in literature as a generalizable multi-bagger archetype.
 - Tesla deferred to subfile (d) cyclicals/misses for now — its outcome is bimodal and the cyclical/manufacturing characterization is more apt.
+
+---
+
+# DEEPENING PASS — Tech multi-bagger context expansion
+
+This deepening pass adds: (1) the semiconductor capital-equipment + foundry geopolitical compounders (ASML, TSMC) absent from the original lane; (2) a richer SaaS-platform comparator set (ServiceNow, Atlassian, Salesforce-Slack pivot) to extend the SaaS J-curve story beyond ADBE; (3) extension of the existing CSCO / NVDA discussion with the emerging multi-vendor cloud comparator question.
+
+## Section A.2 — Additional sources
+
+- [Quartr — The Silicon Empire: TSMC's Revolution and Morris Chang's Legacy](https://quartr.com/insights/edge/the-silicon-empire-tsmcs-revolution-and-morris-changs-legacy) — founder + cross-decade compounder narrative [Tier 2]
+- [Wikipedia — Morris Chang](https://en.wikipedia.org/wiki/Morris_Chang) — neutral biography incl. tenure as TSMC CEO 1987-2005 [Tier 3]
+- [Brian Potter / Construction Physics — Morris Chang and the Origins of TSMC](https://www.construction-physics.com/p/morris-chang-and-the-origins-of-tsmc) — engineering-economics decomposition of foundry model [Tier 1]
+- [MIT News — Morris Chang '52, SM '53 describes the secrets of semiconductor success](https://news.mit.edu/2023/morris-chang-describes-secrets-semiconductor-success-1025) — primary interview [Tier 1]
+- [CommonWealth Magazine — TSMC founder: "In the chip sector, globalization is dead."](https://english.cw.com.tw/article/article.action?id=3396) — primary Chang interview on geopolitics [Tier 2]
+- [Strange VC Review — ASML's 30-Year Monopoly: The Moonshot Bet No One Can Replicate](https://thereview.strangevc.com/p/asmls-30-year-monopoly-the-moonshot) — long-form ASML deep dive [Tier 2]
+- [Mazi Asset Management — Inside ASML's Monopoly on Impossible Light](https://www.mazi-assetmanagement.co.za/investment-insights/inside-asmls-monopoly-on-impossible-light) — practitioner research [Tier 2]
+- [MMMT Wealth — ASML Deep Dive: Is The Moat As Strong As We Think?](https://www.mmmtwealth.com/p/asml-deep-dive-is-the-moat-as-strong) — devil's-advocate moat assessment [Tier 2]
+- [Motley Fool — ASML Is the Silent Monopoly Behind the Entire Tech Industry](https://www.fool.com/investing/2025/12/12/asml-is-the-silent-monopoly-behind-the-entire-tech/) — popular-press synthesis of monopoly thesis [Tier 2]
+- [Sequoia Capital — The ServiceNow Story with Fred Luddy and Frank Slootman](https://sequoiacap.com/podcast/crucible-moments-servicenow/) — primary founder + early-CEO narrative [Tier 1]
+- [The Software Report — How Fred Luddy Bounced Back and Built ServiceNow into a $19 Billion Tech Titan](https://www.thesoftwarereport.com/how-fred-luddy-bounced-back-and-built-servicenow-into-a-19-billion-tech-titan/) — founder retrospective [Tier 2]
+- [Wikipedia — ServiceNow](https://en.wikipedia.org/wiki/ServiceNow) — neutral; $10B revenue 2024 milestone [Tier 3]
+- [Intercom Blog — How Atlassian built a $20 billion company with a unique sales model](https://www.intercom.com/blog/podcasts/scale-how-atlassian-built-a-20-billion-dollar-company-with-no-sales-team/) — primary Atlassian playbook [Tier 2]
+- [First Round Review — Unpacking 5 of Atlassian's Most Unconventional Company-Building Moves](https://review.firstround.com/unpacking-5-of-atlassians-most-unconventional-company-building-moves/) — long-form practitioner essay [Tier 2]
+- [Salesforce — Salesforce Completes Acquisition of Slack](https://www.salesforce.com/news/press-releases/2021/07/21/salesforce-slack-deal-close/) — primary press release [Tier 1]
+- [CNBC — Salesforce acquires Slack for over $27 billion](https://www.cnbc.com/2020/12/01/salesforce-buys-slack-for-27point7-billion-in-cloud-companys-largest-deal.html) — deal-announcement primary [Tier 2]
+- [Cloud Wars — Marc Benioff Bets Salesforce's Future on Slackbot](https://cloudwars.com/ai/marc-benioff-bets-salesforces-future-on-slackbot-fastest-growing-feature-ever/) — agentic-enterprise pivot 2026 [Tier 2]
+- [Tapflare — Case Study: Adobe's Transition to a Subscription Model](https://tapflare.com/articles/adobe-subscription-model-case-study) — extended J-curve mechanics [Tier 2]
+- [Stratrix — Adobe Shifts to Creative Cloud (2013) Strategic Forks](https://www.stratrix.com/strategic-forks/adobe-creative-cloud) — strategic-decision teardown [Tier 2]
+
+---
+
+## Section B.2 — Additional patterns (deepening)
+
+16. **Capital-equipment monopoly via 20-year compounding moat (ASML).** ASML holds ~100% market share in EUV lithography (the only feasible technology for sub-7nm chips), 90%+ in older-generation DUV, and reaches this position through 20+ years of cumulative R&D + supplier-ecosystem development (Zeiss optics, 800+ suppliers) that no competitor has been able to replicate. The lesson: in deep-tech capital equipment, the moat compounds *because* the capital investment + scientific complexity + customer-codevelopment time is itself the barrier. Live tail risk: US export-control restrictions on China sales (currently the largest customer market). *Sources: Strange VC ASML, Mazi ASML, Motley Fool ASML. Cross-reference NVDA/CUDA pattern (#5).*
+
+17. **Foundry pure-play geopolitical compounder (TSMC).** Morris Chang's 1987 founding of TSMC inverted the integrated-device-manufacturer (IDM) model: rather than competing with Intel/Samsung at design + manufacturing, become the trusted neutral fab for fabless designers (NVDA, AMD, AAPL, QCOM). 60%+ global foundry market share by 2024 (6x Samsung). Compounder mechanics: 50% revenue CAGR 1991-2000, then sustained double-digit through 2025. The pattern: *a "neutral infrastructure" position in a sector where designers proliferate scales asymmetrically* (TSMC + ASML are both this pattern at different layers). Geopolitical tail: Taiwan-strait risk + US/China export friction; mitigation underway via Arizona ($40B) and Dresden plants. *Sources: Quartr Silicon Empire, Brian Potter, MIT News Chang interview. Confidence: HIGH.*
+
+18. **The Adobe Creative Cloud "kill your current revenue model" pivot is more counterintuitive than the literature recognizes.** Adobe's 2011 transition was internally framed by CEO Shantanu Narayen as: "revenue and profit are going to drop... but you should still invest." The actual J-curve: 2012 announcement → 2013 GAAP revenue dip → 2014-15 EPS still depressed → 2015+ sustained acceleration → 2024-26 mature SaaS compound + recent reset (-43% TTM by April 2026) on AI-disruption concerns. The deeper pattern: *willingly killing high-margin legacy revenue to capture lower-margin-but-recurring future revenue* requires (a) board patience, (b) management who own enough equity to absorb 2-3 years of personal-comp pain, (c) communications discipline. The CRM Service Cloud + Slack-acquisition pivot (2020-2026) is testing the same template. *Sources: Tapflare Adobe case, Stratrix Strategic Forks. Confidence: HIGH for the pattern; ADBE's 2024-26 reset is a live test of whether the compounder durability survives the AI-disruption era.*
+
+19. **Product-led growth without sales (Atlassian) is a real pattern, but it has a ceiling.** Atlassian built to ~$1B+ revenue with no traditional sales force, relying on transparent pricing + self-service + word-of-mouth. The model became the canonical PLG case study. Notable: Atlassian eventually *augmented* PLG with sales for enterprise expansion — meaning the "no-sales-team" path has a transition point around enterprise scale. The lesson: PLG is a powerful entry-stage moat (low CAC) but maturity often requires hybrid motion. Cross-reference: ServiceNow ran the inverse (heavy enterprise sales from start) and reached similar scale on similar timeline. *Sources: Intercom Atlassian, First Round Review Atlassian. Confidence: HIGH for early-stage PLG, MEDIUM for scaled-PLG durability.*
+
+20. **The "founder restart at 50" pattern (ServiceNow, Fred Luddy).** Luddy founded ServiceNow at age 49 after his prior company imploded, with no resources and no sales team. The company became a $150B+ enterprise-workflow platform. The pattern: *founder experience matters; ServiceNow's IT-help-desk-replacement insight came from Luddy's preceding decade as Peregrine Systems' CTO — the "second-time founder with sector domain depth" archetype*. Luddy transitioned to non-CEO role in 2011 (Frank Slootman → John Donahoe → Bill McDermott), but the founding product DNA persisted. *Sources: Sequoia ServiceNow, Software Report Luddy. Confidence: MEDIUM (n=1 for the specific archetype; broader founder-experience pattern is well-established).*
+
+21. **Salesforce's CRM → Service Cloud + Slack-driven agentic pivot is the live test of the multi-pivot template.** Benioff's 1999-founded Salesforce is one of the longest-tenure founder-CEO runs in enterprise SaaS (now 27 years). The recent moves: 2020 Slack acquisition ($27.7B) + 2026 "Slackbot as agentic UI" pivot. Cloud Wars characterizes Slackbot as "the fastest-growing feature ever in Salesforce history." The pattern: *founder-CEOs at maturity who attempt a third or fourth pivot* (cf. Bezos AMZN→AWS→Ads→AI, MSFT Nadella's continuous reinvention) are rare. Benioff is doing it; the compounder return depends on whether the agentic-AI pivot creates a third leg comparable to Service Cloud's. *Sources: Salesforce primary press release, CNBC deal announcement, Cloud Wars Slackbot. Confidence: CONTESTED (live test; Salesforce stock has been range-bound 2024-26 as the market evaluates).*
+
+---
+
+## Section D.2 — Extended case study table (deepening pass)
+
+| Company | Era | Business-model evolution | Growth-rate trajectory | Duration of supernormal growth | Macro/historical enabler | Capital allocation | Founder/management archetype |
+|---|---|---|---|---|---|---|---|
+| ASML | Capital-equipment monopoly (1984-) | DUV lithography → EUV monopoly via NXE/EXE platforms → high-NA EUV next | 15-20% revenue durable, 50%+ GM on EUV | 30+ years; current AI-driven super-cycle | Moore's Law continuation + AI compute demand + geopolitical chip-onshoring | Buyback + dividend; major R&D reinvestment; selective acquisitions (Cymer light-source) | Operator-CEO archetype (Wennink → Fouquet); deep technical board |
+| TSMC | Foundry pure-play (1987-) | DRAM-foundry → mixed-signal → leading-edge node leadership | 50%+ revenue CAGR 1991-2000, 15%+ durable | 35+ years | Fabless-design ecosystem rise; AI compute era | Aggressive capex ($40B+ annual); dividend; selective ADR buybacks | Morris Chang (founder, CEO 1987-2005, chair to 2018); Mark Liu / C.C. Wei operator-CEOs |
+| ServiceNow (NOW) | Enterprise workflow (2004-) | IT help-desk replacement → ITSM → workflow platform → AI-enabled "Now Platform" | 25%+ subscription revenue CAGR 2020-2024; $10B+ revenue 2024 | ~15 years post-IPO (2012) | Cloud + enterprise-IT modernization | Buybacks + reinvestment; founder Luddy departed CEO 2011 | Luddy (founder); Slootman (turnaround CEO); Donahoe; McDermott (current) |
+| Atlassian (TEAM) | Dev-tools PLG (2002-) | Jira → Confluence → Bitbucket → Trello (acq) → Cloud platform | 30%+ historical, ~23% recent | ~20 years | Software-developer proliferation; cloud collaboration | No dividend; selective acquisitions; founder voting control retained | Cannon-Brookes + Farquhar (founders); operator-CEO transitions |
+| Salesforce (CRM, deepened) | SaaS-pioneer (1999-) | Sales Cloud → Service Cloud → Marketing Cloud → MuleSoft → Tableau → Slack → Slackbot agentic UI | 25%+ '00s-'10s, 10-15% recent | ~25 years | Enterprise SaaS thesis + AI agentic | Acquisitive growth; recent buybacks at scale | Benioff (founder-evangelist, 27-year tenure); deep operator bench |
+
+---
+
+## Section C.2 — Additional open questions (deepening)
+
+- **Is ASML's monopoly durable through US-China export-control regime change?** Bull: technical lead is 20-year deep, China cannot replicate. Bear: China sales were ~25-30% of revenue at peak; restrictions cap growth and incentivize Chinese domestic alternative R&D.
+- **Is TSMC's pure-play foundry model still optimal, or does Apple's M-series + Tesla Dojo + Google TPU custom-silicon trend favor IDM/captive-fab models?** TSMC remains the manufacturer for these custom chips, so the foundry model captures some of this value, but the pricing-power split is unclear.
+- **Is Salesforce's agentic-AI pivot a CRM-style new growth leg or a defensive AI-Washing exercise?** Live test 2025-27. Cloud Wars's characterization of Slackbot growth is positive but early.
+- **Does ServiceNow's workflow-platform moat extend to the agentic-AI era, or is the workflow-platform abstraction itself disruptable?** SaaS-disruption-by-AI is the broader live question. ServiceNow's specific defense is its installed-base + custom-workflow inertia; competitors (Salesforce, MSFT Copilot Studio) are encroaching.
