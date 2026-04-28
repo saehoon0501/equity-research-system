@@ -1,8 +1,8 @@
 # Section 4 Consensus — L2 / P2 (Probabilistic Scenario Writing)
 
-**Date:** 2026-04-29 (in progress)
+**Date:** 2026-04-29
 **Session:** Q&A consensus review with operator (saehoon0501) — Section 4 of the consensus-documentation-protocol series
-**Status:** Partially locked — Q1 / Q2 / Q3 closed; further sub-questions pending
+**Status:** **FULLY LOCKED** — Q1 / Q2 / Q3 / Q4 / Q5 / Q6 / Q7 all closed
 **Purpose:** Capture how P2 (probabilistic scenario writing phase) actually works: data model, scenario count per theme, kill-criteria specification, revision cadence, connections to S0 and L8.
 
 **Predecessors:**
@@ -139,30 +139,132 @@ Total: 2,459 lines, ~229 sources, ~325 specific criteria/templates.
 
 ---
 
-## 5. Pending sub-questions for Section 4 closure
+## 5. Q4 LOCKED — P2's connection to S0 = pure read-only consumer
 
-Before Section 4 closes:
+**Locked: (a) read-only.** P2 reads S0's regime classifications + probabilities at invocation; writes scenario objects to its own `scenarios` Postgres table; **never modifies S0 or produces regime-classification information that competes with S0.**
 
-- **Q4** — How does P2 connect to S0 (read-only? feedback loop? regime-shift triggers?)
-- **Q5** — When does P2 revise scenarios (cadence; triggers; how often probabilities update)
-- **Q6** — How is granular probability assignment enforced (Tetlock 60/40 not 75/25)?
-- **Q7** — How does P2's output flow to the Macro-Regime style agent in P4?
+### Why read-only over feedback-loop or audit-log alternatives
 
-These can likely be bundled — they're tightly coupled (revision cadence + S0 connection + L8 contract are three views of the same plumbing).
+- **Separation of concerns:** S0 is the authoritative regime classifier (6 dimensions, BOCPD, all of Section 3 locked). P2 is the scenario writer that USES S0 as input.
+- **If P2 systematically disagreed with S0**, that's evidence S0 needs recalibration — the right fix is to improve S0's inputs/methods through `/parameters-review`, NOT have P2 second-guess.
+- **Section 1 finding extends here:** "PMSupervisor must NOT force consensus" — same logic applies between sidecars and phases. Automatic feedback loops create sycophantic convergence.
+- The audit-log-of-disagreement variant I initially proposed conflated regime-classification with scenario-writing; operator pushback corrected this.
 
----
+### Implementation
 
-## 6. What's locked so far
-
-- Scenarios are structured JSON objects (not free text, not trees)
-- 2-4 scenarios per theme
-- Kill criteria = pre-mortem narrative + structured conditions with template-library priors
-- Hard/soft firing logic
-- Mechanical/breadth/state-based criteria preferred over survey-based
-- Discredited-post-2020 templates retained read-only with deprecation notes
-
-Sections 1, 2, 3 fully locked. Section 4 partially locked. Sections 5-8 pending.
+P2 reads S0 at every invocation (pull pattern, per Section 2 Q1 locked). P2 writes scenarios to its own table. No write-back to S0 ever. No "disagreement audit log" — that conflated two different jobs.
 
 ---
 
-**Section 4 partial consensus committed. Q4-Q7 to follow.**
+## 6. Q5 LOCKED — Revision cadence = hybrid daily kill-checks + event-driven full re-write
+
+**Locked: (f) hybrid.**
+
+### Daily (deterministic, fast, no LLM call)
+- Kill-criteria check on all active scenarios against latest data
+- Probability haircuts via Q3 firing logic:
+  - Hard criterion fires → scenario probability → 0; re-normalize across remaining branches
+  - Soft criteria fire → cumulative haircut: probability × (1 − 0.2·N)
+  - Post-haircut < 0.1 → flag invalidated to operator
+- No LLM regeneration of scenarios; just deterministic threshold checks
+
+### Event-driven (LLM regenerates scenarios)
+Full P2 re-run only on:
+- S0 regime-shift event (M-2 or M-3 per Section 3 Q3)
+- Kill-criterion fires on any active scenario for the theme
+- Operator manually invokes `/research-company` reunderwrite
+
+### Why hybrid
+
+- Daily kill-checks capture incremental updates (Mellers IARPA: incremental updates beat big jumps; 0.12 Brier improvement per SD smaller updates)
+- Full P2 re-write is LLM-cost-bearing; reserve for material events
+- Aligns with Section 2's locked materiality-tiered framework
+
+---
+
+## 7. Q6 LOCKED — Probability granularity = hybrid (schema + prompt + lint)
+
+**Locked: (c) hybrid enforcement.**
+
+### Schema constraint (write-time)
+- Probability must be in [0.05, 0.95] (no 0.0 or 1.0 — overconfidence rejection)
+- Rounded to nearest 0.05 step (0.05, 0.10, 0.15, ..., 0.95)
+- Sum-to-1.0 enforced across siblings
+
+### Prompt instruction (LLM-write-time)
+- P2's prompt explicitly cites Tetlock superforecaster finding: "use granular probabilities like 0.55 not 0.5; avoid round numbers unless justified"
+- Reference 60/40-not-75/25 example
+
+### Post-write linter (validation-time)
+Flags suspicious patterns to operator before write commits:
+- All branches at exactly 0.50 (round-number defaulting)
+- Branches forming arithmetic series (0.25/0.50/0.25 with 3 branches; 0.20/0.30/0.30/0.20 with 4 branches)
+- Branches at exactly 0.25/0.50/0.25 (sell-side default)
+
+Operator sees lint warning at write time; can override with explicit reasoning logged.
+
+### Why hybrid
+
+- Pure prompt instruction (a): LLMs default to round numbers when uncertain — exactly the failure mode Tetlock documents
+- Pure schema constraint (b): rejects edge cases without educating the writer
+- Hybrid: belt-and-suspenders — schema enforces minimum discipline; prompt trains the LLM; linter catches Tetlock's documented failure modes
+
+---
+
+## 8. Q7 LOCKED — P2 → Macro-Regime style agent contract
+
+**Locked: (b) full scenario set with probabilities.** + **theme tags assigned at P3 name-discovery time.**
+
+### Theme→name mapping
+- P3 name-discovery tags relevant `theme_ids` on each candidate (multi-theme allowed)
+- Macro-Regime style agent at P4 receives scenarios for all tagged themes
+- Operator can override theme tags during P4 if AI's tagging is wrong
+- Theme-relevance decision lives at the right phase (name discovery has context); not re-done downstream
+
+### Macro-Regime agent input contract
+```
+{
+  candidate_ticker
+  mode: "B" | "B'" | "C" (from Section 1 classification rule)
+  theme_ids: [list, multi-theme allowed]
+  scenarios: [for each theme_id, the 2-4 active scenarios with
+              probabilities + kill_criteria_structured + regime_fit]
+  S0_classification: settled input (don't re-derive — Macro-Regime agent
+                     consumes as authoritative, same way P2 does)
+  L1_reference: lane content (Macro-Regime style agent's home lane)
+}
+```
+
+### Macro-Regime agent output (Phase A → Phase B per Section 1 5-style debate)
+```
+{
+  regime_fit_score: float in [0,1]
+  load_bearing_claims: [...]      # for Phase B locking
+  non_negotiables: [...]          # for Phase B locking
+  scenario_weighted_view: prose explanation of how the scenario
+                          distribution shapes the agent's assessment
+}
+```
+
+### Why full scenario set over alternatives
+
+- (a) Highest-probability-only loses the distribution — defeats Q2/Q6 lock
+- (c) Including S0 raw + L1 + scenarios makes Macro-Regime agent re-do S0's job (separation-of-concerns violation; same principle as Q4)
+- (b) gives exactly what's needed: scenario distribution + kill-criteria status + probabilities
+
+---
+
+## 9. Section 4 — fully closed
+
+All 7 questions locked:
+- **Q1** Scenario data model = structured branches (Postgres JSON with explicit schema)
+- **Q2** Scenarios per theme = variable 2-4 (Shell empirical sweet spot)
+- **Q3** Kill-criteria spec = hybrid pre-mortem narrative + structured conditions; pre-loaded template library at v0.1
+- **Q4** P2 ↔ S0 connection = pure read-only (P2 doesn't second-guess S0)
+- **Q5** Revision cadence = hybrid daily kill-checks + event-driven full re-write
+- **Q6** Probability granularity = hybrid schema + prompt + lint
+- **Q7** P2 → Macro-Regime agent contract = full scenario set with probabilities + theme tags from P3
+
+Sections 1, 2, 3, 4 fully locked. Sections 5-8 pending.
+
+Ready for Section 5 (L3 — Successful-company pattern library review).
