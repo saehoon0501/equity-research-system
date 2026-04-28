@@ -1,8 +1,8 @@
 # Section 3 Consensus — L1 / S0 (Regime Capture Sidecar)
 
-**Date:** 2026-04-29 (in progress)
+**Date:** 2026-04-29
 **Session:** Q&A consensus review with operator (saehoon0501) — Section 3 of the consensus-documentation-protocol series
-**Status:** Partially locked — Q1 closed; Q2 in progress; Q3 + Q4 pending
+**Status:** **FULLY LOCKED** — Q1 / Q2 / Q3 / Q4 all closed
 **Purpose:** Capture S0 sidecar architecture decisions: which dimensions, what signals, what data sources, what weighting method, when to fire shift events, refresh cadence.
 
 **Predecessors:**
@@ -138,31 +138,57 @@ where `w_equal_1/6 = uniform 1/6` (NOT validation-depth-anchored, per operator's
 
 ---
 
-## 4. Q3 PENDING — When does S0 fire a regime-shift event?
+## 4. Q3 LOCKED — When does S0 fire a regime-shift event?
 
-Section 2 Item 1 locked that S0 fires push events on regime shifts (forcing P1/P2 chain re-run on sensitivity-tagged-HIGH names + escalating P8 daily refresh). Section 3 specifies the **trigger threshold**.
+**Locked: hybrid materiality-tiered firing using BOCPD probability per dimension.**
 
-Original options proposed (not yet locked):
-- (a) Probability threshold (sensitive — fires on noise)
-- (b) Threshold + duration (filters noisy flips)
-- (c) Threshold + duration + signal-confluence (most conservative)
+BOCPD (Q1 method overlay #1) outputs calibrated change-point probability per dimension at every time step. Q3 specifies thresholds and confluence rules:
 
-**Likely revision after Q1 lock:** **BOCPD probability threshold** (e.g., BOCPD > 0.7) — more principled than ad-hoc threshold+duration+confluence rule. BOCPD outputs calibrated change-point probabilities; meets the operator's preference for academically-grounded methods.
+| Trigger | S0 action | Materiality | Downstream effect |
+|---|---|---|---|
+| 1 dimension's BOCPD > 0.7 sustained 2+ days | Push notification to P8 | M-2 | Targeted memo update on sensitivity-HIGH names |
+| 2+ dimensions' BOCPD > 0.7 sustained 2+ days | Push notification to P8 + force re-underwrite queue | M-3 | Full P4 re-underwrite on sensitivity-HIGH names |
+| Any catastrophic dimension event (BOCPD > 0.95 single-day) | Push notification to P8 + immediate operator alert | M-3 | Full re-underwrite + operator-attention flag |
 
-To be locked after Q2 closes.
+**Why this design:**
+- Aligns with Section 2's already-locked materiality-1/2/3 framework in P8
+- Single-dimension shifts get operator awareness without expensive re-underwrites (M-2)
+- Confluence (2+ dimensions) reserves expensive re-underwrite cost for high-conviction regime changes (M-3)
+- Catastrophic single-day events bypass duration-smoothing for fast-acting events (March 2020 Treasury dysfunction; Aug 2024 carry unwind)
+
+**Threshold values (informed by BOCPD literature):**
+- 0.5 = "any change" baseline (too noisy)
+- **0.7 = conventional sweet spot for live deployment** (locked)
+- 0.9+ = "strong evidence" (used for catastrophic single-day flag at 0.95)
+
+**Sustained-duration filter (2+ days):** prevents single-day BOCPD spikes from triggering re-underwrites; reserves immediate action for catastrophic events at 0.95+.
 
 ---
 
-## 5. Q4 PENDING — How often does L1 re-classify (refresh cadence)?
+## 5. Q4 LOCKED — How often does L1 re-classify (refresh cadence)?
 
-Section 2 set "≤5 trading days stale acceptable" but didn't lock cadence.
+**Locked: daily refresh.**
 
-Original options proposed:
-- (a) Daily — cleanest; matches `/daily-monitor`
-- (b) Weekly — lower cost; staleness risk in fast markets
-- (c) Event-driven — most efficient; complexity
+S0 re-classifies every trading day using the latest available data per input. Slow inputs (monthly EBP, weekly H.4.1) use last published value; fast inputs (daily rates, VIX, DXY) use yesterday's close.
 
-**Likely lock:** **(a) daily.** Free MCP data sources (FRED, market_data) make daily-pull effectively zero-marginal-cost. Some inputs (M2, Fed balance sheet) are weekly, but most are daily. Locked when Q2 closes.
+**Why daily:**
+- Free MCP data (FRED, market_data) makes daily-pull marginal cost ~zero
+- Aligns with Section 2's `/daily-monitor` cadence
+- BOCPD is *online* by design — daily updates are its native cadence
+- Daily classification produces meaningful output for fast-moving inputs (rates / vol / dollar / stock-bond correlation are 4 of 6 dimensions)
+- Avoids weekly-cadence staleness risk during fast regime transitions
+- Avoids event-driven threshold-tuning complexity
+
+**Per-input cadence reality (S0 daily classification consumes whatever's latest):**
+
+| Cadence | Inputs |
+|---|---|
+| Daily | FRED rates (DGS3MO, DGS10, T10Y3M, T10Y2Y, T5YIE, T10YIE), VIXCLS, S&P daily returns, 10y Treasury daily, DTWEXBGS, FX crosses |
+| Weekly | NY Fed Staff Nowcast (Fridays), Fed H.4.1 balance sheet (Wednesdays), Sahm Rule revisions |
+| Monthly | EBP CSV, ISM PMI, Core CPI / PCE, M2, INDPRO, U-Mich expectations |
+| Quarterly | GDP, NBER recession dating revisions |
+
+S0 daily classification combines all inputs at their respective freshness; BOCPD runs on the daily classification stream.
 
 ---
 
@@ -189,13 +215,15 @@ In flight (will be added on completion):
 
 ---
 
-## 7. What's still open in Section 3
+## 7. Section 3 — fully closed
 
-- **Q2 closure** — replace HIGH/MEDIUM/LOW framing with recent-OOS-accuracy framing; lock v0.1 weighting method (likely equal-weight or pre-backtest priors); lock v0.5+ method (Diebold-Pauly shrinkage)
-- **Q3 closure** — likely BOCPD-probability threshold; lock specific threshold value
-- **Q4 closure** — likely daily cadence with weekly inputs accepted as-they-publish
+All 4 questions locked:
+- **Q1 LOCKED:** 6 Tier-1 dimensions + 4 method overlays
+- **Q2 LOCKED:** equal-weight at v0.1 → BB-pseudo-BMA+ with Diebold-Pauly shrinkage at v0.5+; validation-depth retained as annotations only, NOT numerical multipliers
+- **Q3 LOCKED:** BOCPD-based hybrid materiality-tiered firing (M-2 single-dim; M-3 confluence; M-3 catastrophic single-day)
+- **Q4 LOCKED:** daily refresh
 
-After Q2 / Q3 / Q4 lock, Section 3 closes and we move to Section 4 (L2 — Probabilistic scenario writing).
+Ready for Section 4 (L2 — Probabilistic scenario writing).
 
 ---
 
