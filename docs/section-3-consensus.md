@@ -82,41 +82,59 @@ Total v0.1 recommendation: **$75 Sharadar + $30 Tiingo = $105/mo; $145/mo headro
 
 ---
 
-## 3. Q2 IN PROGRESS — How does S0 weight the 6 dimensions?
+## 3. Q2 LOCKED — How does S0 weight the 6 dimensions?
 
 **Initial framing (REJECTED by operator):** HIGH / MEDIUM / LOW validation-depth tags with placeholder weights 1.0 / 0.7 / 0.5.
 
-**Operator's pushback:** "Old is not proof of efficiency, young is not proof of evolution." Validation depth conflates "how long has this been studied" with "how well does it currently work" — these diverge (e.g., yield curve has 60-year validation but is degrading post-QE; stock-bond correlation has short attention but captures real recent regime shift).
+**Operator's pushback:** "Old is not proof of efficiency, young is not proof of evolution." Validation depth conflates "how long has this been studied" with "how well does it currently work" — these diverge.
 
-**Replacement framing in development:** weight by **recent-OOS-accuracy** (last 5-10 years of resolved regime classifications), not historical validation depth.
+**Empirical confirmation across 3 parallel Q2 subagents:** weighting decisions are scientifically inferior to equal-weight at our sample size by every major measure.
 
-### Implementation path being designed
+### Why equal-weight wins empirically at our scale
 
-- **v0.1 (zero resolved live predictions):** options under consideration:
-  - Equal-weight at v0.1 (per first Q2 subagent finding: at small N, equal-weight dominates per Smith-Wallis 2009 / Claeskens 2016 / Stock-Watson 2004)
-  - OR pre-launch backtest of each dimension on 2015-2025 data → use realized accuracy as initial Bayesian priors
-- **v0.5+ (50+ resolved predictions):** Diebold-Pauly Bayesian shrinkage of OLS weights toward equal-weight (canonical academic recipe; first subagent's locked recommendation)
-- **Annual `/parameters-review`:** weights updated based on live performance, NOT on validation depth
+- **Smith-Wallis 2009** (forecast-combination puzzle): at small N, estimation error in optimal weights exceeds bias-reduction benefit
+- **Claeskens-Magnus-Vasnev-Wang 2016** (theorem-level result): random/estimated weights induce both bias and variance inflation that exceed any optimization gain at small n
+- **Hsiao-Wan 2014**: ≥100 observations needed just to estimate weights stably
+- **Setzer-Fuchs 2024**: pure-OLS only outperforms equal-weight above N ≈ 200-300
+- **Lee-Lee 2025 Monte Carlo**: even at T=1000, test rejects "equal-weight is no worse" in <50% of replications when truly-optimal weights are non-equal
+- **Aiolfi-Timmermann 2006**: past forecasting performance is "frequently a poor predictor" of future performance (validation-depth is a stronger version of that premise — even worse)
+- **T/K ≥ 20 rule**: for K=6 classifiers we'd need T ≥ 120 observations. Our 18-24 month timeline yields ~50.
 
-### Sample-size thresholds (literature-documented; first Q2 subagent)
+### Q2 LOCKED — final architecture
 
-- T < 30 → equal-weight dominates
-- T ≈ 30-80 → Diebold-Pauly shrinkage with strong shrinkage intensity
-- T > 100 → optimized weights become viable
+**1. v0.1 weighting: pure 1/6 equal-weight** for the headline regime score across all 6 dimensions.
 
-### What's pending
+**2. Validation-depth tags retained ONLY in 3 narrow roles** (NOT as numerical multipliers):
+   - Transparency annotations on each dimension's output ("validated 60yr / 15yr / 5yr" — INFO, not weight)
+   - Trim-priority ordering — if pseudo-BMA+ later recommends trimming a classifier, LOW gets trimmed before HIGH
+   - Differential monitoring cadence — LOW reviewed monthly, MEDIUM quarterly, HIGH semi-annually
 
-Two depth subagents (Q2 Bayesian deep-dive + Q2 equal-weight puzzle) are still running. Once they return:
-- Confirm or refine Diebold-Pauly recommendation
-- Decide between (a) equal-weight at v0.1 with parallel backtest accumulating accuracy stats, OR (b) pre-backtest before launch with backtested-accuracy as initial priors, OR (c) further research on regime-classifier ground-truth measurement before locking
+**3. Per-dimension OOS performance tracked from day 1** in S2 (counterfactual ledger), enabling DM-tests at v0.5+.
 
-**Likely lock direction:** (a) or (b). Q2 closure expected after 2 in-flight subagents return.
+**4. Shadow-run pseudo-BMA+ starting N≈30** (~12 months) for comparison only; promote to live weighting only if Bayes-factor > 20 vs equal-weight (Kass-Raftery 1995 strong-evidence threshold; ~5 correct calls in a row).
 
-### Library deliverables for Q2 so far
+**5. At v0.5+ (N≈50): BB-pseudo-BMA+ with Diebold-Pauly shrinkage:**
+```
+w_final = (38 / (38 + N)) · w_equal_1/6  +  (N / (38 + N)) · w_pseudoBMA+
+```
+where `w_equal_1/6 = uniform 1/6` (NOT validation-depth-anchored, per operator's pushback). The shrinkage formula and prior-effective-sample-size = 38 (Morita-Thall-Müller 2008) framework retained from Bayesian-methods deep-dive.
 
-- `.claude/references/empirical/data-sources/Q2-ensemble-methods-research.md` (first Q2 subagent's output — 12 methods compared)
-- `.claude/references/empirical/data-sources/Q2-bayesian-methods-deep.md` (in flight)
-- `.claude/references/empirical/data-sources/Q2-equal-weight-puzzle-deep.md` (in flight)
+**6. Classical BMA REJECTED** — assumes M-closed (one classifier IS the truth), empirically false for our 6 disjoint regime dimensions per Yao et al. 2018. pseudo-BMA+ and stacking handle the M-open case correctly.
+
+**7. Pre-launch backtest on 2015-2025 data — OPTIONAL diagnostic, NOT a weight source.** It validates that each dimension *individually* classifies regimes correctly (sanity check). At our scale, backtested weights would be statistically indistinguishable from equal-weight.
+
+### Sample-size phase transitions (locked)
+
+- **N=0 to ~30 (months 0-12):** pure 1/6 equal-weight; per-dimension OOS performance accumulating in S2 ledger
+- **N≈30 to ~50 (months 12-24):** equal-weight live; pseudo-BMA+ shadow-running; promote if BF > 20
+- **N≥50 (months 18+):** BB-pseudo-BMA+ with Diebold-Pauly shrinkage formula above; equipoise at N≈38; data-dominance (>67%) at N≈75
+- **`/parameters-review` annual:** weights updated based on live performance, NOT on validation depth
+
+### Library deliverables for Q2 (all committed)
+
+- `.claude/references/empirical/data-sources/Q2-ensemble-methods-research.md` (broad survey; 12 methods)
+- `.claude/references/empirical/data-sources/Q2-bayesian-methods-deep.md` (374 lines; 7 Bayesian methods; BB-pseudo-BMA+ recommendation)
+- `.claude/references/empirical/data-sources/Q2-equal-weight-puzzle-deep.md` (292 lines; 20 sources; strongest empirical case for equal-weight at our scale)
 
 ---
 
