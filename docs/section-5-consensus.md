@@ -1,8 +1,8 @@
 # Section 5 Consensus — L3 / P3 (Successful-Company Patterns + Counterfactuals)
 
-**Date:** 2026-04-29 (in progress)
+**Date:** 2026-04-29
 **Session:** Q&A consensus review with operator (saehoon0501) — Section 5 of the consensus-documentation-protocol series
-**Status:** Partially locked — Q1 / Q2 closed; further sub-questions pending
+**Status:** **FULLY LOCKED** — Q1 / Q2 / Q3 / Q4 / Q5 / Q6 all closed
 **Purpose:** Capture how P3 (name discovery phase) uses L3 (cross-era patterns + 32-name counterfactual catalog) to score candidates: PASS / WATCH / promote-to-P4.
 
 **Predecessors:**
@@ -186,24 +186,176 @@ counterfactual_similarity: [
 
 ---
 
-## 4. Pending sub-questions for Section 5 closure
+## 4. Q3 LOCKED — 3-LLM iterative-consensus catalog extraction
 
-- **Q3** — How are the structural feature vectors extracted from L3-d catalog? (Manual annotation vs LLM-extracted vs hybrid)
-- **Q4** — How does L3 catalog get updated when new failures or successes emerge? (Annual cadence vs event-driven; who annotates new entries)
-- **Q5** — Mode-classification using L3 archetypes (B / B' / C placement). Section 1 locked the AI classification rule on quantitative thresholds; does L3 inform mode placement beyond that?
-- **Q6** — Calibration: how do we validate that mechanical similarity finds the RIGHT counterfactuals? (Gold-standard test set?)
+**Locked: (b-modified) 3-LLM consensus extraction with iteration to HIGH consensus + 5-iteration cap.**
+
+### Mechanism
+
+3 separate subagent dispatches (parallel) on the same L3-d counterfactual catalog. Each extracts structured features per counterfactual to its own JSON output.
+
+```
+iteration = 0
+remaining_fields = all_fields_to_extract  # 32 cases × ~15 features = ~480
+
+while remaining_fields and iteration < 5:
+  iteration += 1
+  parallel dispatch with INFORMATION ISOLATION:
+    sub_1: Opus, temp varies by iter, prompt varies by iter
+    sub_2: Opus, different seed
+    sub_3: Opus, different seed
+  for each field in remaining_fields:
+    if all_3_agree:
+      commit(value, confidence="HIGH")
+    # else stay in remaining_fields
+
+if remaining_fields after iter 5:
+  → escalate to operator with full attempt-history
+```
+
+Iteration variance via temp/prompt rotation (0.5/0.7/0.3/0.5/0.3 + framing variations).
+
+### Information isolation guarantee
+
+Each iteration's LLMs do NOT see prior iteration outputs. Prevents sycophantic convergence (matches Q1 Stage 2 isolation principle).
+
+### Audit log per field
+
+```yaml
+theranos.charismatic_CEO:
+  extraction_history: [iter_1: sub_1=true, sub_2=true, sub_3=false; iter_2: all true]
+  final_value: true
+  final_confidence: HIGH (converged at iter 2)
+  iterations_required: 2
+```
 
 ---
 
-## 5. What's locked so far in Section 5
+## 5. Q4 LOCKED — Event-driven adds + automated drift detection
 
-- Hybrid 3-stage scorer architecture (mechanical → LLM with information isolation → linter)
-- Counterfactual catalog used via mechanical structural-feature retrieval + LLM narrative on top-3 (NOT embeddings)
-- Versioned audit trail with disagreement flag first-class
-- Calibration metrics (Cohen's kappa ≥ 0.61, ECE < 0.10, position-bias flip-rate < 10%, etc.)
+**Locked: event-driven both for adds and recalibrations.**
 
-Sections 1-4 fully locked. Section 5 partially locked. Sections 6-8 pending.
+### Event-driven adds
+
+Triggers: catastrophic failure / quarterly review surfacing / operator domain judgment.
+Process: 3-LLM iterative-consensus extraction (per Q3) on ONLY new entry; commits.
+
+### Automated drift detection (post-add)
+
+Triggered automatically on every successful catalog add. Drift-detector LLM analyzes:
+- Vintage drift (does new entry's feature distribution differ systematically from older entries?)
+- Recategorization candidates (does new entry's framing reveal an existing entry should change archetype?)
+- Schema fitness (does new entry require new feature fields?)
+- Inconsistency surfacing (old entries where features were ambiguously coded)
+
+Output: structured `drift_detection_report` with proposed-changes list. Operator reviews each: ACCEPT / MODIFY / REJECT. Approved changes write to versioned `parameters` table.
+
+### Recursion guard
+
+Stops at depth=1 (single round of drift detection per add). Prevents infinite loops; logs "next-iteration recalibration candidates" for next add event.
 
 ---
 
-**Section 5 partial consensus committed. Q3-Q6 to follow.**
+## 6. Q5 LOCKED — L3 archetype is orthogonal tag, NOT mode-classification input
+
+**Locked: (a) L3 doesn't affect mode classification.**
+
+Mode is purely Section 1's quantitative classification rule (vol / cap / profitability / growth thresholds). L3 archetype is a separate orthogonal **tag** feeding Stage 2 LLM rubric (Q1) and the Macro-Regime style agent in P4 (Section 4 Q7).
+
+Reasoning:
+- Mode = "what is this name NOW" (current financial profile). Section 1's rule captures this quantitatively for auditable reproducibility.
+- L3 archetype = "what does this name LOOK LIKE structurally" (pattern fit). Different question.
+- Edge cases (NVDA mega-cap with C-mode-shaped risk) handled correctly within-mode via mode-conditional discipline + L3 archetype tag in Stage 2 rubric. Macro-Regime agent in P4 sees both and applies tighter scrutiny without changing mode label.
+
+Engineering analogy: orthogonal `category` and `tags` columns. NVDA can be `mode=B'` AND `archetype=narrative-driven-AI-cycle` simultaneously.
+
+---
+
+## 7. Q6 LOCKED — Calibration architecture + lean ~50 test set
+
+### Calibration architecture (cross-domain synthesis)
+
+Per `Q6-Section5-synthesis.md` (4 parallel subagents: recommender/IR + threat-intel + legal precedent + medical CBR):
+
+**Test set design (3-set):**
+- Canaries (must always flag) — coverage = 100% required
+- Known-good (must NOT flag) — FP rate < 15% = HEADLINE metric
+- Stratified similarity (operator-annotated expected top-3) — NDCG@3 ≥ 0.7; Precision@3 ≥ 70%; Recall@10 ≥ 90%
+
+**Weight calibration:** Bayesian shrinkage toward equal-weight (Diebold-Pauly; same as Section 3 Q2). v0.1 λ ≈ 1.0; v0.5 λ ≈ 0.8; v1.0 λ ≈ 0.5. Never gradient-LTR until n≥500. Per-instance rubrics from legal-tech LRAGE.
+
+**Drift monitoring (3-trigger, MISP + Shepard's):**
+1. PM-override sightings ≥3 consecutive same-direction → review
+2. Regime-shift events (Section 3 Q3 BOCPD) → review regime-tied signatures
+3. Annual audit (Jan 1) + 5-of-15 test-case rotation
+
+**Misgrounding mitigation** (universal failure mode across 4 domains):
+- Pinpoint-cite enforcement (verbatim quote required for non-LOW ratings)
+- Quarterly hand-audit of random 10 retrievals
+- Multi-evaluator parity check on HIGH ratings
+
+### Test set: LEAN ~50 cases (NOT the 175-case research expansion)
+
+12 parallel subagents researched ~120 named cases across 9 sectors × 10 archetypes. Operator confirmed lean test set (avoiding maintenance burden + diminishing returns past 50).
+
+| Set | Count | Role |
+|---|---|---|
+| **Canaries** | 20 | 2 per archetype × 10 archetypes |
+| **Known-good** | 15 | 1 per surface-similarity-to-canary cluster (anti-FP coverage) |
+| **Stratified similarity** | 15 | 1-2 per archetype with operator-annotated expected top-3 |
+| **Total** | **~50** | Manageable upfront + annual rotation; covers all 10 archetypes |
+
+#### Canary set (20)
+Theranos, Wirecard, FTX, Luckin Coffee, Enron, Adelphia, Tyco, Toshiba, WorldCom, SVB, Lehman, AIG, Cisco-2000, Pets.com, WeWork, Hyzon, Cazoo, Evergrande, Didi, JCPenney.
+
+#### Known-good set (15)
+PLTR (anti-Theranos), NVDA (anti-Cisco-2000), AMZN 2001 (anti-Pets.com), MSFT 2014-16 (anti-tech-decay), JPM 2008 (anti-Lehman), MS Sep-Oct 2008 (anti-SVB), WFC 2016-2024 (anti-governance), Snap (anti-zero-vote), BABA (anti-regulatory-edict), CMG 2015-18 (anti-retail-decline), LLY (anti-patent-cliff), DPZ 2010 (anti-brand-erosion), ABBV (anti-biotech-blockbuster-cliff), XOM 2014-20 (anti-energy-debt-cycle), ABNB (anti-recent-IPO-collapse).
+
+#### Stratified similarity set (15)
+1-2 cases per archetype with operator-annotated expected top-3 counterfactual matches.
+
+### 10 newly-surfaced structural archetypes
+
+A. Funding-side monoculture (vs asset-side); B. Long-fuse vs short-fuse failure timescales; C. Ch.22 retail (re-bankruptcy in 2-3y); D. SPAC sponsor-favorable + 90%+ redemptions; E. Real-estate Ponzi-like; F. Regulatory-edict (sovereign/political); G. Single-product → multi-franchise pivot (success); H. Captured-board looting vs founder-control RPT extraction; I. Long auditor tenure + dismissed short-seller; J. M&A-driven blowups.
+
+### Reference catalog vs test fixtures
+
+The other ~125 cases researched but not in test set become **reference material** stored in `L3-d-counterfactuals/` (extended catalog) and `L3-survivors/` with structured features. Used by Q2 mechanical-similarity retrieval; NOT gating tests; NOT validated against calibration metrics. Annual rotation pulls from this reservoir into the active 50-case test set.
+
+This separates **the catalog the system retrieves from** (large, comprehensive ~125 cases) from **the test set that gates calibration** (small, manageable ~50 cases).
+
+### Pre-launch validation gate
+
+Before v0.1 launches:
+1. Build 50-case test set
+2. Run mechanical similarity
+3. Validate: canary coverage 100% / FP rate <15% / NDCG@3 ≥0.7 / all audit-log fields populated / HMAC signature validates
+4. If any target missed → recalibrate weights or refine catalog feature schema
+5. Operator final approval before launch
+
+### Library deliverables for Q6 (committed)
+
+7 files in `.claude/references/empirical/data-sources/`:
+- `Q6-Section5-rec-sys-calibration.md` (4 calibration domains synthesis input)
+- `Q6-Section5-threat-intel-matching.md`
+- `Q6-Section5-legal-precedent-retrieval.md`
+- `Q6-Section5-medical-cbr.md`
+- `Q6-Section5-synthesis.md` (calibration architecture)
+- `Q6-Section5-test-set-expanded.md` (12-subagent research; 175-case proposal)
+- Plus 10 lane files (Q6-Section5-test-cases-*) covering 12 sector/archetype dimensions
+
+---
+
+## 8. Section 5 — fully closed
+
+All 6 questions locked:
+- **Q1** Three-stage hybrid scorer (mechanical → LLM with info-isolation → linter)
+- **Q2** Mechanical structural-feature retrieval + LLM narrative on top-3 (NOT embeddings)
+- **Q3** 3-LLM iterative-consensus catalog extraction with 5-iteration cap
+- **Q4** Event-driven adds + automated drift detection on every add
+- **Q5** L3 archetype is orthogonal tag, NOT mode-classification input
+- **Q6** Calibration architecture (Bayesian shrinkage; 3-trigger drift; misgrounding mitigation) + lean ~50 test set
+
+Sections 1-5 fully locked. Sections 6-8 pending (L4 view-refresh discipline; L5+L6 technical execution + multi-horizon disposition; coexistence with v2-final).
+
+Ready for Section 6 (L4 — View-refresh discipline review).
