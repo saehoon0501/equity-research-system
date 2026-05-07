@@ -97,5 +97,50 @@ def get_consensus_estimates(ticker: str) -> dict:
     }
 
 
+@mcp.tool()
+def get_target_prices(ticker: str) -> dict:
+    """Return sell-side target price summary for `ticker`.
+
+    Schema per spec §9.1:
+        {
+            "target_high": float | None,
+            "target_low": float | None,
+            "target_mean": float | None,
+            "target_median": float | None,
+            "number_of_analyst_opinions": int | None,
+            "recommendation_mean": float | None,
+            "recommendation_key": str | None,
+        }
+
+    recommendation_mean is on a 1.0–5.0 scale (1=Strong Buy, 5=Strong Sell).
+    recommendation_key is the human-readable form ("strong_buy", "buy",
+    "hold", "underperform", "sell").
+
+    Failure modes:
+        - Unknown ticker: {"ticker_not_found": True}
+    """
+    t = yf.Ticker(ticker)
+    if _is_ticker_unknown(t):
+        return {"ticker_not_found": True}
+    info = t.info or {}
+
+    # Coerce analyst-count int (yfinance returns float/NaN sometimes; same pattern as Task 5)
+    raw_count = info.get("numberOfAnalystOpinions")
+    try:
+        count = int(raw_count) if raw_count is not None else None
+    except (TypeError, ValueError):
+        count = None
+
+    return {
+        "target_high": info.get("targetHighPrice"),
+        "target_low": info.get("targetLowPrice"),
+        "target_mean": info.get("targetMeanPrice"),
+        "target_median": info.get("targetMedianPrice"),
+        "number_of_analyst_opinions": count,
+        "recommendation_mean": info.get("recommendationMean"),
+        "recommendation_key": info.get("recommendationKey"),
+    }
+
+
 if __name__ == "__main__":
     mcp.run()

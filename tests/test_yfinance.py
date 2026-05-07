@@ -25,6 +25,7 @@ sys.modules["yfinance_mcp_server"] = _module
 _spec.loader.exec_module(_module)
 
 get_consensus_estimates = _module.get_consensus_estimates
+get_target_prices = _module.get_target_prices
 
 
 @pytest.mark.integration
@@ -46,4 +47,26 @@ def test_get_consensus_estimates_aapl_returns_required_fields():
 @pytest.mark.integration
 def test_get_consensus_estimates_unknown_ticker_returns_not_found():
     result = get_consensus_estimates("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_get_target_prices_aapl_returns_required_fields():
+    result = get_target_prices("AAPL")
+    assert isinstance(result, dict)
+    for key in (
+        "target_high",
+        "target_low",
+        "target_mean",
+        "target_median",
+        "number_of_analyst_opinions",
+        "recommendation_mean",
+        "recommendation_key",
+    ):
+        assert key in result, f"missing required field {key}"
+
+
+@pytest.mark.integration
+def test_get_target_prices_unknown_ticker_returns_not_found():
+    result = get_target_prices("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}
