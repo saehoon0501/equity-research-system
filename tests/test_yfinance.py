@@ -136,3 +136,34 @@ def test_get_peer_comps_aapl_returns_list():
 def test_get_peer_comps_unknown_ticker_returns_not_found():
     result = get_peer_comps("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("fn_name", [
+    "get_consensus_estimates",
+    "get_target_prices",
+    "get_calendar",
+    "get_holders",
+])
+def test_unknown_ticker_returns_not_found_dict(fn_name):
+    """All scalar-returning endpoints must return {ticker_not_found: True} consistently for unknown tickers."""
+    fn = getattr(_module, fn_name)
+    result = fn("ZZZZNOTAREALTICKER12345")
+    assert result == {"ticker_not_found": True}, (
+        f"{fn_name} did not return {{ticker_not_found: True}} for unknown ticker; "
+        f"got {result!r}"
+    )
+
+
+@pytest.mark.integration
+def test_unknown_ticker_recommendations_returns_not_found_dict():
+    """get_recommendations returns list normally; for unknown ticker it returns the failure-mode dict (not a list)."""
+    result = _module.get_recommendations("ZZZZNOTAREALTICKER12345")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_unknown_ticker_peer_comps_returns_not_found_dict():
+    """get_peer_comps returns list normally; for unknown ticker it returns the failure-mode dict (not a list)."""
+    result = _module.get_peer_comps("ZZZZNOTAREALTICKER12345")
+    assert result == {"ticker_not_found": True}
