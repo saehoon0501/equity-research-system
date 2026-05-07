@@ -18,6 +18,7 @@ No persistent cache in v1 (spec §9.3 calls for Postgres cache; deferred).
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -140,6 +141,66 @@ def get_target_prices(ticker: str) -> dict:
         "recommendation_mean": info.get("recommendationMean"),
         "recommendation_key": info.get("recommendationKey"),
     }
+
+
+@mcp.tool()
+def get_recommendations(ticker: str, days: int = 90) -> list[dict] | dict:
+    """Return analyst upgrade/downgrade events within the last `days` days.
+
+    Schema per spec §9.1:
+        [
+            {
+                "firm": str,
+                "to_grade": str,
+                "from_grade": str,
+                "action": str,    # e.g. "up", "down", "init", "main", "reit"
+                "date": str,      # ISO 8601
+            },
+            ...
+        ]
+
+    Failure modes:
+        - Unknown ticker: {"ticker_not_found": True}  (returns dict, not list)
+        - No recent activity within window: []
+        - yfinance API drift / different schema: best-effort parse; return [] if unreadable
+
+    Note: yfinance 0.2.66 exposes per-event upgrade/downgrade data via
+    `Ticker.upgrades_downgrades` (DatetimeIndex=GradeDate, cols=Firm/ToGrade/
+    FromGrade/Action). `Ticker.recommendations` in this version returns a
+    period-level summary (strongBuy/buy/hold/sell/strongSell) which is
+    incompatible with the per-event schema above.
+    """
+    t = yf.Ticker(ticker)
+    if _is_ticker_unknown(t):
+        return {"ticker_not_found": True}
+
+    try:
+        rec_df = t.upgrades_downgrades
+    except Exception:
+        return []
+    if rec_df is None or (hasattr(rec_df, "empty") and rec_df.empty):
+        return []
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    items: list[dict] = []
+    for idx, row in rec_df.iterrows():
+        try:
+            # idx is a pandas Timestamp (DatetimeIndex named GradeDate)
+            row_date = idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx
+            if hasattr(row_date, "tzinfo") and row_date.tzinfo is None:
+                row_date = row_date.replace(tzinfo=timezone.utc)
+            if hasattr(row_date, "__lt__") and row_date < cutoff:
+                continue
+            items.append({
+                "firm": str(row.get("Firm", "") or ""),
+                "to_grade": str(row.get("ToGrade", row.get("To Grade", "")) or ""),
+                "from_grade": str(row.get("FromGrade", row.get("From Grade", "")) or ""),
+                "action": str(row.get("Action", "") or ""),
+                "date": row_date.isoformat() if hasattr(row_date, "isoformat") else str(row_date),
+            })
+        except Exception:
+            continue
+    return items
 
 
 if __name__ == "__main__":

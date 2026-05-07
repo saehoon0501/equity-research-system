@@ -26,6 +26,7 @@ _spec.loader.exec_module(_module)
 
 get_consensus_estimates = _module.get_consensus_estimates
 get_target_prices = _module.get_target_prices
+get_recommendations = _module.get_recommendations
 
 
 @pytest.mark.integration
@@ -69,4 +70,20 @@ def test_get_target_prices_aapl_returns_required_fields():
 @pytest.mark.integration
 def test_get_target_prices_unknown_ticker_returns_not_found():
     result = get_target_prices("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_get_recommendations_aapl_returns_list():
+    result = get_recommendations("AAPL", days=90)
+    assert isinstance(result, list)
+    if result:
+        item = result[0]
+        for key in ("firm", "to_grade", "from_grade", "action", "date"):
+            assert key in item, f"missing required field {key}"
+
+
+@pytest.mark.integration
+def test_get_recommendations_unknown_ticker_returns_not_found():
+    result = get_recommendations("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}
