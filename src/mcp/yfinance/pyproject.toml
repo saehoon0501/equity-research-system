@@ -1,0 +1,13 @@
+[project]
+name = "equity-research-yfinance-mcp"
+version = "0.1.0"
+description = "yfinance MCP server. Wraps Yahoo Finance for consensus estimates, target prices, holders, calendar, peer comps. Personal research use only — Yahoo ToS prohibits automated commercial access."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "yfinance>=0.2.40,<0.3",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
