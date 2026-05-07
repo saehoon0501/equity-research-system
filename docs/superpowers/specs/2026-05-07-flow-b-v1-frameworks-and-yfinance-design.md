@@ -3,8 +3,10 @@
 **Date:** 2026-05-07
 **Author:** equity-research-system operator + Claude (brainstorming session)
 **Scope:** Expand `/research-company` (Flow B) along two axes — (1) encode named, citable analytical frameworks into CDD and BearCase agent prompts; (2) wire in `yfinance` as a new MCP for consensus estimates, target prices, and holders data. Establish a `tier` classification discipline that routes which frameworks apply.
-**Status:** Approved by operator 2026-05-07. Pending implementation plan.
-**Out of scope:** CatalystScout subagent, Polygon/Massive options MCP, macro-stack MCP (BLS/BEA/Census/EIA), PMSupervisor changes beyond reading the new `tier` field, schema changes, evidence_index producer fix.
+**Status:** Approved 2026-05-07; v1.1 architectural amendment 2026-05-07 (see §16).
+**Out of scope:** CatalystScout subagent, Polygon/Massive options MCP, macro-stack MCP (BLS/BEA/Census/EIA), PMSupervisor changes beyond reading the new `tier` field, evidence_index producer fix.
+
+> **2026-05-07 v1.1 amendment** — see §16 below. Single-CDD architecture replaced by 4-agent ensemble (`cdd-lead` + `quantitative-analyst` + `strategic-analyst` + `search-agent`); per-sector static reference files replaced by dynamic brief generation + two persistent caches: `research_essentials` (atemporal cross-company learnings, migration `027_research_essentials.sql`) and `analyst_briefs` (per-ticker time-stamped brief history with cold/warm-start delta detection, migration `028_analyst_briefs.sql`). Sections 1–15 retained as the framework canon foundation; the agent topology in §3 is superseded by §16.
 
 ---
 
@@ -416,3 +418,183 @@ Research conducted 2026-05-07 via 9 parallel research subagents. Full citations 
 Failure-mode evidence:
 - ARK TSLA target $7,000 (2020) vs actual ~$200-400 — methodology resets goalpost without retrospective accuracy reporting (Seeking Alpha 2024).
 - WSB / BUZZ ETF -3.58% Apr 2021–Mar 2024 vs VOO +11.58% — retail sentiment bottom-tier signal (Alpha Architect 2024).
+
+---
+
+## 16. v1.1 Architectural Amendment (2026-05-07)
+
+The single-CDD topology in §3 is superseded by a 4-agent ensemble. Sections 1, 2, 4–8, and 11–15 (the framework canon, tier rubric, banned outputs, quality gate, testing, risk register) are unchanged and remain load-bearing. Section 9 (yfinance MCP) is unchanged. Section 7 (sector addenda) is replaced by §16.4 below.
+
+### 16.1 Why the rewrite
+
+Three operator observations during plan implementation:
+
+1. **CDD was overloaded** — single-agent single-context juggled tier classification + 5 frameworks + sector addenda + integration + evidence_index population.
+2. **Static per-sector reference files violate sector-agnosticism** — a hardcoded sector taxonomy can't handle novel sectors (e.g., 2027 vertical-AI-agent companies) and goes stale fast.
+3. **Source-routing knowledge belongs in one place** — knowing CNBC for daily news, FRED for macro, McKinsey for industry outlook, EDGAR for filings, etc., should be encoded once and reused across CDD, BearCase, daily-monitor, anchor-drift.
+
+### 16.2 New agent topology
+
+```
+                  /research-company TICKER
+                            │
+                            ▼
+                   ┌──────────────────────┐
+                   │ cdd-lead (Stage 1)   │
+                   │  - tier classify     │
+                   │  - sector identify   │
+                   │  - read essentials   │◀──┐
+                   │  - dispatch search   │   │
+                   │  - build briefs      │   │
+                   │  - dispatch analysts │   │
+                   └────┬───────┬─────────┘   │
+                  parallel│       │parallel    │
+                          ▼       ▼            │
+              ┌───────────────┐ ┌──────────────┐│
+              │ quantitative- │ │ strategic-   ││
+              │   analyst     │ │   analyst    ││
+              │ (calls search)│ │(calls search)││
+              └───────┬───────┘ └──────┬───────┘│
+                      └───────┬────────┘        │
+                              ▼                 │
+                   ┌──────────────────────┐     │
+                   │ cdd-lead (Stage 2)   │     │
+                   │  - integrate         │     │
+                   │  - dispatch search   │     │
+                   │    (verify claims)   │     │
+                   │  - distill essentials├─────┘
+                   │  - banned-out check  │ UPSERT to
+                   │  - evidence_index    │ research_essentials
+                   │  - emit memo         │
+                   └──────────┬───────────┘
+                              ▼
+                          bear-case
+                   (also dispatches search)
+                              │
+                              ▼
+                          evaluator
+                              │
+                              ▼
+                       PMSupervisor
+```
+
+### 16.3 Agent specs
+
+| Agent | Direct MCP tools | Dispatches | Frameworks owned | Prompt size |
+|---|---|---|---|---|
+| `cdd-lead` | `mcp__postgres__*`, Read, Bash | search-agent, quantitative-analyst, strategic-analyst | None — orchestrator + integrator | ~6K |
+| `search-agent` | edgar, market_data, yfinance, fundamentals, fred, postgres, WebFetch | none | None — data finder with source-routing knowledge | ~5K |
+| `quantitative-analyst` | `mcp__postgres__*`, Read | search-agent | Damodaran narrative-DCF, Mauboussin reverse-DCF, Quality gate (Piotroski + Altman) | ~6K |
+| `strategic-analyst` | `mcp__postgres__*`, Read | search-agent | Mauboussin Moat 2024, Helmer 7 Powers, Mauboussin Capital Allocation | ~6K |
+| `bear-case` | `mcp__postgres__*`, Read | search-agent | Same 5 frameworks adversarially | ~7K |
+| `evaluator` | `mcp__postgres__*`, `mcp__contamination_check__*` | none | Hard gates | unchanged |
+
+### 16.4 Sector context — dynamic, not static
+
+Static per-sector files (§7 of original spec) are eliminated. Replaced by:
+
+**Templates (one each, structure only, ~1K tokens each):**
+- `.claude/references/analyst-context-templates/quantitative.md`
+- `.claude/references/analyst-context-templates/strategic.md`
+
+**Dynamic brief generation** in cdd-lead Stage 1: for each analyst, populate the template with sector- and company-specific content drawn from (a) `research_essentials` (persistent learnings from prior runs), (b) fresh search-agent calls (latest news, filings, peers), (c) the 5-framework core canon. Briefs injected at analyst dispatch time.
+
+This makes the system handle novel sectors via the same code path as known sectors. No taxonomy maintenance.
+
+### 16.5 search-agent source-routing matrix
+
+Embedded in `search-agent` prompt:
+
+| Request type | Primary sources |
+|---|---|
+| Daily fast/holistic market view | CNBC RSS, market_data news |
+| Per-company fundamentals | EDGAR XBRL, yfinance |
+| Per-company consensus + targets | yfinance |
+| Macro context | FRED, BLS/BEA/Census via WebFetch |
+| Long-horizon industry outlook | McKinsey Insights, BCG Perspectives, JPM Eye on the Market (WebFetch) |
+| Catalyst calendar | EDGAR 8-Ks, BioPharmCatalyst, Wall Street Horizon (WebFetch) |
+| Recent sector trends | market_data news, CNBC RSS |
+| Peer comparison | yfinance + EDGAR SIC peers |
+| Options/derivatives positioning | DEFERRED to v2 (Polygon MCP) |
+
+Output schema: `{findings: [{claim, evidence, source_url, freshness_days}], sources_consulted: [], gaps: []}` — designed for direct injection into another agent's prompt.
+
+### 16.6 Two persistent caches
+
+Two distinct tables. Two schema additions:
+
+#### `research_essentials` (migration `027_research_essentials.sql`) — atemporal, cross-company
+
+Durable methodology learnings. Informs HOW briefs are built across all tickers.
+
+```sql
+CREATE TABLE research_essentials (
+  key TEXT PRIMARY KEY,
+  content TEXT NOT NULL,
+  topic_tags TEXT[] NOT NULL,
+  source_run_ids TEXT[] NOT NULL,
+  confidence INT NOT NULL DEFAULT 1,
+  last_updated TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX research_essentials_tags_idx ON research_essentials USING GIN(topic_tags);
+```
+
+Lifecycle:
+- **Read (Stage 1):** `SELECT FROM research_essentials WHERE topic_tags && {sector, tier, framework_keys}` injected into briefs.
+- **Write (Stage 2):** cdd-lead distills 0–3 durable cross-company learnings per run, UPSERTs by `key`, increments `confidence` on reaffirmation.
+- **Decay protection:** essentials with `confidence < 3` flagged "preliminary"; brief-generator must re-verify via search-agent before relying.
+
+#### `analyst_briefs` (migration `028_analyst_briefs.sql`) — per-ticker, time-stamped
+
+The actual briefs delivered to analysts on each run. Informs WHAT was the analytical frame last time for this specific ticker. Enables warm-start delta-generation and longitudinal drift audits.
+
+```sql
+CREATE TABLE analyst_briefs (
+  brief_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticker TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  brief_type TEXT NOT NULL CHECK (brief_type IN ('quantitative', 'strategic')),
+  tier TEXT NOT NULL CHECK (tier IN ('core_fundamental','thematic_growth','speculative_optionality')),
+  sector_identification TEXT NOT NULL,
+  content TEXT NOT NULL,
+  sources_used JSONB NOT NULL,
+  essentials_referenced TEXT[] NOT NULL,
+  prior_brief_id UUID REFERENCES analyst_briefs(brief_id),
+  delta_summary TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX analyst_briefs_ticker_type_recent
+  ON analyst_briefs(ticker, brief_type, created_at DESC);
+CREATE INDEX analyst_briefs_ticker_recent
+  ON analyst_briefs(ticker, created_at DESC);
+```
+
+Lifecycle (cdd-lead Stage 1):
+1. `SELECT * FROM analyst_briefs WHERE ticker=T AND brief_type IN ('quantitative','strategic') ORDER BY created_at DESC LIMIT 2` → **cold-start** if empty; **warm-start** otherwise.
+2. Cold-start: search-agent runs full sweep (8–12 calls); brief built from canonical-frameworks + essentials + fresh search.
+3. Warm-start: search-agent runs delta-sweep (4–6 calls), focused on the time window since `prior.created_at`; brief built as delta against prior (preserves continuity, surfaces what changed).
+4. INSERT new row with `prior_brief_id` link + `delta_summary` (the human-readable diff: "Tier unchanged; sector reclassified semis→AI-native; new peer ARM; Q3 beat + guide raise; capital allocation grade B→A on $25B buyback").
+5. Inject brief + delta_summary into analyst dispatch prompts.
+
+What this unlocks:
+- **Warm-run cost reduction** — token cost typically drops 30–50% on subsequent runs of the same ticker (search-agent does delta-sweep, not full sweep).
+- **Material-event detection by construction** — `delta_summary` is itself a high-signal artifact for monitoring slow-layer changes.
+- **Auditable analytical drift** — linked-list via `prior_brief_id` lets the operator walk the history of how a thesis framing evolved.
+- **`/quarterly-reunderwrite` becomes a brief-delta exercise** — re-underwrite is fundamentally "regenerate the brief, surface the delta against last quarter's brief."
+- **BearCase anchoring** — bear-case reads recent briefs for the ticker via search-agent and argues why prior framings were wrong, not just the current one.
+
+Retention: keep all briefs indefinitely. Storage trivial (~5KB × 2 × 50 runs/yr ≈ 500KB/yr). Audit value dominates.
+
+### 16.7 Risks introduced by amendment
+
+| Risk | Mitigation |
+|---|---|
+| `research_essentials` accumulates bad content | Confidence counter; <3 reaffirmations = "preliminary" + re-verify rule |
+| Dynamic brief generation hallucinates novel-sector context | Brief MUST cite ≥2 sources from search-agent; if zero, surface "thin sector knowledge" flag for bear-case attack |
+| 4 agents = 4× evaluator workload | Evaluator grades each output independently; total grading cost rises ~30% but per-output grade is faster (smaller outputs) |
+| search-agent drift / staleness on source list | Source-routing matrix is part of agent prompt; reviewed on each spec amendment |
+| Token cost rises ~15-20% per memo from larger ensemble | Offset by analyst parallelism (latency drops ~50%) and brief-injection making analyst prompts smaller |
+
+### 16.8 Out of scope (still)
+
+Same as original §14, plus the explicit deferral of options/derivatives positioning data (search-agent flags but cannot retrieve in v1).
