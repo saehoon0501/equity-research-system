@@ -1,0 +1,84 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/postgres",
+        "python",
+        "src/mcp/postgres/server.py"
+      ]
+    },
+    "contamination_check": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/contamination_check",
+        "python",
+        "src/mcp/contamination_check/server.py"
+      ]
+    },
+    "edgar": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/edgar",
+        "python",
+        "src/mcp/edgar/server.py"
+      ]
+    },
+    "market_data": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/market_data",
+        "python",
+        "src/mcp/market_data/server.py"
+      ]
+    },
+    "fundamentals": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/fundamentals",
+        "python",
+        "src/mcp/fundamentals/server.py"
+      ]
+    },
+    "fred": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/fred",
+        "python",
+        "src/mcp/fred/server.py"
+      ]
+    },
+    "broker": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/broker_mcp",
+        "python",
+        "src/mcp/broker_mcp/server.py"
+      ]
+    },
+    "yfinance": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "src/mcp/yfinance",
+        "python",
+        "src/mcp/yfinance/server.py"
+      ]
+    }
+  }
+}
