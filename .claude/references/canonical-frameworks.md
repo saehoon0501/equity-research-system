@@ -16,6 +16,12 @@ Bind a defensible business narrative to a numerical DCF. Stress test 3 cases (be
 
 Translate the current price into implied growth, margin, and competitive-advantage period. Compare implied expectations to historical ROIIC (via Mauboussin & Callahan's MEROI: https://www.morganstanley.com/im/publication/insights/articles/article_marketexpectedreturnoninvestment_en.pdf).
 
+### mauboussin_meroi
+
+**Source:** Mauboussin & Callahan, "Market-Expected Return on Investment (MEROI)" (Counterpoint Global / Morgan Stanley). https://www.morganstanley.com/im/publication/insights/articles/article_marketexpectedreturnoninvestment_en.pdf
+
+Operational form of reverse-DCF: turns implied expectations into a single comparable number you can benchmark against the company's historical ROIIC. Use alongside `mauboussin_reverse_dcf` when the analyst wants a single-number summary of price-implied expectations.
+
 ### mauboussin_moat_2024
 
 **Source:** Mauboussin & Callahan, "Measuring the Moat" (Counterpoint Global / Morgan Stanley, 2024 ed.). https://www.morganstanley.com/im/publication/insights/articles/article_measuringthemoat.pdf
@@ -47,6 +53,20 @@ Five-bucket framework graded against ROIC vs WACC: CapEx, R&D, M&A, dividends, b
 **Source:** Altman, "Financial Ratios, Discriminant Analysis and the Prediction of Corporate Bankruptcy," J. Finance 23(4) (1968), pp. 589–609. PDF: https://www.calctopia.com/papers/Altman1968.pdf
 
 Z-score (manufacturers) or Z'' (non-manufacturers/EM). Memo gates to REJECT if Z'' < 1.1.
+
+## Supporting references
+
+### damodaran_data
+
+**Source:** Aswath Damodaran, NYU Stern data hub. https://pages.stern.nyu.edu/~adamodar/
+
+Annual ERP, country risk, industry betas, multiples by sector. Load-bearing for any DCF or relative valuation. Cite when using ERP, beta, or sector multiples in `damodaran_narrative_dcf` or peer-comp analysis.
+
+### koller_valuation_7e
+
+**Source:** Koller, Goedhart, Wessels, "Valuation: Measuring and Managing the Value of Companies," 7th ed. (McKinsey/Wiley, 2020). ~896 pages.
+
+ROIC × growth value-driver tree; operating-leverage decomposition. Empirical chapter showing top-quintile ROIC firms persist ~5pp above average 15 years out (US 1963–2017). Cite when invoking ROIC > WACC framing or sector-level operating-leverage analysis.
 
 ## Sector addenda
 
