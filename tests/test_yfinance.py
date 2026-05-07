@@ -29,6 +29,7 @@ get_target_prices = _module.get_target_prices
 get_recommendations = _module.get_recommendations
 get_calendar = _module.get_calendar
 get_holders = _module.get_holders
+get_peer_comps = _module.get_peer_comps
 
 
 @pytest.mark.integration
@@ -117,4 +118,21 @@ def test_get_holders_aapl_returns_required_fields():
 @pytest.mark.integration
 def test_get_holders_unknown_ticker_returns_not_found():
     result = get_holders("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_get_peer_comps_aapl_returns_list():
+    result = get_peer_comps("AAPL")
+    assert isinstance(result, list)
+    if result:
+        peer = result[0]
+        for key in ("ticker", "pe", "ev_ebitda", "ev_sales", "market_cap"):
+            assert key in peer, f"missing required field {key}"
+        assert peer["ticker"] != "AAPL"  # peer should not be self
+
+
+@pytest.mark.integration
+def test_get_peer_comps_unknown_ticker_returns_not_found():
+    result = get_peer_comps("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}

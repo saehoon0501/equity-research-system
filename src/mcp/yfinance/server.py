@@ -340,5 +340,65 @@ def get_holders(ticker: str) -> dict:
     }
 
 
+@mcp.tool()
+def get_peer_comps(ticker: str, max_peers: int = 5) -> list[dict] | dict:
+    """Return peer tickers + key valuation multiples for `ticker`.
+
+    yfinance does NOT expose a first-class peer-discovery API in 0.2.x.
+    v1 returns an empty list when no peers can be derived from yfinance
+    surfaces. The CDD agent prompt instructs the agent to fall back to
+    EDGAR SIC peers in that case.
+
+    Schema per spec §9.1:
+        [
+            {
+                "ticker": str,
+                "pe": float | None,
+                "ev_ebitda": float | None,
+                "ev_sales": float | None,
+                "market_cap": float | None,
+            },
+            ...
+        ]
+
+    Failure modes:
+        - Unknown ticker: {"ticker_not_found": True}  (returns dict, not list)
+        - No peers derivable: []
+    """
+    t = yf.Ticker(ticker)
+    if _is_ticker_unknown(t):
+        return {"ticker_not_found": True}
+
+    # yfinance has no first-class peer surface as of 0.2.66.
+    # Probe a few candidate fields; fall back to empty list.
+    peers: list[str] = []
+    info = t.info or {}
+    related = info.get("recommendationsList") or getattr(t, "related_tickers", None)
+    if related and isinstance(related, (list, tuple)):
+        # Filter out self and keep only string tickers
+        peers = [p for p in related if isinstance(p, str) and p != ticker.upper()][:max_peers]
+
+    if not peers:
+        return []
+
+    out: list[dict] = []
+    for peer_ticker in peers:
+        try:
+            pt = yf.Ticker(peer_ticker)
+            if _is_ticker_unknown(pt):
+                continue
+            pi = pt.info or {}
+            out.append({
+                "ticker": peer_ticker,
+                "pe": pi.get("trailingPE"),
+                "ev_ebitda": pi.get("enterpriseToEbitda"),
+                "ev_sales": pi.get("enterpriseToRevenue"),
+                "market_cap": pi.get("marketCap"),
+            })
+        except Exception:
+            continue
+    return out
+
+
 if __name__ == "__main__":
     mcp.run()
