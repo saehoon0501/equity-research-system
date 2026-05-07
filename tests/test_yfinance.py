@@ -28,6 +28,7 @@ get_consensus_estimates = _module.get_consensus_estimates
 get_target_prices = _module.get_target_prices
 get_recommendations = _module.get_recommendations
 get_calendar = _module.get_calendar
+get_holders = _module.get_holders
 
 
 @pytest.mark.integration
@@ -101,4 +102,19 @@ def test_get_calendar_aapl_returns_required_fields():
 @pytest.mark.integration
 def test_get_calendar_unknown_ticker_returns_not_found():
     result = get_calendar("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_get_holders_aapl_returns_required_fields():
+    result = get_holders("AAPL")
+    assert isinstance(result, dict)
+    for key in ("institutional_holders", "major_holders", "insider_holders", "institutional_pct"):
+        assert key in result
+    assert isinstance(result["institutional_holders"], list)
+
+
+@pytest.mark.integration
+def test_get_holders_unknown_ticker_returns_not_found():
+    result = get_holders("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}

@@ -262,5 +262,83 @@ def get_calendar(ticker: str) -> dict:
     }
 
 
+@mcp.tool()
+def get_holders(ticker: str) -> dict:
+    """Return institutional + insider ownership snapshot for `ticker`.
+
+    Schema per spec §9.1:
+        {
+            "institutional_holders": [
+                {"holder": str, "shares": int, "pct_held": float, "value": float},
+                ...
+            ],
+            "major_holders": {<key>: <value>, ...},
+            "insider_holders": [...],
+            "institutional_pct": float | None,
+            "qoq_delta": float | None,
+        }
+
+    Failure modes:
+        - Unknown ticker: {"ticker_not_found": True}
+    """
+    t = yf.Ticker(ticker)
+    if _is_ticker_unknown(t):
+        return {"ticker_not_found": True}
+
+    def _df_to_records(df) -> list[dict]:
+        if df is None or (hasattr(df, "empty") and df.empty):
+            return []
+        try:
+            return df.to_dict(orient="records")
+        except Exception:
+            return []
+
+    # institutional_holders columns: Date Reported, Holder, pctHeld, Shares, Value, pctChange
+    inst_raw = _df_to_records(getattr(t, "institutional_holders", None))
+    inst = [
+        {
+            "holder": str(r.get("Holder", "") or ""),
+            "shares": int(r["Shares"]) if r.get("Shares") is not None else None,
+            "pct_held": float(r["pctHeld"]) if r.get("pctHeld") is not None else None,
+            "value": float(r["Value"]) if r.get("Value") is not None else None,
+        }
+        for r in inst_raw
+    ]
+
+    # insider_purchases is available; insider_holders is None in yfinance 0.2.66
+    insiders = _df_to_records(getattr(t, "insider_purchases", None))
+
+    # major_holders: DataFrame with Breakdown index and Value column
+    major: dict = {}
+    try:
+        mh = t.major_holders
+        if mh is not None and hasattr(mh, "empty") and not mh.empty:
+            if "Breakdown" in mh.columns and "Value" in mh.columns:
+                # Breakdown + Value columns (some yfinance versions)
+                for _, row in mh.iterrows():
+                    major[str(row["Breakdown"])] = row["Value"]
+            elif "Value" in mh.columns:
+                # Index is the label, Value column holds the number
+                for label, row in mh.iterrows():
+                    major[str(label)] = row["Value"]
+            else:
+                # Two-column fallback: first col = value, second col = label
+                for _, row in mh.iterrows():
+                    vals = list(row.values)
+                    if len(vals) >= 2:
+                        major[str(vals[1])] = vals[0]
+    except Exception:
+        pass
+
+    info = t.info or {}
+    return {
+        "institutional_holders": inst,
+        "major_holders": major,
+        "insider_holders": insiders,
+        "institutional_pct": info.get("heldPercentInstitutions"),
+        "qoq_delta": None,  # not directly available; would compute from cross-quarter snapshots
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
