@@ -27,6 +27,7 @@ _spec.loader.exec_module(_module)
 get_consensus_estimates = _module.get_consensus_estimates
 get_target_prices = _module.get_target_prices
 get_recommendations = _module.get_recommendations
+get_calendar = _module.get_calendar
 
 
 @pytest.mark.integration
@@ -86,4 +87,18 @@ def test_get_recommendations_aapl_returns_list():
 @pytest.mark.integration
 def test_get_recommendations_unknown_ticker_returns_not_found():
     result = get_recommendations("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
+
+
+@pytest.mark.integration
+def test_get_calendar_aapl_returns_required_fields():
+    result = get_calendar("AAPL")
+    assert isinstance(result, dict)
+    for key in ("next_earnings_date", "ex_dividend_date", "dividend_date"):
+        assert key in result
+
+
+@pytest.mark.integration
+def test_get_calendar_unknown_ticker_returns_not_found():
+    result = get_calendar("ZZZZNOTAREALTICKER")
     assert result == {"ticker_not_found": True}

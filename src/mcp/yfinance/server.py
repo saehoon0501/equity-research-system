@@ -203,5 +203,64 @@ def get_recommendations(ticker: str, days: int = 90) -> list[dict] | dict:
     return items
 
 
+@mcp.tool()
+def get_calendar(ticker: str) -> dict:
+    """Return upcoming corporate calendar events for `ticker`.
+
+    Schema per spec §9.1:
+        {
+            "next_earnings_date": str | None,  # ISO 8601 date
+            "ex_dividend_date": str | None,
+            "dividend_date": str | None,
+        }
+
+    Failure modes:
+        - Unknown ticker: {"ticker_not_found": True}
+    """
+    t = yf.Ticker(ticker)
+    if _is_ticker_unknown(t):
+        return {"ticker_not_found": True}
+
+    def _coerce_date(v) -> str | None:
+        if v is None or (isinstance(v, float) and v != v):  # NaN check
+            return None
+        if isinstance(v, (int, float)):
+            # Unix epoch seconds → ISO date
+            try:
+                return datetime.fromtimestamp(int(v), tz=timezone.utc).date().isoformat()
+            except (ValueError, OSError):
+                return None
+        if hasattr(v, "isoformat"):
+            try:
+                return v.isoformat()
+            except Exception:
+                pass
+        return str(v) if v else None
+
+    cal = None
+    try:
+        cal = t.calendar
+    except Exception:
+        cal = None
+
+    if isinstance(cal, dict) and cal:
+        earnings_dates = cal.get("Earnings Date")
+        # yfinance returns list of dates for earnings; take first
+        next_earnings = earnings_dates[0] if isinstance(earnings_dates, list) and earnings_dates else earnings_dates
+        return {
+            "next_earnings_date": _coerce_date(next_earnings),
+            "ex_dividend_date": _coerce_date(cal.get("Ex-Dividend Date")),
+            "dividend_date": _coerce_date(cal.get("Dividend Date")),
+        }
+
+    # Fall back to info-derived
+    info = t.info or {}
+    return {
+        "next_earnings_date": _coerce_date(info.get("earningsTimestamp")),
+        "ex_dividend_date": _coerce_date(info.get("exDividendDate")),
+        "dividend_date": _coerce_date(info.get("dividendDate")),
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
