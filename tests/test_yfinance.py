@@ -1,0 +1,49 @@
+"""Integration smoke tests for the yfinance MCP server.
+
+Hits LIVE Yahoo Finance via the `yfinance` Python lib. Network-dependent;
+mark @pytest.mark.integration when we wire up offline CI later.
+
+Run from repo root:
+    pytest tests/test_yfinance.py -v
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+import pytest
+
+# Load the MCP server module by path; bare `from server import X` collides
+# across MCP test files because every MCP module is named `server`.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SERVER_PATH = _REPO_ROOT / "src/mcp/yfinance/server.py"
+_spec = importlib.util.spec_from_file_location("yfinance_mcp_server", _SERVER_PATH)
+_module = importlib.util.module_from_spec(_spec)
+sys.modules["yfinance_mcp_server"] = _module
+_spec.loader.exec_module(_module)
+
+get_consensus_estimates = _module.get_consensus_estimates
+
+
+@pytest.mark.integration
+def test_get_consensus_estimates_aapl_returns_required_fields():
+    result = get_consensus_estimates("AAPL")
+    assert isinstance(result, dict)
+    for key in (
+        "fy_eps_mean",
+        "fy_revenue_mean",
+        "next_q_eps_mean",
+        "next_q_revenue_mean",
+        "analyst_count",
+    ):
+        assert key in result, f"missing required field {key}"
+    # analyst_count is int or None
+    assert result["analyst_count"] is None or isinstance(result["analyst_count"], int)
+
+
+@pytest.mark.integration
+def test_get_consensus_estimates_unknown_ticker_returns_not_found():
+    result = get_consensus_estimates("ZZZZNOTAREALTICKER")
+    assert result == {"ticker_not_found": True}
