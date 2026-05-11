@@ -79,6 +79,28 @@
         "python",
         "src/mcp/yfinance/server.py"
       ]
+    },
+    "polygon": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "src/mcp/polygon",
+        "python",
+        "server.py"
+      ],
+      "cwd": "."
+    },
+    "macro_stack": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "src/mcp/macro_stack",
+        "python",
+        "server.py"
+      ],
+      "cwd": "."
     }
   }
 }

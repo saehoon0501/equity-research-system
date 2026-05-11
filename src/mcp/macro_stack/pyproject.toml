@@ -1,0 +1,16 @@
+[project]
+name = "macro-stack-mcp"
+version = "0.1.0"
+description = "Unified BLS + BEA + Census MCP for macro data — complements fred"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+package = false
