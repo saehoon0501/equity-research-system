@@ -131,3 +131,25 @@ Empirically rejects classical Stovall sector rotation (early/mid/late/recession 
 **Source:** Cieslak, Morse & Vissing-Jorgensen, "Stock Returns over the FOMC Cycle," J. Finance 2019. https://onlinelibrary.wiley.com/doi/abs/10.1111/jofi.12818
 
 Entire post-1994 equity premium accrues in even FOMC-cycle weeks (0,2,4,6). Use as calendar prior, not as tradable factor.
+
+## Positioning analytics
+
+Citation source-of-truth for `catalyst-scout` (Flow B v2 Task 27) — options-implied positioning + cross-section sentiment.
+
+### cremers_weinbaum_iv_spread_2008
+
+**Source:** Cremers & Weinbaum, "Deviations from put-call parity and stock return predictability," J. Financial and Quantitative Analysis 45(2) (2010; WP 2008). https://www.cambridge.org/core/journals/journal-of-financial-and-quantitative-analysis/article/abs/deviations-from-putcall-parity-and-stock-return-predictability/
+
+IV term-structure inversion (front-month ATM IV above back-month ATM IV) is an event-pricing signal: the market is pricing higher near-term realized volatility, typically because of an upcoming dated catalyst (earnings, FDA decision, M&A vote). Used by `catalyst-scout` §3 to detect informed-flow asymmetry — if `front_back_spread > 5pp` but no catalyst surfaces in the §2 calendar sweep, the cdd-lead memo may be missing a load-bearing event.
+
+### pan_poteshman_pcratio_2006
+
+**Source:** Pan & Poteshman, "The information in option volume for future stock prices," Review of Financial Studies 19(3) (2006), pp. 871-908. https://academic.oup.com/rfs/article/19/3/871/1602169
+
+Put/call volume ratio carries information about future stock returns: informed traders preferentially use options for directional bets, and aggregated P/C flow predicts returns over the following week. **Critical caveat:** high P/C is NOT mechanically bearish — direction is sector + situation specific (e.g., high P/C on a recently-rallied name = profit-taking hedge; high P/C on a flat name = informed bearish). Memo language must cite this contextually, not as a binary buy/sell rule. Used by `catalyst-scout` §3.
+
+### bofa_fms
+
+**Source:** Bank of America Global Fund Manager Survey (monthly). Coverage via BofA Research portal + aggregated summaries (ZeroHedge, MarketWatch, Reuters).
+
+Monthly survey of ~250 institutional fund managers covering ~$700B AUM. Surfaces cash levels (contrarian-bullish below 4%, contrarian-bearish above 5%), most-crowded trades (contrarian-bearish on the named trade), biggest tail-risk identified (regime-context for catalyst impact). Used by `catalyst-scout` §4 sentiment sweep — calibrates whether the cdd-lead thesis is consensus or differentiated.

@@ -22,6 +22,8 @@ Verify required MCPs are connected:
 - `mcp__postgres` for `evidence_index`, `research_essentials`, and `analyst_briefs` writes
 - `mcp__fundamentals` (recommended; fall back to EDGAR XBRL with explicit caveat if missing)
 - `mcp__fred` (used by search-agent for macro context)
+- `mcp__polygon` for options positioning (IV term structure, P/C ratio, unusual activity) — consumed by `catalyst-scout` via search-agent dispatch (NEW Flow B v2 Task 27)
+- `mcp__macro_stack` for cycle/regime context — consumed by `catalyst-scout` sentiment sweep (NEW Flow B v2 Task 26)
 
 Required tables (verify on first pre-flight via `mcp__postgres__schema_info`): `research_essentials` (migration 027), `analyst_briefs` (migration 028).
 
@@ -90,6 +92,32 @@ PMSupervisor consumes this in step 4 below — it MUST factor archetype distribu
 
 Compute provisional mode from realized vol bands (B = ≤30% vol; B' = 30-55%; C = 55%+). Full 3-stage classifier with LLM tiebreaker is invoked at watchlist-add time, not here — this provisional value just feeds PMSupervisor's sizing decision.
 
+### 3.7. CatalystScout dispatch (forward-90d + positioning + sentiment) — NEW Flow B v2 Task 27
+
+Dispatch the `catalyst-scout` subagent via Task tool in **parallel with §3 bear-case** (they share the Stage-2 cdd-lead memo as input but produce independent outputs — bear-case is retrospective adversarial; catalyst-scout is forward-prospective).
+
+Inputs passed:
+- `ticker`
+- `tier` (from cdd-lead Stage 1)
+- `sector` (free-form label from cdd-lead Stage 1 — drives sector-specific catalyst sources in catalyst-scout §2)
+- `cdd_integrated_memo` (Stage 2 output of cdd-lead — for thesis-pillar context)
+- `mode` (B / B' / C from §3.6 classification — used for sentiment-extreme thresholds)
+
+CatalystScout returns:
+- A forward 90-day catalyst calendar (named, dated events with `kpi_impact` and `confidence`)
+- A positioning panel (IV term structure + P/C ratio + unusual-activity DTE / strike clustering, tier-conditional depth)
+- Cross-section sentiment readings (BofA FMS, AAII, Investors Intelligence, NAAIM)
+- A single `conviction_modifier` of `{direction: +1 | 0 | -1, magnitude: low | medium | high, reason: string}`
+
+PMSupervisor (§4) consumes the `conviction_modifier` as a notch shift bounded to ±25% of the size-band midpoint per its §6 logic. It is NOT a hard override of bear-case independence; the modifier never flips a REJECT to ADD.
+
+**Tier-conditional cost:**
+- `core_fundamental` — light positioning (IV spread only) → ~$6-12
+- `thematic_growth` — full positioning panel + sentiment sweep → ~$15-30
+- `speculative_optionality` — full panel + extra unusual_activity scrutiny → ~$20-40
+
+If `mcp__polygon` is offline, catalyst-scout halts and reports; PMSupervisor accepts `catalyst_scout_memo = null` and proceeds with `catalyst_modifier_applied = "0 (catalyst-scout offline)"` per its §1 input-handling rule.
+
 ### 4. PMSupervisor synthesis (dispatched subagent — Flow B v2 Task 24)
 
 Dispatch the `pm-supervisor` subagent via Task tool. Pass as inputs:
@@ -98,7 +126,7 @@ Dispatch the `pm-supervisor` subagent via Task tool. Pass as inputs:
 2. **bear-case memo** (from §3)
 3. **counterfactual-veto top-3 retrieval result** (from §3.5 — top-3 RetrievalMatch objects + archetype_distribution + HIGH-gate evaluation)
 4. **mode classification** (from §3.6 — B / B' / C)
-5. **catalyst-scout output** (from §3.7 when wired — pass `null` if catalyst-scout not yet enabled)
+5. **catalyst-scout output** (from §3.7 — Task 27 wired this in: catalyst calendar + positioning panel + sentiment signals + `conviction_modifier`. Pass `null` only if `mcp__polygon` is offline and catalyst-scout halted)
 
 The pm-supervisor agent enforces the 4-tier sleeve caps (core ≤80%, thematic ≤25%, speculative ≤8%) as a **HARD GATE that runs BEFORE conviction rollup**. If a proposed ADD would breach a cap, the decision is downgraded to WATCH with a `sleeve_cap_violation` block citing the headroom remaining. Conviction rollup precedence (LOW > HIGH > MEDIUM per v3 §4.6 Phase 4 Q2), tier-aware overlays, mode-conditional sizing, and banned-outputs check all live inside the agent — see `.claude/agents/pm-supervisor.md` for the full procedure.
 
