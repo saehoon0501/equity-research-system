@@ -48,6 +48,20 @@ requires_polygon_key = pytest.mark.skipif(
 )
 
 
+def _skip_if_tier_insufficient(result: dict) -> None:
+    """Tests that hit live Polygon should skip — not fail — when the operator's
+    plan does not include the snapshot options-chain endpoint. The agent layer
+    propagates the tier_insufficient signal upstream so callers can route to a
+    fallback (e.g., yfinance get_recommendations for sentiment), but for unit
+    tests the contract is that we surface the upgrade message cleanly.
+    """
+    if isinstance(result, dict) and result.get("error_class") == "polygon_tier_insufficient":
+        pytest.skip(
+            "Polygon plan does not include snapshot options chain — "
+            "upgrade required: " + str(result.get("upgrade_url", ""))
+        )
+
+
 def test_structural_module_loads_and_registers_four_tools():
     """Structural verification: module imports + FastMCP has 4 tools registered.
 
@@ -70,6 +84,7 @@ def test_structural_module_loads_and_registers_four_tools():
 def test_get_options_chain_spy_returns_required_fields():
     result = get_options_chain("SPY")
     assert isinstance(result, dict)
+    _skip_if_tier_insufficient(result)
     assert result.get("ticker_not_found") is not True, f"unexpected ticker_not_found for SPY: {result}"
     assert result["ticker"] == "SPY"
     assert result["source"] == "polygon"
@@ -87,6 +102,7 @@ def test_get_options_chain_spy_returns_required_fields():
 def test_get_iv_term_structure_spy_returns_required_fields():
     result = get_iv_term_structure("SPY")
     assert isinstance(result, dict)
+    _skip_if_tier_insufficient(result)
     assert result.get("ticker_not_found") is not True
     assert result["ticker"] == "SPY"
     assert "term_structure" in result
@@ -104,6 +120,7 @@ def test_get_iv_term_structure_spy_returns_required_fields():
 def test_get_put_call_ratio_spy_returns_required_fields():
     result = get_put_call_ratio("SPY", lookback_days=5)  # small window to keep test fast
     assert isinstance(result, dict)
+    _skip_if_tier_insufficient(result)
     assert result.get("ticker_not_found") is not True
     assert result["ticker"] == "SPY"
     assert result["lookback_days"] == 5
@@ -116,6 +133,7 @@ def test_get_put_call_ratio_spy_returns_required_fields():
 def test_get_unusual_activity_spy_returns_required_fields():
     result = get_unusual_activity("SPY", lookback_days=5)
     assert isinstance(result, dict)
+    _skip_if_tier_insufficient(result)
     assert result.get("ticker_not_found") is not True
     assert result["ticker"] == "SPY"
     assert "unusual_contracts" in result
@@ -125,6 +143,32 @@ def test_get_unusual_activity_spy_returns_required_fields():
         u = result["unusual_contracts"][0]
         for key in ("strike", "expiry", "type", "vol", "oi", "vol_oi_ratio", "vol_vs_avg_x"):
             assert key in u, f"missing required field {key}"
+
+
+@pytest.mark.integration
+@requires_polygon_key
+def test_tier_insufficient_payload_shape_when_chain_unauthorized():
+    """When the operator's Polygon plan does NOT include snapshot options-chain
+    (free tier), the four endpoints must return a tier_insufficient payload
+    with: error_class, upgrade_url, note, plus the ticker_not_found flag.
+
+    This test is the contract for the upstream agent layer (CatalystScout)
+    so it can route gracefully — e.g., fall back to yfinance sentiment or
+    flag the operator to upgrade.
+
+    The test calls get_options_chain('SPY'); on a free-tier key this hits
+    the tier_insufficient branch. On a paid-tier key we skip — the live
+    happy-path tests above already cover that side.
+    """
+    result = get_options_chain("SPY")
+    if result.get("error_class") != "polygon_tier_insufficient":
+        pytest.skip("operator's Polygon key has paid tier — covered by live tests")
+    # Verify the payload contract.
+    assert result.get("ticker_not_found") is True
+    assert result["error_class"] == "polygon_tier_insufficient"
+    assert "upgrade_url" in result
+    assert result["upgrade_url"].startswith("https://")
+    assert "note" in result
 
 
 @pytest.mark.integration

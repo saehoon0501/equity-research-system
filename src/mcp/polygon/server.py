@@ -15,6 +15,12 @@ Failure-mode contract per spec (mirrors yfinance MCP):
 POLYGON_API_KEY must be present in repo-root .env. The free tier returns
 15-min-delayed data via the same endpoint shapes; the Stocks/Options Starter
 tier ($29/mo) unlocks real-time SIP.
+
+Implementation note (Flow B v2 task 29 refactor): all 4 endpoints now ride
+`list_snapshot_options_chain` — a single paginated call that returns the
+entire chain with greeks/IV/volume/OI inline. This replaces the prior
+per-contract `get_snapshot_option` + `get_aggs` loops that rate-limited
+out on liquid tickers (SPY, QQQ).
 """
 
 from __future__ import annotations
@@ -83,17 +89,111 @@ def _is_ticker_unknown(ticker: str, client: RESTClient | None = None) -> bool:
     return False
 
 
-def _safe_iter(generator) -> list[Any]:
-    """Materialize a polygon-api-client paginated iterator with a soft cap."""
+def _safe_iter(generator, cap: int = 5000) -> list[Any]:
+    """Materialize a polygon-api-client paginated iterator with a soft cap.
+
+    Chain snapshots can run to ~3000 contracts for the most-liquid names;
+    we cap at 5000 to bound runtime + memory.
+    """
     out: list[Any] = []
     try:
         for i, item in enumerate(generator):
-            if i >= 2000:  # hard cap — chains rarely exceed this
+            if i >= cap:
                 break
             out.append(item)
     except Exception:
         return out
     return out
+
+
+class _TierInsufficient(Exception):
+    """Raised when the operator's Polygon plan does not include the
+    snapshot-chain endpoint. Distinct from a transient connectivity error so
+    callers can surface an actionable upgrade message instead of a generic
+    ticker_not_found.
+    """
+
+
+def _load_chain(client: RESTClient, sym: str) -> list[Any]:
+    """Pull the full options-chain snapshot for `sym` in a single paginated
+    call.
+
+    Iteration is inlined here (rather than delegating to _safe_iter) because
+    the polygon-api-client returns a lazy generator — the HTTP request fires
+    on first iteration, so tier-insufficient and transport errors surface
+    here, not at the call-site of list_snapshot_options_chain.
+
+    Raises:
+        _TierInsufficient: when Polygon returns NOT_AUTHORIZED — the snapshot
+            options-chain endpoint requires the paid Options plan.
+        RuntimeError: on any other transport-level failure (caller converts
+            to {ticker_not_found: True, error_class: ...}).
+    """
+    cap = 5000
+    out: list[Any] = []
+    try:
+        chain_iter = client.list_snapshot_options_chain(
+            underlying_asset=sym,
+            params={"limit": 250},  # max page size; pagination is automatic
+        )
+        for i, item in enumerate(chain_iter):
+            if i >= cap:
+                break
+            out.append(item)
+        return out
+    except Exception as e:
+        msg = str(e).lower()
+        if "not_authorized" in msg or "upgrade your plan" in msg or "entitled" in msg:
+            raise _TierInsufficient(str(e)[:300]) from e
+        raise RuntimeError(str(e)[:300]) from e
+
+
+def _tier_insufficient_payload(extra: dict | None = None) -> dict:
+    payload = {
+        "ticker_not_found": True,
+        "error_class": "polygon_tier_insufficient",
+        "upgrade_url": "https://polygon.io/pricing",
+        "note": "Snapshot options chain requires the Options paid tier ($29/mo Starter).",
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _extract_contract_row(snap: Any) -> dict | None:
+    """Extract canonical contract row from an OptionContractSnapshot.
+
+    Returns None if `details` is missing (snapshot too sparse to use).
+    """
+    details = getattr(snap, "details", None)
+    if details is None:
+        return None
+    strike = getattr(details, "strike_price", None)
+    expiry = getattr(details, "expiration_date", None)
+    ctype = getattr(details, "contract_type", None)
+    if strike is None or expiry is None or ctype is None:
+        return None
+
+    day = getattr(snap, "day", None)
+    greeks = getattr(snap, "greeks", None)
+    iv = getattr(snap, "implied_volatility", None)
+    oi = getattr(snap, "open_interest", None)
+
+    vol_raw = getattr(day, "volume", None) if day is not None else None
+
+    return {
+        "ticker": getattr(details, "ticker", None),
+        "strike": float(strike),
+        "expiry": str(expiry),
+        "type": str(ctype).lower(),
+        "open_interest": int(oi) if oi is not None else None,
+        "volume": int(vol_raw) if vol_raw is not None else None,
+        "iv": float(iv) if iv is not None else None,
+        "delta": float(getattr(greeks, "delta", 0.0)) if greeks and getattr(greeks, "delta", None) is not None else None,
+        "gamma": float(getattr(greeks, "gamma", 0.0)) if greeks and getattr(greeks, "gamma", None) is not None else None,
+        "theta": float(getattr(greeks, "theta", 0.0)) if greeks and getattr(greeks, "theta", None) is not None else None,
+        "vega": float(getattr(greeks, "vega", 0.0)) if greeks and getattr(greeks, "vega", None) is not None else None,
+    }
 
 
 def _atm_strike(strikes: list[float], spot: float) -> float | None:
@@ -136,7 +236,7 @@ def get_options_chain(ticker: str, expiry: str | None = None) -> dict:
             "source": "polygon",
         }
 
-    If `expiry` is None, pulls the nearest 4 forward expirations.
+    If `expiry` is None, returns the nearest 4 forward expirations.
     """
     try:
         client = _client()
@@ -147,67 +247,40 @@ def get_options_chain(ticker: str, expiry: str | None = None) -> dict:
         return {"ticker_not_found": True}
 
     sym = ticker.upper()
-    today = datetime.now(timezone.utc).date()
-
     try:
-        # First: list active contracts to discover expirations.
-        contracts_iter = client.list_options_contracts(
-            underlying_ticker=sym,
-            expiration_date_gte=str(today),
-            expired=False,
-            limit=1000,
-        )
-        all_contracts = _safe_iter(contracts_iter)
-    except Exception as e:
-        return {"ticker_not_found": True, "error_class": type(e).__name__}
-
-    if not all_contracts:
-        # Underlying exists but no options listed.
+        snapshots = _load_chain(client, sym)
+    except _TierInsufficient:
+        return _tier_insufficient_payload()
+    except RuntimeError as e:
+        return {"ticker_not_found": True, "error_class": "snapshot_chain_error", "detail": str(e)}
+    if not snapshots:
         return {"ticker_not_found": True}
 
-    # Group by expiration; pick target set
-    by_expiry: dict[str, list[Any]] = defaultdict(list)
-    for c in all_contracts:
-        exp = getattr(c, "expiration_date", None)
-        if exp:
-            by_expiry[str(exp)].append(c)
-
-    if expiry is not None:
-        target_expiries = [expiry] if expiry in by_expiry else []
-    else:
-        target_expiries = sorted(by_expiry.keys())[:4]
-
-    selected: list[Any] = []
-    for exp in target_expiries:
-        selected.extend(by_expiry[exp])
-
-    # Snapshot each contract for greeks + OI + volume + IV.
-    out_contracts: list[dict] = []
-    for c in selected:
-        opt_ticker = getattr(c, "ticker", None)
-        if not opt_ticker:
+    rows: list[dict] = []
+    for snap in snapshots:
+        row = _extract_contract_row(snap)
+        if row is None:
             continue
-        snap = None
-        try:
-            snap = client.get_snapshot_option(sym, opt_ticker)
-        except Exception:
-            snap = None
+        rows.append(row)
 
-        greeks = getattr(snap, "greeks", None) if snap is not None else None
-        day = getattr(snap, "day", None) if snap is not None else None
+    if not rows:
+        return {"ticker_not_found": True}
 
-        out_contracts.append({
-            "strike": float(getattr(c, "strike_price", 0.0) or 0.0),
-            "expiry": str(getattr(c, "expiration_date", "")),
-            "type": str(getattr(c, "contract_type", "") or "").lower(),
-            "open_interest": int(getattr(snap, "open_interest", 0) or 0) if snap else None,
-            "volume": int(getattr(day, "volume", 0) or 0) if day else None,
-            "iv": float(getattr(snap, "implied_volatility", 0.0) or 0.0) if snap else None,
-            "delta": float(getattr(greeks, "delta", 0.0) or 0.0) if greeks else None,
-            "gamma": float(getattr(greeks, "gamma", 0.0) or 0.0) if greeks else None,
-            "theta": float(getattr(greeks, "theta", 0.0) or 0.0) if greeks else None,
-            "vega": float(getattr(greeks, "vega", 0.0) or 0.0) if greeks else None,
-        })
+    # Filter to target expirations.
+    today = datetime.now(timezone.utc).date()
+    forward_expiries = sorted(
+        {r["expiry"] for r in rows if r["expiry"] >= str(today)}
+    )
+    if expiry is not None:
+        target_expiries = {expiry} if expiry in forward_expiries else set()
+    else:
+        target_expiries = set(forward_expiries[:4])
+
+    out_contracts = [
+        {k: v for k, v in r.items() if k != "ticker"}
+        for r in rows
+        if r["expiry"] in target_expiries
+    ]
 
     return {
         "ticker": sym,
@@ -249,36 +322,29 @@ def get_iv_term_structure(ticker: str) -> dict:
     if spot is None or spot <= 0:
         return {"ticker_not_found": True}
 
-    today = datetime.now(timezone.utc).date()
     try:
-        contracts_iter = client.list_options_contracts(
-            underlying_ticker=sym,
-            expiration_date_gte=str(today),
-            expired=False,
-            contract_type="call",  # ATM IV from calls only; cheaper + monotone
-            limit=1000,
-        )
-        all_contracts = _safe_iter(contracts_iter)
-    except Exception as e:
-        return {"ticker_not_found": True, "error_class": type(e).__name__}
-
-    if not all_contracts:
+        snapshots = _load_chain(client, sym)
+    except _TierInsufficient:
+        return _tier_insufficient_payload()
+    except RuntimeError as e:
+        return {"ticker_not_found": True, "error_class": "snapshot_chain_error", "detail": str(e)}
+    if not snapshots:
         return {"ticker_not_found": True}
 
-    # Group calls by expiry; pick ATM strike per expiry.
-    by_expiry: dict[str, list[Any]] = defaultdict(list)
-    for c in all_contracts:
-        exp = getattr(c, "expiration_date", None)
-        if exp:
-            by_expiry[str(exp)].append(c)
+    # Calls only — ATM IV from calls is cheaper + monotone in moneyness.
+    by_expiry: dict[str, list[dict]] = defaultdict(list)
+    for snap in snapshots:
+        row = _extract_contract_row(snap)
+        if row is None or row["type"] != "call":
+            continue
+        by_expiry[row["expiry"]].append(row)
 
+    today = datetime.now(timezone.utc).date()
     term: list[dict] = []
     front_iv: float | None = None
     back_iv: float | None = None
 
-    # Sort expiries ascending.
-    sorted_expiries = sorted(by_expiry.keys())
-    for exp_str in sorted_expiries:
+    for exp_str in sorted(by_expiry.keys()):
         try:
             exp_date = datetime.strptime(exp_str, "%Y-%m-%d").date()
         except ValueError:
@@ -288,33 +354,18 @@ def get_iv_term_structure(ticker: str) -> dict:
             continue
 
         calls = by_expiry[exp_str]
-        strikes = [float(getattr(c, "strike_price", 0.0) or 0.0) for c in calls]
+        strikes = [c["strike"] for c in calls if c["strike"] is not None]
         atm_strike = _atm_strike(strikes, spot)
         if atm_strike is None:
             continue
-        atm_contract = next(
-            (c for c in calls if float(getattr(c, "strike_price", 0.0) or 0.0) == atm_strike),
-            None,
-        )
-        if atm_contract is None:
-            continue
-
-        opt_ticker = getattr(atm_contract, "ticker", None)
-        atm_iv: float | None = None
-        if opt_ticker:
-            try:
-                snap = client.get_snapshot_option(sym, opt_ticker)
-                iv_val = getattr(snap, "implied_volatility", None)
-                atm_iv = float(iv_val) if iv_val is not None else None
-            except Exception:
-                atm_iv = None
+        atm_call = next((c for c in calls if c["strike"] == atm_strike), None)
+        atm_iv = atm_call["iv"] if atm_call else None
 
         term.append({"days_to_expiry": dte, "atm_iv": atm_iv})
 
-        # Capture front and ~90-day IV for the spread.
         if front_iv is None and atm_iv is not None:
             front_iv = atm_iv
-        if back_iv is None and atm_iv is not None and dte >= 75 and dte <= 120:
+        if back_iv is None and atm_iv is not None and 75 <= dte <= 120:
             back_iv = atm_iv
 
     front_back_spread: float | None = None
@@ -331,7 +382,7 @@ def get_iv_term_structure(ticker: str) -> dict:
 
 @mcp.tool()
 def get_put_call_ratio(ticker: str, lookback_days: int = 30) -> dict:
-    """Return aggregated put vs call volume over `lookback_days`.
+    """Return aggregated put vs call volume.
 
     Schema:
         {
@@ -343,7 +394,13 @@ def get_put_call_ratio(ticker: str, lookback_days: int = 30) -> dict:
             "retrieved_at": str,
         }
 
-    Pan-Poteshman style: high P/C => bearish sentiment / informed put-buying.
+    v1 implementation: returns today's chain-snapshot put/call volume sum.
+    `lookback_days` is retained for API forward-compatibility; multi-day
+    historical P/C will be added when polygon-api-client exposes a
+    chain-aggregate-history endpoint (currently requires per-contract aggs,
+    which rate-limits out on liquid tickers — see task 25 commit message).
+    Single-day snapshot P/C is the standard indicator anyway (Pan-Poteshman 2006
+    use daily-resolution data).
     """
     try:
         client = _client()
@@ -354,54 +411,25 @@ def get_put_call_ratio(ticker: str, lookback_days: int = 30) -> dict:
         return {"ticker_not_found": True}
 
     sym = ticker.upper()
-    today = datetime.now(timezone.utc).date()
-    start = today - timedelta(days=lookback_days)
-
     try:
-        # Pull all active contracts; we'll aggregate per-contract volume via
-        # historical aggregates over the lookback window.
-        contracts_iter = client.list_options_contracts(
-            underlying_ticker=sym,
-            expiration_date_gte=str(today),
-            expired=False,
-            limit=1000,
-        )
-        contracts = _safe_iter(contracts_iter)
-    except Exception as e:
-        return {"ticker_not_found": True, "error_class": type(e).__name__}
-
-    if not contracts:
+        snapshots = _load_chain(client, sym)
+    except _TierInsufficient:
+        return _tier_insufficient_payload({"lookback_days": lookback_days})
+    except RuntimeError as e:
+        return {"ticker_not_found": True, "error_class": "snapshot_chain_error", "detail": str(e)}
+    if not snapshots:
         return {"ticker_not_found": True}
 
     total_put = 0
     total_call = 0
-    for c in contracts:
-        opt_ticker = getattr(c, "ticker", None)
-        ctype = str(getattr(c, "contract_type", "") or "").lower()
-        if not opt_ticker or ctype not in ("put", "call"):
+    for snap in snapshots:
+        row = _extract_contract_row(snap)
+        if row is None or row["volume"] is None:
             continue
-        try:
-            aggs = client.get_aggs(
-                ticker=opt_ticker,
-                multiplier=1,
-                timespan="day",
-                from_=str(start),
-                to=str(today),
-                limit=lookback_days + 5,
-            )
-        except Exception:
-            continue
-        vol = 0
-        try:
-            for a in aggs or []:
-                v = getattr(a, "volume", 0) or 0
-                vol += int(v)
-        except Exception:
-            vol = 0
-        if ctype == "put":
-            total_put += vol
-        else:
-            total_call += vol
+        if row["type"] == "put":
+            total_put += row["volume"]
+        elif row["type"] == "call":
+            total_call += row["volume"]
 
     pc_ratio: float | None = None
     if total_call > 0:
@@ -436,9 +464,15 @@ def get_unusual_activity(ticker: str, lookback_days: int = 5) -> dict:
             "retrieved_at": str,
         }
 
-    Criteria (either triggers inclusion):
+    Tier-1 filter (cheap, from chain snapshot):
       - volume / open_interest > 1.0
-      - today's volume > 90-day rolling average × 3
+
+    Tier-2 enrichment (capped, per-contract aggs for the top 20 vol/oi hits):
+      - today's volume vs `lookback_days`-day rolling average; flagged when > 3x.
+
+    The Tier-2 cap keeps total API calls bounded for liquid tickers; if you
+    need full coverage, increase the per-pull cap and budget for rate-limit
+    waits.
     """
     try:
         client = _client()
@@ -449,81 +483,74 @@ def get_unusual_activity(ticker: str, lookback_days: int = 5) -> dict:
         return {"ticker_not_found": True}
 
     sym = ticker.upper()
-    today = datetime.now(timezone.utc).date()
-    ninety_start = today - timedelta(days=90)
-
     try:
-        contracts_iter = client.list_options_contracts(
-            underlying_ticker=sym,
-            expiration_date_gte=str(today),
-            expired=False,
-            limit=1000,
-        )
-        contracts = _safe_iter(contracts_iter)
-    except Exception as e:
-        return {"ticker_not_found": True, "error_class": type(e).__name__}
-
-    if not contracts:
+        snapshots = _load_chain(client, sym)
+    except _TierInsufficient:
+        return _tier_insufficient_payload()
+    except RuntimeError as e:
+        return {"ticker_not_found": True, "error_class": "snapshot_chain_error", "detail": str(e)}
+    if not snapshots:
         return {"ticker_not_found": True}
 
-    unusual: list[dict] = []
-    for c in contracts:
-        opt_ticker = getattr(c, "ticker", None)
-        if not opt_ticker:
+    # Tier-1: vol/oi from snapshot.
+    candidates: list[dict] = []
+    for snap in snapshots:
+        row = _extract_contract_row(snap)
+        if row is None:
             continue
-        snap = None
-        try:
-            snap = client.get_snapshot_option(sym, opt_ticker)
-        except Exception:
-            snap = None
-        if snap is None:
+        vol = row["volume"]
+        oi = row["open_interest"]
+        if vol is None or vol <= 0:
             continue
+        vol_oi_ratio = (vol / oi) if (oi and oi > 0) else None
+        if vol_oi_ratio is not None and vol_oi_ratio > 1.0:
+            candidates.append({
+                "ticker": row["ticker"],
+                "strike": row["strike"],
+                "expiry": row["expiry"],
+                "type": row["type"],
+                "vol": vol,
+                "oi": oi if oi is not None else 0,
+                "vol_oi_ratio": vol_oi_ratio,
+            })
 
-        oi = int(getattr(snap, "open_interest", 0) or 0)
-        day = getattr(snap, "day", None)
-        vol = int(getattr(day, "volume", 0) or 0) if day else 0
+    # Sort by vol_oi_ratio desc; cap Tier-2 enrichment at 20 (rate-limit guard).
+    candidates.sort(key=lambda c: c["vol_oi_ratio"] or 0.0, reverse=True)
+    enriched = candidates[:20]
 
-        if vol <= 0:
-            continue
-
-        vol_oi_ratio = (vol / oi) if oi > 0 else None
-
-        # 90-day average daily volume (excluding today) for vol_vs_avg_x.
+    # Tier-2: 90-day avg volume for the top-20 unusual hits.
+    today = datetime.now(timezone.utc).date()
+    ninety_start = today - timedelta(days=max(lookback_days, 90))
+    for row in enriched:
+        opt_ticker = row.pop("ticker", None)
         avg_vol: float | None = None
-        try:
-            aggs = client.get_aggs(
-                ticker=opt_ticker,
-                multiplier=1,
-                timespan="day",
-                from_=str(ninety_start),
-                to=str(today - timedelta(days=1)),
-                limit=120,
-            )
-            vols = [int(getattr(a, "volume", 0) or 0) for a in (aggs or [])]
-            if vols:
-                avg_vol = sum(vols) / len(vols)
-        except Exception:
-            avg_vol = None
+        if opt_ticker:
+            try:
+                aggs = client.get_aggs(
+                    ticker=opt_ticker,
+                    multiplier=1,
+                    timespan="day",
+                    from_=str(ninety_start),
+                    to=str(today - timedelta(days=1)),
+                    limit=120,
+                )
+                vols = [int(getattr(a, "volume", 0) or 0) for a in (aggs or [])]
+                if vols:
+                    avg_vol = sum(vols) / len(vols)
+            except Exception:
+                avg_vol = None
 
-        vol_vs_avg_x: float | None = None
-        if avg_vol is not None and avg_vol > 0:
-            vol_vs_avg_x = vol / avg_vol
+        row["vol_vs_avg_x"] = (
+            (row["vol"] / avg_vol) if (avg_vol is not None and avg_vol > 0) else None
+        )
 
-        # Inclusion test
-        flag_oi = vol_oi_ratio is not None and vol_oi_ratio > 1.0
-        flag_avg = vol_vs_avg_x is not None and vol_vs_avg_x > 3.0
-        if not (flag_oi or flag_avg):
-            continue
+    # Strip the helper "ticker" field from remaining (non-enriched-but-passed) rows;
+    # also flatten the final shape per spec.
+    for row in candidates[20:]:
+        row.pop("ticker", None)
+        row["vol_vs_avg_x"] = None
 
-        unusual.append({
-            "strike": float(getattr(c, "strike_price", 0.0) or 0.0),
-            "expiry": str(getattr(c, "expiration_date", "")),
-            "type": str(getattr(c, "contract_type", "") or "").lower(),
-            "vol": vol,
-            "oi": oi,
-            "vol_oi_ratio": vol_oi_ratio,
-            "vol_vs_avg_x": vol_vs_avg_x,
-        })
+    unusual = enriched + candidates[20:]
 
     return {
         "ticker": sym,

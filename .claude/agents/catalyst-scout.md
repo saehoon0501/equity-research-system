@@ -104,6 +104,19 @@ Agent(search-agent, "WebFetch Wall Street Horizon coverage of {ticker} (wallstre
 
 Dispatch `search-agent` to invoke polygon MCP endpoints. Panel depth is **tier-conditional**:
 
+### Tier-insufficient fallback (operator on Polygon free plan)
+
+If any polygon endpoint returns `error_class == "polygon_tier_insufficient"`, the positioning panel is **gracefully degraded**, not failed:
+
+1. Set `positioning.tier_insufficient = True` with the `upgrade_url` from the payload.
+2. Fall back to yfinance-derived sentiment proxies:
+   - `mcp__yfinance__get_recommendations` — analyst recommendation count vs 90d ago = positioning proxy (rising buy-rec count = consensus crowding)
+   - `mcp__yfinance__get_holders` — institutional concentration change = positioning proxy
+3. Skip the IV-spread / P/C / unusual-activity fields (set to `null`).
+4. In §5 conviction-modifier synthesis, weight the modifier toward `0` (neutral) when positioning data is degraded — fewer signals = less conviction adjustment.
+
+This keeps CatalystScout productive without the paid Polygon plan, while making the data-quality difference explicit in the output schema (consumer agents and PMSupervisor can read `tier_insufficient` and discount accordingly).
+
 | Tier                     | Panel depth                                              | Approx cost  |
 |--------------------------|----------------------------------------------------------|--------------|
 | `core_fundamental`       | Light: `get_iv_term_structure` only                      | ~$2-4        |
