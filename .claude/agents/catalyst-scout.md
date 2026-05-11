@@ -259,10 +259,16 @@ PMSupervisor consumes the `conviction_modifier` per its §6 catalyst-modifier-ap
     {"date": "...", "type": "...", "source": "...", "kpi_impact": "...", "evidence_id": "...", "confidence": "high|medium|low"}
   ],
   "positioning": {
+    "tier_insufficient": false,
+    "upgrade_url": null,
     "iv_spread": 0.0,
     "p_c_ratio": 0.0,
     "unusual_dte_distribution": [{"dte_bucket": "...", "contract_count": 0, "total_vol": 0}],
     "strike_clustering": [{"strike": 0.0, "type": "...", "contract_count": 0, "p_c_skew": "..."}],
+    "fallback_proxies": {
+      "analyst_rec_delta_90d": null,
+      "institutional_concentration_change": null
+    },
     "framework_keys": ["cremers_weinbaum_iv_spread_2008", "pan_poteshman_pcratio_2006"]
   },
   "sentiment_signals": [

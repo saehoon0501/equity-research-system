@@ -169,7 +169,14 @@ Mode multiplier:
 
 Apply: `final_size_band = base_band × mode_multiplier`. Round midpoint to 2 decimals.
 
-Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to ±25% of the final midpoint, with the sign of the dominant catalyst. If catalyst-scout is offline, modifier = 0. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
+Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to ±25% of the final midpoint, with the sign of the dominant catalyst. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
+
+**Modifier bound by positioning data quality:**
+- `positioning.tier_insufficient = false` (paid Polygon tier): full ±25% bound applies.
+- `positioning.tier_insufficient = true` (free-tier fallback active — yfinance proxies only): bound shrinks to **±10%**. Rationale: with degraded positioning signals, conviction adjustments should be smaller; the catalyst calendar + sentiment alone is a noisier basis for nudging size.
+- `catalyst-scout absent entirely` (offline / null input): modifier = 0.
+
+Append the positioning data-quality state to `catalyst_modifier_applied` so the audit trail surfaces it (e.g., `"+0.04 (2 high-confidence catalysts, positioning=degraded-fallback)"`).
 
 ---
 
