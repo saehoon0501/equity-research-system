@@ -90,49 +90,21 @@ PMSupervisor consumes this in step 4 below — it MUST factor archetype distribu
 
 Compute provisional mode from realized vol bands (B = ≤30% vol; B' = 30-55%; C = 55%+). Full 3-stage classifier with LLM tiebreaker is invoked at watchlist-add time, not here — this provisional value just feeds PMSupervisor's sizing decision.
 
-### 4. PMSupervisor synthesis (this command's main context)
+### 4. PMSupervisor synthesis (dispatched subagent — Flow B v2 Task 24)
 
-PMSupervisor logic runs in the operator's main context (not as a subagent — it's a synthesis of inputs already produced). The synthesis:
+Dispatch the `pm-supervisor` subagent via Task tool. Pass as inputs:
 
-- Take the CompanyDeepDive BUY memo
-- Take the BearCase dissent log
-- **Take the counterfactual veto retrieval result (top-3 + archetype distribution + gate evaluation)** [NEW]
-- **Take the provisional mode designation (B/B'/C from §3.6)** [NEW]
-- Pull current watchlist composition (Postgres) for portfolio fit assessment
-- Pull MacroCycleAgent latest output (cycle context)
-- Pull historical calibration scores for both contributing agents
+1. **cdd-lead integrated memo** (from §2.5)
+2. **bear-case memo** (from §3)
+3. **counterfactual-veto top-3 retrieval result** (from §3.5 — top-3 RetrievalMatch objects + archetype_distribution + HIGH-gate evaluation)
+4. **mode classification** (from §3.6 — B / B' / C)
+5. **catalyst-scout output** (from §3.7 when wired — pass `null` if catalyst-scout not yet enabled)
 
-Conviction rollup precedence per v3 §4.7: **LOW > HIGH > MEDIUM**. Counterfactual veto BLOCK forces ADD → WATCH or REJECT regardless of CDD conviction. Counterfactual veto PROCEED reinforces CDD's quality thesis but does NOT lift to ADD if BearCase has catastrophic unrebutted concerns. The veto result is a HIGH-floor and a BLOCK-veto, not a tie-breaker.
+The pm-supervisor agent enforces the 4-tier sleeve caps (core ≤80%, thematic ≤25%, speculative ≤8%) as a **HARD GATE that runs BEFORE conviction rollup**. If a proposed ADD would breach a cap, the decision is downgraded to WATCH with a `sleeve_cap_violation` block citing the headroom remaining. Conviction rollup precedence (LOW > HIGH > MEDIUM per v3 §4.6 Phase 4 Q2), tier-aware overlays, mode-conditional sizing, and banned-outputs check all live inside the agent — see `.claude/agents/pm-supervisor.md` for the full procedure.
 
-**Tier-aware synthesis (v1.1, 2026-05-07).** Read `tier` from cdd-lead's integrated memo. If cdd-lead and bear-case disagree on tier (bear-case re-classifies), default to the more conservative of the two (BearCase tier wins on disagreement). Apply tier-aware constraints:
+The agent emits a single JSON envelope (`decision`, `conviction`, `size_band`, `tier`, `mode`, `sleeve_cap_check`, `counterfactual_top3_summary`, `veto_reason`, `conviction_rationale`, `catalyst_modifier_applied`, optional `sleeve_reference`, `evidence_index_refs`). It also persists the recommendation to `execution_recommendations` (and on REJECT, `counterfactual_ledger`).
 
-| Tier | Disposition constraint |
-|---|---|
-| core_fundamental | Standard logic. ADD/WATCH/PASS/REJECT per existing rubric. |
-| thematic_growth | Same logic, but flag in output if `mauboussin_reverse_dcf.implied_growth` exceeds 3-year historical revenue CAGR by >50%. |
-| speculative_optionality | If ADD or WATCH: include a `sleeve_reference` block citing the speculative-sleeve cap (≤8% of book aggregate; no single thematic sub-sleeve >40%). Operator enforces the cap manually at sizing time — v1 reference only, not enforced by code. |
-
-Banned outputs at the synthesis layer mirror cdd-lead/bear-case (Stovall, PEG-only, ARK point targets, Fed-without-HFI).
-
-Produce a final decision:
-
-```
-TICKER: <ticker>
-FINAL DECISION: ADD / REJECT / WATCH
-FINAL CONVICTION: <0–1>
-  Conviction haircut applied: <yes/no, basis on calibration history>
-RECOMMENDED SIZE BAND: <X% – Y% of portfolio>
-DISSENT ACKNOWLEDGMENT:
-  - Unrebutted concern 1: <description> — accepted because <reasoning>
-  - Unrebutted concern 2: <...>
-POSITION CAVEATS:
-  - <e.g., "only at sub-$X price", "halve size if VIX > 25">
-REASONING TRACE:
-  - How CompanyDeepDive memo weighted: ...
-  - How BearCase concerns weighted: ...
-  - How macro cycle modulated: ...
-  - How calibration history modulated: ...
-```
+If Evaluator rejects the pm-supervisor output (banned outputs, missing sleeve_reference for speculative-tier, etc.): pm-supervisor revises; up to 3 rounds.
 
 ### 5. Constraints on synthesis
 

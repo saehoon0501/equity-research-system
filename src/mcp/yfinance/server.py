@@ -18,6 +18,8 @@ No persistent cache in v1 (spec §9.3 calls for Postgres cache; deferred).
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -32,6 +34,75 @@ load_dotenv(_REPO_ROOT / ".env")
 mcp = FastMCP("yfinance")
 
 import yfinance as yf
+
+import psycopg
+from psycopg.types.json import Jsonb
+
+# ---------------------------------------------------------------------------
+# Postgres write-through cache (Migration 029)
+# ---------------------------------------------------------------------------
+# Per spec §9.3: each yfinance endpoint checks yfinance_cache before calling
+# Yahoo. Fresh rows (now - fetched_at < ttl_seconds) are returned with a
+# `_cache_hit:True` flag added to the returned dict only (not persisted).
+# ticker_not_found sentinels are never cached.
+TTL_SECONDS = {
+    "consensus_estimates": 21600,   # 6h
+    "target_prices": 21600,         # 6h
+    "recommendations": 21600,       # 6h
+    "calendar": 86400,              # 24h
+    "holders": 604800,              # 7d
+    "peer_comps": 604800,           # 7d
+}
+
+
+def _dsn() -> str:
+    return (
+        f"postgresql://{os.environ['POSTGRES_USER']}:{os.environ['POSTGRES_PASSWORD']}"
+        f"@localhost:{os.environ.get('POSTGRES_PORT','5432')}/{os.environ['POSTGRES_DB']}"
+    )
+
+
+@contextmanager
+def _conn():
+    with psycopg.connect(_dsn(), autocommit=True) as conn:
+        yield conn
+
+
+def _cache_read(endpoint: str, ticker: str):
+    """Return cached payload if fresh, else None. Never raises."""
+    ttl = TTL_SECONDS[endpoint]
+    try:
+        with _conn() as conn:
+            row = conn.execute(
+                "SELECT payload, EXTRACT(EPOCH FROM (NOW() - fetched_at)) AS age "
+                "FROM yfinance_cache WHERE endpoint=%s AND ticker=%s",
+                (endpoint, ticker.upper()),
+            ).fetchone()
+            if row and row[1] < ttl:
+                return row[0]
+    except Exception:
+        return None
+    return None
+
+
+def _cache_write(endpoint: str, ticker: str, payload) -> None:
+    """Persist payload. Skips ticker_not_found and any falsy payload. Never raises."""
+    if not payload:
+        return
+    # ticker_not_found guard: only applies when payload is a dict.
+    if isinstance(payload, dict) and payload.get("ticker_not_found"):
+        return
+    try:
+        with _conn() as conn:
+            conn.execute(
+                "INSERT INTO yfinance_cache (endpoint, ticker, payload, ttl_seconds) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (endpoint, ticker) DO UPDATE "
+                "SET payload = EXCLUDED.payload, fetched_at = NOW(), ttl_seconds = EXCLUDED.ttl_seconds",
+                (endpoint, ticker.upper(), Jsonb(payload), TTL_SECONDS[endpoint]),
+            )
+    except Exception:
+        pass  # cache failure must never break the call
 
 
 def _is_ticker_unknown(ticker_obj) -> bool:
@@ -66,6 +137,11 @@ def get_consensus_estimates(ticker: str) -> dict:
     Failure modes:
         - Unknown ticker: {"ticker_not_found": True}
     """
+    cached = _cache_read("consensus_estimates", ticker)
+    if cached is not None:
+        cached["_cache_hit"] = True
+        return cached
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -87,7 +163,7 @@ def get_consensus_estimates(ticker: str) -> dict:
     except (ValueError, TypeError):
         analyst_count = None
 
-    return {
+    result = {
         "fy_eps_mean": info.get("forwardEps"),
         "fy_eps_std": None,
         "fy_revenue_mean": fy_revenue_mean,
@@ -96,6 +172,8 @@ def get_consensus_estimates(ticker: str) -> dict:
         "next_q_revenue_mean": info.get("revenueQuarterlyGrowth"),
         "analyst_count": analyst_count,
     }
+    _cache_write("consensus_estimates", ticker, result)
+    return result
 
 
 @mcp.tool()
@@ -120,6 +198,11 @@ def get_target_prices(ticker: str) -> dict:
     Failure modes:
         - Unknown ticker: {"ticker_not_found": True}
     """
+    cached = _cache_read("target_prices", ticker)
+    if cached is not None:
+        cached["_cache_hit"] = True
+        return cached
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -132,7 +215,7 @@ def get_target_prices(ticker: str) -> dict:
     except (TypeError, ValueError):
         count = None
 
-    return {
+    result = {
         "target_high": info.get("targetHighPrice"),
         "target_low": info.get("targetLowPrice"),
         "target_mean": info.get("targetMeanPrice"),
@@ -141,6 +224,8 @@ def get_target_prices(ticker: str) -> dict:
         "recommendation_mean": info.get("recommendationMean"),
         "recommendation_key": info.get("recommendationKey"),
     }
+    _cache_write("target_prices", ticker, result)
+    return result
 
 
 @mcp.tool()
@@ -169,7 +254,33 @@ def get_recommendations(ticker: str, days: int = 90) -> list[dict] | dict:
     FromGrade/Action). `Ticker.recommendations` in this version returns a
     period-level summary (strongBuy/buy/hold/sell/strongSell) which is
     incompatible with the per-event schema above.
+
+    Note: cache key omits `days` window; the cached payload is the full
+    upgrades/downgrades list as last fetched. The window filter is applied
+    after the cache lookup so different `days` callers share the cached
+    underlying data.
     """
+    cached = _cache_read("recommendations", ticker)
+    if cached is not None:
+        # Cached payload is the full unfiltered list of events. Re-apply window.
+        if isinstance(cached, list):
+            cutoff_cached = datetime.now(timezone.utc) - timedelta(days=days)
+            filtered = []
+            for item in cached:
+                date_str = item.get("date") if isinstance(item, dict) else None
+                if not date_str:
+                    filtered.append(item)
+                    continue
+                try:
+                    dt = datetime.fromisoformat(date_str)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if dt >= cutoff_cached:
+                        filtered.append(item)
+                except Exception:
+                    filtered.append(item)
+            return filtered
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -183,23 +294,28 @@ def get_recommendations(ticker: str, days: int = 90) -> list[dict] | dict:
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     items: list[dict] = []
+    all_items: list[dict] = []
     for idx, row in rec_df.iterrows():
         try:
             # idx is a pandas Timestamp (DatetimeIndex named GradeDate)
             row_date = idx.to_pydatetime() if hasattr(idx, "to_pydatetime") else idx
             if hasattr(row_date, "tzinfo") and row_date.tzinfo is None:
                 row_date = row_date.replace(tzinfo=timezone.utc)
-            if hasattr(row_date, "__lt__") and row_date < cutoff:
-                continue
-            items.append({
+            event = {
                 "firm": str(row.get("Firm", "") or ""),
                 "to_grade": str(row.get("ToGrade", row.get("To Grade", "")) or ""),
                 "from_grade": str(row.get("FromGrade", row.get("From Grade", "")) or ""),
                 "action": str(row.get("Action", "") or ""),
                 "date": row_date.isoformat() if hasattr(row_date, "isoformat") else str(row_date),
-            })
+            }
+            all_items.append(event)
+            if hasattr(row_date, "__lt__") and row_date < cutoff:
+                continue
+            items.append(event)
         except Exception:
             continue
+    # Cache the full pre-window list so callers with different `days` share data.
+    _cache_write("recommendations", ticker, all_items)
     return items
 
 
@@ -217,6 +333,11 @@ def get_calendar(ticker: str) -> dict:
     Failure modes:
         - Unknown ticker: {"ticker_not_found": True}
     """
+    cached = _cache_read("calendar", ticker)
+    if cached is not None:
+        cached["_cache_hit"] = True
+        return cached
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -247,19 +368,23 @@ def get_calendar(ticker: str) -> dict:
         earnings_dates = cal.get("Earnings Date")
         # yfinance returns list of dates for earnings; take first
         next_earnings = earnings_dates[0] if isinstance(earnings_dates, list) and earnings_dates else earnings_dates
-        return {
+        result = {
             "next_earnings_date": _coerce_date(next_earnings),
             "ex_dividend_date": _coerce_date(cal.get("Ex-Dividend Date")),
             "dividend_date": _coerce_date(cal.get("Dividend Date")),
         }
+        _cache_write("calendar", ticker, result)
+        return result
 
     # Fall back to info-derived
     info = t.info or {}
-    return {
+    result = {
         "next_earnings_date": _coerce_date(info.get("earningsTimestamp")),
         "ex_dividend_date": _coerce_date(info.get("exDividendDate")),
         "dividend_date": _coerce_date(info.get("dividendDate")),
     }
+    _cache_write("calendar", ticker, result)
+    return result
 
 
 @mcp.tool()
@@ -281,6 +406,11 @@ def get_holders(ticker: str) -> dict:
     Failure modes:
         - Unknown ticker: {"ticker_not_found": True}
     """
+    cached = _cache_read("holders", ticker)
+    if cached is not None:
+        cached["_cache_hit"] = True
+        return cached
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -331,13 +461,15 @@ def get_holders(ticker: str) -> dict:
         pass
 
     info = t.info or {}
-    return {
+    result = {
         "institutional_holders": inst,
         "major_holders": major,
         "insider_holders": insiders,
         "institutional_pct": info.get("heldPercentInstitutions"),
         "qoq_delta": None,  # not directly available; would compute from cross-quarter snapshots
     }
+    _cache_write("holders", ticker, result)
+    return result
 
 
 @mcp.tool()
@@ -365,6 +497,11 @@ def get_peer_comps(ticker: str, max_peers: int = 5) -> list[dict] | dict:
         - Unknown ticker: {"ticker_not_found": True}  (returns dict, not list)
         - No peers derivable: []
     """
+    cached = _cache_read("peer_comps", ticker)
+    if cached is not None and isinstance(cached, list):
+        # Re-apply max_peers slice since cache may hold a longer list.
+        return cached[:max_peers]
+
     t = yf.Ticker(ticker)
     if _is_ticker_unknown(t):
         return {"ticker_not_found": True}
@@ -379,6 +516,7 @@ def get_peer_comps(ticker: str, max_peers: int = 5) -> list[dict] | dict:
         peers = [p for p in related if isinstance(p, str) and p != ticker.upper()][:max_peers]
 
     if not peers:
+        # Empty list — falsy; _cache_write guard skips. Return uncached.
         return []
 
     out: list[dict] = []
@@ -397,6 +535,7 @@ def get_peer_comps(ticker: str, max_peers: int = 5) -> list[dict] | dict:
             })
         except Exception:
             continue
+    _cache_write("peer_comps", ticker, out)
     return out
 
 
