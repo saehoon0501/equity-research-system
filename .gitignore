@@ -42,8 +42,11 @@ provider_verification/artifacts/
 postgres-data/
 timescale-data/
 
+# Research artifacts (per-run, regenerable)
+memos/
+!memos/.gitkeep
+
 # Generated data
-memos/output/
 *.parquet
 *.csv
 !docs/**/*.csv
@@ -59,8 +62,13 @@ Thumbs.db
 .LSOverride
 
 # Project-specific
-checkpoints/draft/
+# Phase-gate evidence (regenerable from operator runs)
+checkpoints/
+!checkpoints/.gitkeep
 .cache/
+
+# Reference-data caches (refresh from upstream)
+.claude/references/*_cache.json
 
 # Claude Code local
 .claude/settings.local.json
