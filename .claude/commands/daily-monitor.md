@@ -1,5 +1,5 @@
 ---
-description: Daily heartbeat of the slow layer. Sweeps news/filings for all watchlist names with two-tier classification (Tier 1 Haiku → Tier 2 Sonnet auto-escalation). Surfaces materiality-3 escalations and produces a daily digest. Run post-market close + 30 min.
+description: Daily heartbeat of the slow layer. Sweeps news/filings for all watchlist names with two-tier classification (Sonnet default → Opus M-3 escalation). Surfaces materiality-3 escalations and produces a daily digest. Run post-market close + 30 min.
 argument-hint: (no arguments — runs against full watchlist)
 ---
 
@@ -16,7 +16,18 @@ The slow layer's daily heartbeat. Reads everything that touched watchlist names 
 - `mcp__postgres` connected for Predictions DB and Evidence Index reads/writes
 - Watchlist must exist (initially empty in v0.1; populated as v0.5 proceeds)
 
-If watchlist is empty (v0.1 default), report and exit. The command makes sense only when there are positions or watchlist names to monitor.
+**HIGH-4 consensus 2026-05-16 (Consensus Item #2 — uniform monitoring):** the "watchlist" for `/daily-monitor` purposes is the set of every ticker that has at least one row in `counterfactual_ledger` (i.e., every ticker that ever completed a `/research-company` run and emitted a `summary_code`). Monitoring is uniform across `summary_code` value — BUY/HOLD/TRIM/SELL tickers all get the same daily sweep. There is no "drops off the watchlist" semantic; the prior 5-bin lifecycle (ADD/WATCH/HOLD/PASS/REJECT) is dissolved.
+
+The discovery query for the daily sweep:
+
+```sql
+SELECT DISTINCT ticker
+FROM counterfactual_ledger
+WHERE ticker IS NOT NULL
+  AND summary_code IS NOT NULL;
+```
+
+If the result is empty, report and exit. Otherwise, run the sweep against every distinct ticker returned.
 
 ### 2. Gather inputs
 
@@ -93,7 +104,7 @@ PREDICTIONS RESOLVED TODAY:
 
 CALIBRATION TRENDS (rolling 90-day):
 - CompanyDeepDive: Brier <X>, trend <direction>
-- BearCase: Brier <X>, trend <direction>
+- PMSupervisor adversarial stress-test: Brier <X>, trend <direction>  # post 2026-05-12 replaces BearCase calibration line
 - ...
 
 UPCOMING (next 5 trading days):
@@ -111,7 +122,7 @@ For each materiality-3 confirmed by Tier 2:
 
 1. Notify operator via the command output (highlighted prominently)
 2. Suggest follow-up: `/quarterly-reunderwrite <ticker>` for full re-underwrite
-3. Flag in BUILD_LOG.md weekly entry
+3. Flag in `BUILD_LOG.md` (Notes section) when the operator decides on a follow-up action
 4. Increment escalations count for the day
 
 Operator decides whether to execute the re-underwrite immediately or schedule.

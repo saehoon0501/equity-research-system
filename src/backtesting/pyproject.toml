@@ -1,0 +1,15 @@
+[project]
+name = "equity-research-backtesting"
+version = "0.1.0"
+description = "BacktestingFramework — substantive validation harness for equity research memos. Walk-forward + embargo, DSR, PBO, pre/post-cutoff Sharpe split. Per v2-final §2.6 and .claude/commands/backtest.md."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "yfinance>=0.2.40",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

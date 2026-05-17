@@ -30,7 +30,7 @@ For "all" mode, prioritize:
 Each re-underwrite is essentially `/research-company <ticker>` with these differences:
 - Existing thesis_pillars, target_price, and reviewable_predictions are surfaced as input context (not as prejudice — the agent should challenge them)
 - Outcome of prior predictions (resolved or in-flight) are noted
-- BearCase is run with explicit context: "this is a re-underwrite of an existing position; what has changed and what was missed?"
+- pm-supervisor's §2.6 adversarial stress-test pass is invoked with explicit context: "this is a re-underwrite of an existing position; what has changed and what was missed?" (The former BearCase subagent that carried this responsibility was retired 2026-05-12.)
 
 ### 3. Compare new memo to prior
 
@@ -69,7 +69,7 @@ If the re-underwrite recommendation is REDUCE or EXIT, also run `/exit-check <ti
 
 Write to Postgres:
 - New CompanyDeepDive memo (versioned; prior memo retained)
-- New BearCase critique
+- New pm-supervisor envelope (carries the adversarial stress-test that formerly lived in a separate BearCase critique)
 - Re-underwrite decision record
 - Updated thesis_pillars (or note pillars unchanged)
 - Resolution of any in-flight predictions if applicable
@@ -95,10 +95,10 @@ KEY CHANGES:
   - <change 1 with cited evidence>
   - <change 2>
 
-BEAR CASE UPDATE:
-  - New unrebutted concerns: <list>
-  - Pre-existing concerns resolved: <list>
-  - Bear confidence: <X>
+ADVERSARIAL STRESS-TEST UPDATE (pm-supervisor §2.6, post 2026-05-12 bear-case removal):
+  - New stress_failed findings: <list>
+  - Pre-existing stress_failed findings resolved: <list>
+  - bear_confidence_proxy: <X>
 
 RE-UNDERWRITE DECISION: CONTINUE HOLDING | HOLD WITH NOTE | REDUCE | EXIT
 

@@ -1,0 +1,320 @@
+[
+  {
+    "case_id": "NVDA-2008",
+    "candidate_sector": "semis_hardware",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": ">24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "growing",
+      "industry_tailwind": "intact"
+    },
+    "candidate_sector_extensions": {
+      "moat_state": "intact",
+      "cycle_state": "cyclical-trough",
+      "customer_concentration": "moderate"
+    },
+    "canonical_category": "SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 3, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical SURVIVOR — Jensen + intact moat through GFC trough."
+  },
+  {
+    "case_id": "AMD-2014",
+    "candidate_sector": "semis_hardware",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": "12-24mo",
+      "founder_in_place": "replaced-by-competent",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "flat",
+      "industry_tailwind": "intact"
+    },
+    "candidate_sector_extensions": {
+      "moat_state": "weakening",
+      "cycle_state": "cyclical-trough",
+      "customer_concentration": "moderate"
+    },
+    "canonical_category": "SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 2, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical SURVIVOR — Lisa Su Culp-pattern arrival; moat re-built."
+  },
+  {
+    "case_id": "NFLX-2011",
+    "candidate_sector": "comms_media",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": ">24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "growing",
+      "industry_tailwind": "intact"
+    },
+    "candidate_sector_extensions": {
+      "content_IP_moat_state": "intact",
+      "subscriber_DAU_trajectory": "growing",
+      "leverage_multiple": "healthy"
+    },
+    "canonical_category": "SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 3, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical SURVIVOR — Qwikster reversal; founder-led pivot."
+  },
+  {
+    "case_id": "MELI-2022",
+    "candidate_sector": "international_em",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": ">24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "growing",
+      "industry_tailwind": "intact"
+    },
+    "candidate_sector_extensions": {
+      "regulatory_overhang_state": "contained",
+      "geopolitical_state": "deteriorating",
+      "capital_controls_FX_exposure": "moderate"
+    },
+    "canonical_category": "SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 3, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical SURVIVOR — fintech + e-commerce flywheel intact through Argentina FX shock."
+  },
+  {
+    "case_id": "CVNA-2022",
+    "candidate_sector": "consumer_discretionary",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": "12-24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "flat",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "repeat_purchase_trajectory": "holding",
+      "brand_equity_state": "intact",
+      "distribution_channel_integrity": "intact"
+    },
+    "canonical_category": "SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 2, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical SURVIVOR — Garcia held; refinancing transaction restored runway in 2023."
+  },
+  {
+    "case_id": "BBBY-2023",
+    "candidate_sector": "consumer_discretionary",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "departed",
+      "cash_runway": "distressed",
+      "founder_in_place": "departed",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "structural-decline"
+    },
+    "candidate_sector_extensions": {
+      "repeat_purchase_trajectory": "collapsed",
+      "brand_equity_state": "collapsed",
+      "distribution_channel_integrity": "impaired"
+    },
+    "canonical_category": "NON-SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 3},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical NON-SURVIVOR — Chapter 11 April 2023; brand equity collapsed."
+  },
+  {
+    "case_id": "FSR-2024",
+    "candidate_sector": "ev_autos",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "decreasing",
+      "cash_runway": "distressed",
+      "founder_in_place": "yes",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "production_trajectory": "declining",
+      "vehicle_margin": "catastrophic-negative",
+      "capital_structure": "public-only"
+    },
+    "canonical_category": "NON-SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 3},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical NON-SURVIVOR — Fisker Chapter 11 June 2024; founder held but vehicle margin catastrophic."
+  },
+  {
+    "case_id": "CHK-2020",
+    "candidate_sector": "energy",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "departed",
+      "cash_runway": "distressed",
+      "founder_in_place": "departed",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "reversed"
+    },
+    "candidate_sector_extensions": {
+      "net_debt_at_trough": "distressed",
+      "hedge_book": "unhedged",
+      "reserve_quality": "tier-2",
+      "cost_curve": "high"
+    },
+    "canonical_category": "NON-SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 3},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical NON-SURVIVOR — Chesapeake Chapter 11 June 2020; equity wiped."
+  },
+  {
+    "case_id": "NOK-2012",
+    "candidate_sector": "tech_saas",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "departed",
+      "cash_runway": "<12mo",
+      "founder_in_place": "departed",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "structural-decline"
+    },
+    "candidate_sector_extensions": {
+      "customer_engagement": "collapsed",
+      "engagement_decoupling_from_price": "no",
+      "NDR_trend": "contracting"
+    },
+    "canonical_category": "NON-SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 3},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical NON-SURVIVOR — handset business sold to Microsoft; equity holders diluted near-zero."
+  },
+  {
+    "case_id": "OPI-2024",
+    "candidate_sector": "reits",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "decreasing",
+      "cash_runway": "distressed",
+      "founder_in_place": "departed",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "structural-decline"
+    },
+    "candidate_sector_extensions": {
+      "property_tier": "B",
+      "debt_maturity_wall": "immediate",
+      "asset_class_tailwind": "structural-decline",
+      "tenant_credit_concentration": "high"
+    },
+    "canonical_category": "NON-SURVIVOR",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 0, "NON-SURVIVOR": 3},
+    "expected_top_3_case_ids": null,
+    "notes": "Canonical NON-SURVIVOR — Office Properties Income Trust; debt wall + structural office decline."
+  },
+  {
+    "case_id": "PLTR-2022",
+    "candidate_sector": "tech_saas",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "increasing",
+      "cash_runway": ">24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "growing",
+      "industry_tailwind": "intact"
+    },
+    "candidate_sector_extensions": {
+      "customer_engagement": "holding",
+      "engagement_decoupling_from_price": "yes",
+      "NDR_trend": "expanding"
+    },
+    "canonical_category": "TBD",
+    "expected_archetype_distribution": {"SURVIVOR": 2, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 0},
+    "expected_top_3_case_ids": null,
+    "notes": "Edge case — PLTR-2022 trough features SURVIVOR-shaped; veto SHOULD fire."
+  },
+  {
+    "case_id": "MRNA-2024",
+    "candidate_sector": "healthcare_biotech",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "flat",
+      "cash_runway": ">24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "pipeline_depth": "diversified",
+      "trial_status_at_trough": "mixed",
+      "TAM_state": "weakening"
+    },
+    "canonical_category": "TBD",
+    "expected_archetype_distribution": {"SURVIVOR": 1, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 1},
+    "expected_top_3_case_ids": null,
+    "notes": "Edge case — Moderna 2024 trough; cash strong, pipeline diversified, but covid revenue cliff."
+  },
+  {
+    "case_id": "SLG-2023",
+    "candidate_sector": "reits",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "flat",
+      "cash_runway": "12-24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "flat",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "property_tier": "A",
+      "debt_maturity_wall": "near",
+      "asset_class_tailwind": "weakening",
+      "tenant_credit_concentration": "moderate"
+    },
+    "canonical_category": "TBD",
+    "expected_archetype_distribution": {"SURVIVOR": 1, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 1},
+    "expected_top_3_case_ids": null,
+    "notes": "Edge case — SL Green 2023 trough; tier-A NYC office portfolio; uncertain outcome."
+  },
+  {
+    "case_id": "INTC-2024",
+    "candidate_sector": "semis_hardware",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "flat",
+      "cash_runway": "12-24mo",
+      "founder_in_place": "replaced-by-competent",
+      "margin_trajectory": "deteriorating",
+      "revenue_trajectory": "declining",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "moat_state": "weakening",
+      "cycle_state": "secular-decline",
+      "customer_concentration": "moderate"
+    },
+    "canonical_category": "TBD",
+    "expected_archetype_distribution": {"SURVIVOR": 0, "DILUTED-SURVIVOR": 2, "NON-SURVIVOR": 1},
+    "expected_top_3_case_ids": null,
+    "notes": "Edge case — Intel 2024 trough; Gelsinger turnaround vs secular foundry decline."
+  },
+  {
+    "case_id": "RIVN-2024",
+    "candidate_sector": "ev_autos",
+    "candidate_universal_core": {
+      "founder_insider_stake_direction": "flat",
+      "cash_runway": "12-24mo",
+      "founder_in_place": "yes",
+      "margin_trajectory": "improving",
+      "revenue_trajectory": "growing",
+      "industry_tailwind": "weakening"
+    },
+    "candidate_sector_extensions": {
+      "production_trajectory": "growing",
+      "vehicle_margin": "negative",
+      "capital_structure": "public-only"
+    },
+    "canonical_category": "TBD",
+    "expected_archetype_distribution": {"SURVIVOR": 1, "DILUTED-SURVIVOR": 1, "NON-SURVIVOR": 1},
+    "expected_top_3_case_ids": null,
+    "notes": "Edge case — Rivian 2024 trough; founder held + production growing + VW JV; cash bridge needed."
+  }
+]

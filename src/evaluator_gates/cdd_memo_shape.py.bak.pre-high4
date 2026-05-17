@@ -1,0 +1,341 @@
+"""CDD integrated-memo shape validator (HG-32).
+
+Validates the CDD v1.2 schema emitted by the main-session §2.5
+integration step per `.claude/commands/research-company.md` lines
+184-233. The integrated memo carries overlay-surfacing fields from both
+upstream analyst memos plus the disposition_recommendation that pm-
+supervisor consumes.
+
+Audit found 8/11 historical CDD emissions had partial overlay surfacing
+(missing reinvestment_moat_summary, helmer_powers_summary, or
+narrative_dcf_summary fields).
+
+DETERMINISM: pure stdlib. No I/O beyond CLI. Accepts both YAML
+(text-prefix) and pure-JSON memo inputs — most CDD memos are emitted as
+markdown files with a fenced ```yaml block; the validator can be pointed
+at the parsed YAML.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import dataclass, field
+from typing import Any
+
+VALID_TIERS: frozenset[str] = frozenset({
+    "core_fundamental", "thematic_growth", "speculative_optionality",
+})
+
+VALID_DISPOSITIONS: frozenset[str] = frozenset({
+    "ADD", "WATCH", "PASS", "REJECT",
+})
+
+# Top-level required keys per v1.2 schema (research-company.md §2.5).
+REQUIRED_TOP_LEVEL: tuple[str, ...] = (
+    "ticker",
+    "run_id",
+    "tier",
+    "sector_identification",
+    "brief_metadata",
+    "quality_gate",
+    "outside_view_summary",
+    "reinvestment_moat_summary",
+    "helmer_powers_summary",
+    "narrative_dcf_summary",
+    "integrated_thesis",
+    "verification_results",
+    "essentials_distilled",
+    "evidence_index_rows_added",
+    "banned_outputs_check",
+    "disposition_recommendation",
+)
+
+# Required brief_metadata sub-keys.
+REQUIRED_BRIEF_METADATA_KEYS: tuple[str, ...] = (
+    "cold_start",
+    "current_quant_brief_id",
+    "current_strat_brief_id",
+)
+
+# Required quality_gate sub-keys.
+REQUIRED_QUALITY_GATE_KEYS: tuple[str, ...] = (
+    "passes",
+    "piotroski_f_score",
+    "altman_z_double_prime",
+)
+
+# Required outside_view_summary sub-keys (Overlay 3+4).
+REQUIRED_OUTSIDE_VIEW_SUMMARY_KEYS: tuple[str, ...] = (
+    "intuitive_growth_pct",
+    "reference_class_growth_mean_pct",
+    "reference_source",
+    "cohort_values_placeholder",
+    "r_coefficient_used",
+    "corrected_growth_pct",
+    "corrected_divergence_pp",
+)
+
+# Required reinvestment_moat_summary sub-keys (Overlay 2).
+REQUIRED_REINVESTMENT_MOAT_SUMMARY_KEYS: tuple[str, ...] = (
+    "quality_label",
+    "incremental_roic_3y_trailing_pct",
+    "deployable_runway_years_est",
+)
+
+# Required helmer_powers_summary sub-keys (Overlay 1).
+REQUIRED_HELMER_POWERS_SUMMARY_KEYS: tuple[str, ...] = (
+    "powers_held_with_evidence",
+    "n_powers_at_evidence_floor",
+)
+
+# Required narrative_dcf_summary sub-keys (Overlay 5).
+REQUIRED_NARRATIVE_DCF_SUMMARY_KEYS: tuple[str, ...] = (
+    "bull_helmer_power_anchor",
+    "bull_falsifying_observable",
+    "bear_structural_impairment_anchor",
+    "bear_falsifying_observable",
+)
+
+# Required integrated_thesis sub-keys.
+REQUIRED_THESIS_KEYS: tuple[str, ...] = (
+    "summary",
+    "key_supporting_findings",
+    "key_open_questions",
+)
+
+# Banned-outputs check required sub-keys.
+REQUIRED_BANNED_OUTPUTS_KEYS: tuple[str, ...] = (
+    "stovall_rotation",
+    "peg_only_ranking",
+    "fed_without_hfi",
+    "ark_decade_targets",
+    "tier_violations",
+)
+
+
+@dataclass
+class CDDMemoShapeResult:
+    """Result envelope for CDD memo shape validation."""
+
+    valid: bool
+    tier: str | None = None
+    disposition: str | None = None
+    missing_top_level: list[str] = field(default_factory=list)
+    missing_brief_metadata: list[str] = field(default_factory=list)
+    missing_quality_gate: list[str] = field(default_factory=list)
+    missing_outside_view_summary: list[str] = field(default_factory=list)
+    missing_reinvestment_moat_summary: list[str] = field(default_factory=list)
+    missing_helmer_powers_summary: list[str] = field(default_factory=list)
+    missing_narrative_dcf_summary: list[str] = field(default_factory=list)
+    missing_thesis: list[str] = field(default_factory=list)
+    missing_banned_outputs: list[str] = field(default_factory=list)
+    invalid_disposition: str | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+def _is_present_non_empty(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (str, list, dict, tuple)) and len(value) == 0:
+        return False
+    return True
+
+
+def _check_sub_keys(
+    block: object,
+    required: tuple[str, ...],
+    *,
+    presence_only: tuple[str, ...] = (),
+) -> list[str]:
+    """Return list of sub-keys missing from ``block``.
+
+    Args:
+        block: candidate dict.
+        required: tuple of required sub-keys.
+        presence_only: subset of required keys that need only be PRESENT
+            (None is acceptable), e.g. boolean flags that may be False.
+    """
+    if not isinstance(block, dict):
+        return list(required)
+    missing = []
+    for k in required:
+        if k in presence_only:
+            if k not in block:
+                missing.append(k)
+        else:
+            if not _is_present_non_empty(block.get(k)):
+                missing.append(k)
+    return missing
+
+
+def validate_cdd_memo_shape(memo: object) -> CDDMemoShapeResult:
+    """Validate a CDD integrated memo dict against v1.2 schema."""
+    if not isinstance(memo, dict):
+        return CDDMemoShapeResult(
+            valid=False,
+            notes=[f"memo must be a dict; got {type(memo).__name__}"],
+        )
+
+    result = CDDMemoShapeResult(valid=True)
+    tier = memo.get("tier")
+    result.tier = tier if isinstance(tier, str) else None
+    disp = memo.get("disposition_recommendation")
+    result.disposition = disp if isinstance(disp, str) else None
+
+    # Top-level presence. Some fields are PRESENCE-ONLY (empty list /
+    # 0 / False are legitimate values).
+    PRESENCE_ONLY_TOP_LEVEL = frozenset({
+        "evidence_index_rows_added",  # int count; 0 is valid
+        "verification_results",        # list; empty is valid if no claims verified
+        "essentials_distilled",        # list; empty is valid if no new essentials
+    })
+    for k in REQUIRED_TOP_LEVEL:
+        if k in PRESENCE_ONLY_TOP_LEVEL:
+            if k not in memo:
+                result.missing_top_level.append(k)
+        elif not _is_present_non_empty(memo.get(k)):
+            result.missing_top_level.append(k)
+
+    # Tier enum.
+    if result.tier is not None and result.tier not in VALID_TIERS:
+        result.notes.append(
+            f"tier={result.tier!r} not in canonical enum {sorted(VALID_TIERS)}"
+        )
+
+    # Disposition enum.
+    if (
+        result.disposition is not None
+        and result.disposition not in VALID_DISPOSITIONS
+    ):
+        result.invalid_disposition = result.disposition
+
+    # Brief metadata.
+    result.missing_brief_metadata = _check_sub_keys(
+        memo.get("brief_metadata"),
+        REQUIRED_BRIEF_METADATA_KEYS,
+        presence_only=("cold_start",),
+    )
+
+    # Quality gate.
+    result.missing_quality_gate = _check_sub_keys(
+        memo.get("quality_gate"),
+        REQUIRED_QUALITY_GATE_KEYS,
+        presence_only=("passes",),
+    )
+
+    # Overlay surfaces — tier-conditional.
+    if result.tier in ("core_fundamental", "thematic_growth"):
+        result.missing_outside_view_summary = _check_sub_keys(
+            memo.get("outside_view_summary"),
+            REQUIRED_OUTSIDE_VIEW_SUMMARY_KEYS,
+            presence_only=("cohort_values_placeholder",),
+        )
+        result.missing_reinvestment_moat_summary = _check_sub_keys(
+            memo.get("reinvestment_moat_summary"),
+            REQUIRED_REINVESTMENT_MOAT_SUMMARY_KEYS,
+        )
+        result.missing_narrative_dcf_summary = _check_sub_keys(
+            memo.get("narrative_dcf_summary"),
+            REQUIRED_NARRATIVE_DCF_SUMMARY_KEYS,
+        )
+    # Helmer powers summary required for all tiers (even speculative
+    # surfaces it as 0 Powers held).
+    result.missing_helmer_powers_summary = _check_sub_keys(
+        memo.get("helmer_powers_summary"),
+        REQUIRED_HELMER_POWERS_SUMMARY_KEYS,
+    )
+
+    # Integrated thesis.
+    result.missing_thesis = _check_sub_keys(
+        memo.get("integrated_thesis"),
+        REQUIRED_THESIS_KEYS,
+    )
+
+    # Banned-outputs structured form.
+    result.missing_banned_outputs = _check_sub_keys(
+        memo.get("banned_outputs_check"),
+        REQUIRED_BANNED_OUTPUTS_KEYS,
+        presence_only=REQUIRED_BANNED_OUTPUTS_KEYS,  # any bool acceptable
+    )
+
+    if (
+        result.missing_top_level
+        or result.missing_brief_metadata
+        or result.missing_quality_gate
+        or result.missing_outside_view_summary
+        or result.missing_reinvestment_moat_summary
+        or result.missing_helmer_powers_summary
+        or result.missing_narrative_dcf_summary
+        or result.missing_thesis
+        or result.missing_banned_outputs
+        or result.invalid_disposition is not None
+    ):
+        result.valid = False
+
+    return result
+
+
+def _result_to_dict(r: CDDMemoShapeResult) -> dict[str, Any]:
+    return {
+        "valid": r.valid,
+        "tier": r.tier,
+        "disposition": r.disposition,
+        "missing_top_level": r.missing_top_level,
+        "missing_brief_metadata": r.missing_brief_metadata,
+        "missing_quality_gate": r.missing_quality_gate,
+        "missing_outside_view_summary": r.missing_outside_view_summary,
+        "missing_reinvestment_moat_summary": r.missing_reinvestment_moat_summary,
+        "missing_helmer_powers_summary": r.missing_helmer_powers_summary,
+        "missing_narrative_dcf_summary": r.missing_narrative_dcf_summary,
+        "missing_thesis": r.missing_thesis,
+        "missing_banned_outputs": r.missing_banned_outputs,
+        "invalid_disposition": r.invalid_disposition,
+        "notes": r.notes,
+    }
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="cdd_memo_shape",
+        description=(
+            "Validate a CDD integrated memo shape against the v1.2 schema. "
+            "Exit 0 valid, 1 invalid, 2 unparseable."
+        ),
+    )
+    parser.add_argument("--memo", required=True, help="path to memo JSON")
+    args = parser.parse_args(argv)
+
+    try:
+        with open(args.memo, "r", encoding="utf-8") as f:
+            memo = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"unable to read/parse memo: {exc}\n")
+        return 2
+
+    result = validate_cdd_memo_shape(memo)
+    sys.stdout.write(json.dumps(_result_to_dict(result), indent=2) + "\n")
+    return 0 if result.valid else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())
+
+
+__all__ = [
+    "CDDMemoShapeResult",
+    "validate_cdd_memo_shape",
+    "REQUIRED_TOP_LEVEL",
+    "VALID_TIERS",
+    "VALID_DISPOSITIONS",
+    "REQUIRED_BRIEF_METADATA_KEYS",
+    "REQUIRED_QUALITY_GATE_KEYS",
+    "REQUIRED_OUTSIDE_VIEW_SUMMARY_KEYS",
+    "REQUIRED_REINVESTMENT_MOAT_SUMMARY_KEYS",
+    "REQUIRED_HELMER_POWERS_SUMMARY_KEYS",
+    "REQUIRED_NARRATIVE_DCF_SUMMARY_KEYS",
+    "REQUIRED_THESIS_KEYS",
+    "REQUIRED_BANNED_OUTPUTS_KEYS",
+]

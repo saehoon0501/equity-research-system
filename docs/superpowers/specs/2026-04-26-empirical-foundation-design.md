@@ -1,7 +1,11 @@
 # Empirical Domain Library — Design Spec
 
+> **Status: SUPERSEDED by v3 (2026-04-29).** Preserved for historical reference.
+> Current canonical spec: `docs/superpowers/specs/2026-04-29-empirical-foundation-design-v3.md`
+> See Section 8 consensus doc for v3 authorship history.
+
 **Date:** 2026-04-26
-**Status:** Implemented + extended via Section 1 + Section 2 consensus
+**Status:** Superseded — see header note above
 **Operator:** saehoon0501
 **Project:** equity-research-system
 
@@ -309,7 +313,7 @@ Full document: `docs/section-2-consensus.md` (commit `e3edf0e`).
 ## 16. Diagrams — Refined funnel + 3-gate pipeline
 
 ### 16.1 Refined funnel (sidecars + 9 phases + loop-backs)
-
+layer-stack(Skills(workflow) invoke Phases; Phases(Nodes) read Sidecars; Sidecars(Services) aggregate Lanes; Lanes(curated knowledge files) are built from Data sources)
 ```
 ┌─────────────────── 4 ALWAYS-ON SIDECARS ─────────────────────┐
 │                                                                │

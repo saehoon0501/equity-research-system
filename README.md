@@ -2,23 +2,26 @@
 
 A two-layer investment research system combining LLM-driven watchlist research (slow layer) with quantitative timing/sizing overlay (execution layer). US equities, multi-month horizon, real-money individual investor at small size.
 
-**Status:** v0.1 build — paper-only foundation phase.
+**Goal:** pick good stocks under the discipline of mechanical contamination defense, calibration-driven sizing, and the v2-final substantive commitments.
 
-**Operating model:** FTE (~40 hours/week)
+**Implementation pattern (decision 6):** an agent-harness around Claude Code. Claude Code is the brain — it holds the orchestration logic, runs prompts, invokes subagents, makes routing decisions through conversational reasoning and slash commands. Code, where it exists, is a *tool* or *sub-system* that Claude Code consumes, never an orchestrator of it.
 
-**Build clock:** 2026-04-26 → kill threshold 2026-10-10 (24 weeks)
+**Status:** v0.1 build. Step-driven (no calendar; see [`BUILD_LOG.md`](BUILD_LOG.md) decision 5).
+
+**Substrate:** Claude Code (Path A — see [`BUILD_LOG.md`](BUILD_LOG.md) decision 1).
 
 ---
 
 ## Documents
 
-Design documents in `docs/`:
+Design documents in `docs/` (canonical for substantive details — DDL, agent prompts, gate criteria, anti-patterns):
 
-- **[`v2-final-spec.md`](docs/v2-final-spec.md)** — Component specification (architecture). Slow/fast layer separation, agent definitions, quant models, evaluation framework, infrastructure spine.
-- **[`phasing-plan.md`](docs/phasing-plan.md)** — v0.1 / v0.5 / v1.0 phasing with phase gates, kill criteria, and the month-18 honest-answer rubric that determines v1.0 continuation.
-- **[`implementation-sequencing.md`](docs/implementation-sequencing.md)** — v0.1 week-by-week build plan with dated start, checkpoints, named buffer, and documented-slip protocol.
+- **[`v2-final-spec.md`](docs/v2-final-spec.md)** — Component specification. Slow/fast layer separation, agent definitions, quant models, evaluation framework, infrastructure spine.
+- **[`phasing-plan.md`](docs/phasing-plan.md)** — v0.1 / v0.5 / v1.0 phasing with phase gates and kill criteria.
+- **[`implementation-sequencing.md`](docs/implementation-sequencing.md)** — Original dated build plan; calendar/commitment sections are *no longer the operator's protocol* (per decision 5). Substantive sections (DDL, scope substance, anti-patterns) remain canonical.
+- **[`harness-reference.md`](docs/harness-reference.md)** — Claude Code architecture reference.
 
-The build is governed by **[`BUILD_LOG.md`](BUILD_LOG.md)** — the project's operational record. Every week ends with an entry. Every checkpoint produces a written artifact in `checkpoints/`.
+The build is governed by **[`BUILD_LOG.md`](BUILD_LOG.md)** — the project's operational ledger. Step list, architectural decisions, external-dependency status. No weekly cadence; updated when steps complete.
 
 ---
 
@@ -26,47 +29,69 @@ The build is governed by **[`BUILD_LOG.md`](BUILD_LOG.md)** — the project's op
 
 - **Slow/fast layer separation with strict watchlist contract.** Execution layer can only act on names the watchlist layer has approved.
 - **Mechanical contamination defense via Evidence Index.** Every dated claim must cite a row that resolves to a real source predating the claim's resolution date. Mechanical, not semantic — invariant to model choice.
-- **Process vs outcome rubric separation.** Process rubrics enforced as hard gates at output time. LearningLoop (Phase 2, deferred) optimizes against outcome rubrics only — has zero access to process scores as features.
+- **Process vs outcome rubric separation.** Process rubrics enforced as hard gates at output time via the Evaluator subagent. LearningLoop (Phase 2, deferred) optimizes against outcome rubrics only — has zero access to process scores as features.
 - **Counterfactual ledger.** First-class object measuring system performance against simple baselines (SPY, equal-weight watchlist, sector-matched, 60/40).
-- **PASS as default.** CompanyDeepDive's recommended_action defaults to PASS; BUY requires earned conviction.
+- **PASS as default.** CompanyDeepDive's `recommended_action` defaults to PASS; BUY requires earned conviction.
 - **Hard human-approval gate on trades.** No automated trading authority granted to any agent.
 - **Calibration-driven sizing.** Quarter-Kelly default, adjusted within bounded floor (1/8) / ceiling (1/2 Kelly) based on Brier-score trends over rolling 90-day windows.
 - **Wide P10/P90 ranges.** With realized-volatility honesty floor.
 - **Thesis-pillar-fail trigger as highest-priority exit signal.** Never tax-suppressed.
 
-## Path A architectural decision (Day 1)
+---
 
-All agents run on Anthropic via Claude Code subagent infrastructure. v2-final §1.3 model-family diversity for BearCase is deliberately not enforced. Primary contamination defense (mechanical Evidence Index check) remains intact and is invariant to model choice.
+## Architectural decisions (summary; see [`BUILD_LOG.md`](BUILD_LOG.md) for full rationale + reversibility paths)
 
-**Reversibility:** if contamination defense underperforms at Checkpoint 3 (post-cutoff degradation >20%), this is the first override to reconsider. Restoring §1.3 means routing BearCase through OpenAI or Google API directly, bypassing Claude Code for that one agent.
+1. **Path A.** All agents on Anthropic via Claude Code. Model-family diversity defense (v2-final §1.3) deliberately not enforced. Reversibility trigger: post-cutoff degradation >20% at Checkpoint 3.
+2. **Data API abstraction — deferred.** Pluggable interface; provider commitment deferred until needed.
+3. **Agent harness substrate = Claude Code subagents** (replaces v2-final §4.3's LangGraph proposal).
+4. **Skills-only operational interface.** No Python orchestration layer; operator runs everything through slash commands.
+5. **Step-driven build, no timeline.** No build clock, no weekly entries, no kill threshold, no §9.3 commitment statement.
+6. **Claude Code is the brain; code is a tool, not an orchestrator.** Positive inverse of decision 4. Agent-harness pattern around Claude Code. Python lives in skill helpers (`src/skills/<command>/`) and MCP server implementations (`src/mcp/<server>/`) — leaf logic only, never control flow.
 
-See [`BUILD_LOG.md`](BUILD_LOG.md) Day 1 entry for full rationale.
+---
 
-## Skills-only operational interface (Day 1 revision)
+## Architecture (`.claude/`)
 
-The system runs entirely through Claude Code slash commands and subagents. No Python orchestration layer. External systems connected via MCP servers (see [`.claude/references/mcp-required.md`](.claude/references/mcp-required.md)).
+The system runs entirely through Claude Code's slash-command + subagent + reference layout:
 
-Architecture in [`.claude/`](.claude/README.md):
-- **`/run` — master orchestrator** that wraps all other skills into a single workflow keyed to phase + calendar position. Most days, this is the only command typed.
-- **12 specialized slash commands** — independently invocable (`/research-company`, `/daily-monitor`, `/macro-cycle`, `/evaluate`, `/quarterly-reunderwrite`, `/entry-check`, `/exit-check`, `/size`, `/weekly-buildlog`, `/checkpoint`, `/wash-sale-harvest`, `/backtest`)
-- **3 subagents** — context isolation where it matters (`company-deep-dive`, `bear-case`, `evaluator`)
-- **13 reference files** — cross-cutting content (Evidence Index schema, contamination check, process rubric, position sizing formula, exit triggers, prediction resolution, MCP requirements, 7 industry addenda, etc.)
+- **`/run` — master orchestrator** that wraps all other slash commands. Most days, this is the only command typed.
+- **12 specialized slash commands** — independently invocable: `/research-company`, `/daily-monitor`, `/macro-cycle`, `/evaluate`, `/quarterly-reunderwrite`, `/entry-check`, `/exit-check`, `/size`, `/checkpoint`, `/wash-sale-harvest`, `/backtest`. (`/weekly-buildlog` deprecated under decision 5.)
+- **3 subagents** — context isolation where it matters: `company-deep-dive`, `bear-case`, `evaluator`.
+- **References** — `evidence-index-schema.md`, `contamination-check.md`, `process-rubric.md`, `mcp-required.md`, plus equity-research-specific protocols and 7 industry addenda.
 
 The bull/bear adversarial isolation (CompanyDeepDive vs BearCase) is preserved through subagent context boundaries, not Python orchestration. See [`.claude/README.md`](.claude/README.md) for the full three-layer architecture.
+
+## Where Python code lives (per decision 6)
+
+Code is leaf-level and lives in two places only:
+
+1. **Skill implementations** — Python helpers a slash command needs beyond conversational reasoning (deterministic transformations, numerical computation, format checks). `src/skills/<command-name>/` (created when first needed).
+2. **MCP server implementations** — Python (or any language) wrapping an external service into MCP-compatible tools. `src/mcp/<server-name>/` or external packages consumed via `.mcp.json`.
+
+There is **no orchestrator code**. Slash commands invoke subagents and run wrapper logic conversationally; subagents are markdown prompts in `.claude/agents/`; persistence is via `mcp__postgres`. If you find yourself writing a Python file that doesn't fit "skill helper" or "MCP server," step back — under decision 6 it likely shouldn't exist.
 
 ---
 
 ## Phase scope
 
-### v0.1 (current — 2026-04-26 to ~2026-07-25)
+### v0.1 (current — paper-only foundation)
 
-Paper-only foundation. Infrastructure spine + one agent end-to-end (CompanyDeepDive) + backtest harness. No real money. Validates that mechanical contamination defense produces materially better post-cutoff Sharpe than public-frameworks baselines (Profit Mirage paper documented 50–72% Sharpe decay in published frameworks; v0.1 gate requires ≤20%).
+Step list in [`BUILD_LOG.md`](BUILD_LOG.md):
+- Tier 1 — Substrate (DBs, MCPs, runtime config)
+- Tier 2 — Conventions (Evidence Index, contamination check, process rubric, append-only persistence; tested with synthetic data)
+- Checkpoint 1 — Substrate + Conventions Live
+- Tier 3 — Agents (CompanyDeepDive / BearCase / Evaluator / PMSupervisor on a known-historical name)
+- Checkpoint 2 — Agents Working End-to-End
+- Tier 4 — Application (live data + Sharadar + backtest + ≥30 sample memos)
+- Checkpoint 3 — Strategy Validated (v0.1 → v0.5 advancement decision per `docs/phasing-plan.md` §2.5)
 
-### v0.5 (after gate — duration 9–12 months)
+C3 gate combines structural correctness (mechanical conventions audit clean, false-pass count = 0) with substantive correctness (post-cutoff Sharpe degradation <20%, DSR > 0.5, PBO < 50%, counterfactual baselines beaten).
+
+### v0.5 (after C3 advancement — duration 9–12 months)
 
 Limited real money. Full agent stack (6 agents). Watchlist limited to 3–5 names at extra-high conviction bar (≥0.7 final_conviction). 10–20% of intended capital. Validates operational machinery — reconciliation, safety rails, daily orchestration, calibration tracking.
 
-### v1.0 (after gate — open-ended; month-18 evaluation)
+### v1.0 (after v0.5 — open-ended; month-18 evaluation)
 
 Full deployment. 30–50 names. Full capital. The alpha question, asked honestly only after v0.1 and v0.5 have validated that the system has earned the right to ask it.
 
@@ -76,61 +101,58 @@ Full deployment. 30–50 names. Full capital. The alpha question, asked honestly
 
 ```
 equity-research-system/
-├── BUILD_LOG.md                    # Project's operational record (load-bearing)
+├── BUILD_LOG.md                    # Operational ledger (step list + architectural decisions)
 ├── README.md                       # This file
-├── .gitignore
-├── .claude/                        # Skills layer (operator interface)
+├── .claude/                        # Slash commands + subagents + references (decision 4 substrate)
 │   ├── README.md                   # Three-layer architecture documentation
 │   ├── commands/                   # 12 slash commands (operator entry points)
 │   ├── agents/                     # 3 subagents (CompanyDeepDive, BearCase, Evaluator)
 │   └── references/                 # Cross-cutting reference content
 │       └── industry-addenda/       # Banks, REITs, biotech, insurance, energy, software, hardware
-├── provider_verification/          # API training-data verification artifacts
-│   ├── README.md
-│   ├── anthropic.md                # Path A: only Anthropic verified at v0.1
-│   ├── api_keys/                   # Sample API call responses (no keys)
-│   └── artifacts/                  # Screenshots, T&C captures (gitignored)
-├── checkpoints/                    # C1, C2, C3 written artifacts
-├── docs/
+├── checkpoints/                    # C1, C2, C3 written artifacts (when produced)
+├── docs/                           # Design documents (canonical for substance)
 │   ├── v2-final-spec.md
 │   ├── phasing-plan.md
 │   ├── implementation-sequencing.md
-│   └── harness-reference.md        # Claude Code architecture reference (week-6 prep)
-├── src/                            # Python infrastructure (lighter scope under skills-only)
-│   ├── README.md                   # Describes planned structure per build week
-│   ├── data_layer/                 # Built week 2 (interface)
-│   ├── evidence_index/             # Built week 3 (load-bearing)
-│   ├── agent_harness/              # Reduced scope: minimal under skills-only
-│   └── backtesting/                # Built weeks 10–11
+│   └── harness-reference.md
+├── src/                            # Python (per decision 6: leaf logic only, never orchestrator)
+│   ├── skills/                     # Skill helpers for slash commands (created when first needed)
+│   ├── mcp/                        # MCP server implementations (created when first needed)
+│   ├── data_layer/                 # Pluggable data layer (Tier 4)
+│   ├── evidence_index/             # Evidence Index DDL + access (Tier 2)
+│   └── backtesting/                # BacktestingFramework (Tier 4)
 ├── tests/
-└── memos/                          # Sample memos generated week 12 onward
+└── memos/                          # Sample memos generated in Tier 4
 ```
 
 ---
 
 ## How to read this repo if you're returning to it tired
 
-If you're future-tired-you returning to this six months in:
+1. Read **[`BUILD_LOG.md`](BUILD_LOG.md)** first. Decisions 1–6 tell you what was architecturally committed to and why. The step list tells you where you are.
+2. **[`.claude/README.md`](.claude/README.md)** explains the slash command + subagent + reference layout.
+3. **`checkpoints/`** has the formal pass/fail artifacts for each step boundary. If a checkpoint says ✗ on a criterion, that's the criterion that failed. Do not argue around it.
+4. **[`docs/phasing-plan.md`](docs/phasing-plan.md)** §6 names the substantive failure modes the structure protects against.
 
-1. Read **`BUILD_LOG.md`** first. The most recent entries tell you where you are.
-2. The Day 1 entry tells you what was committed to architecturally and why.
-3. **`checkpoints/`** has the formal pass/fail artifacts for each phase gate. If a checkpoint says ✗ on a criterion, that's the criterion that failed. Do not argue around it.
-4. **`docs/phasing-plan.md`** §6 names the failure modes the structure protects against. If you're tempted to skip a gate, check which failure mode you're walking toward.
-5. **`docs/implementation-sequencing.md`** §10 mirrors that for the build phase.
+Decision 6 is the load-bearing one for "how is this implemented?" — Claude Code is the brain. If you find yourself writing a Python orchestrator, you're violating it; the right fallback is documented in decision 6's reversibility note (revert to code-as-orchestrator only if mechanical conventions can't be enforced reliably under the agent-harness pattern).
 
-The thresholds are written so motivated reasoning can't relax them. If you want to soften something while reading, that's the threshold doing its job. Tighten, don't relax.
+The thresholds in `docs/phasing-plan.md` §2.5 are written so motivated reasoning can't relax them. If you want to soften something while reading, that's the threshold doing its job. Tighten, don't relax.
 
 ---
 
 ## Status board
 
-- [x] Day 1 first commit (2026-04-26)
-- [ ] Anthropic API verification artifact captured
-- [ ] Database provisioned
-- [ ] §9.3 commitment statement written
-- [ ] Week 1 deliverables complete
-- [ ] Checkpoint 1 (target: 2026-05-23)
-- [ ] Checkpoint 2 (target: 2026-06-20)
-- [ ] Checkpoint 3 generation (target: 2026-07-18)
-- [ ] Checkpoint 3 evaluation + phase gates (target: 2026-07-25)
-- [ ] v0.1 → v0.5 advancement decision
+External dependencies:
+- [x] Anthropic runtime resolved (Claude Code, Path A — decision 1)
+- [x] TimescaleDB + Postgres provisioned (local Docker)
+- [ ] Sharadar Core Fundamentals applied (before Tier 4)
+- [ ] Price/news data provider committed (before Tier 4)
+
+Build progress (per [`BUILD_LOG.md`](BUILD_LOG.md) tiered step list):
+- [ ] Tier 1: Substrate
+- [ ] Tier 2: Conventions
+- [ ] Checkpoint 1
+- [ ] Tier 3: Agents
+- [ ] Checkpoint 2
+- [ ] Tier 4: Application
+- [ ] Checkpoint 3 + v0.1 → v0.5 advancement decision

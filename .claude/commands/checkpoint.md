@@ -11,11 +11,13 @@ Per implementation-sequencing.md §6, each checkpoint produces a single document
 
 `<1|2|3>` — required. Which checkpoint to produce.
 
-| Checkpoint | FTE date | Evenings date | Topic |
-|---|---|---|---|
-| 1 | end of week 4 (2026-05-23) | end of week 7 | Data Layer + Evidence Index Live |
-| 2 | end of week 8 (2026-06-20) | end of week 12 (interim) | Agent Harness + CompanyDeepDive Producing Memos |
-| 3 | end of week 13 (2026-07-25) | end of week 20 | Phase Gates Evaluated (full v0.1 → v0.5 advancement decision) |
+| Checkpoint | Step boundary (per BUILD_LOG.md) | Topic |
+|---|---|---|
+| 1 | After Foundation + Data Layer steps | Data Layer + Evidence Index Live |
+| 2 | After Agent Harness steps | Agent Harness + CompanyDeepDive Producing Memos |
+| 3 | After Backtesting + Sample Memo Generation steps | Phase Gates Evaluated (full v0.1 → v0.5 advancement decision) |
+
+(Per BUILD_LOG.md decision 5, checkpoints fire at step boundaries, not on dates. Run a checkpoint when its gating step list is demonstrably complete.)
 
 ## Procedure
 
@@ -31,21 +33,21 @@ For each completion criterion:
 - If ✓: capture evidence (test output, file path, query result, screenshot reference, etc.)
 - If ✗: capture what's missing and the recovery plan
 
-### 3. Pace judgment
+### 3. Step-completeness summary
+
+(Per BUILD_LOG.md decision 5, no pace/buffer judgment — there's no calendar to be on or off.)
 
 ```
-On pace / Behind / Kill threshold becoming relevant: [pick one]
+Step list status at this checkpoint:
+- Steps complete: <list of [x] items in BUILD_LOG.md gating this checkpoint>
+- Steps incomplete: <list of [ ] items still gating this checkpoint, if any>
 
-Evidence for judgment: [specific, not vibes — e.g., "all 12 criteria met, 3 days
-ahead of target" or "8 of 12 criteria met, Sharadar approval delayed from 5 days
-to 11 days, week 5 buffer fully consumed"]
+Evidence: [specific — e.g., "all 12 criteria met; sample queries returning expected
+results; mechanical contamination check rejecting one synthetic post-dating claim
+and accepting one synthetic predating claim"]
 ```
 
-### 4. Buffer status
-
-Capture consumption since last checkpoint.
-
-### 5. For Checkpoint 1: Data Layer + Evidence Index Live
+### 4. For Checkpoint 1: Data Layer + Evidence Index Live
 
 Criteria per implementation-sequencing.md §6.1:
 
@@ -64,9 +66,7 @@ Criteria per implementation-sequencing.md §6.1:
 □ Provider verification artifacts captured
 ```
 
-### 6. For Checkpoint 2: Agent Harness + CompanyDeepDive Producing Memos
-
-For FTE track (full criteria):
+### 5. For Checkpoint 2: Agent Harness + CompanyDeepDive Producing Memos
 
 ```
 □ Full agent harness operational (Path A: Claude Code subagents wired)
@@ -77,22 +77,9 @@ For FTE track (full criteria):
 □ Cost per memo measured and projected against monthly budget
 ```
 
-For evenings interim:
+(Per BUILD_LOG.md decision 5, no FTE/evenings track distinction and no "viability judgment vs. week-24 kill threshold" — those came with the dated cadence that's been removed. If progress to Checkpoint 3 stalls, the decision is to revise the BUILD_LOG step list, not to compute kill-threshold margin.)
 
-```
-□ Agent harness functional (does not need full polish)
-□ One memo end-to-end completed (same bar as FTE)
-□ Cost per memo measured (same bar)
-□ VIABILITY JUDGMENT: At current pace, can Checkpoint 3 be met before week 24?
-  Weeks elapsed: <N>
-  Buffer consumed so far: <list>
-  Remaining scope: BacktestingFramework + sample memos + gates
-  Realistic week count to Checkpoint 3 from here: <estimate with reasoning>
-  Margin to kill threshold: <computed>
-  Decision: viable | marginal (renegotiate scope) | not viable (convene early)
-```
-
-### 7. For Checkpoint 3: Phase Gates Evaluated (the v0.1 → v0.5 decision)
+### 6. For Checkpoint 3: Phase Gates Evaluated (the v0.1 → v0.5 decision)
 
 Walk through phase gates from phasing-plan.md §2.5 mechanically:
 
@@ -129,28 +116,33 @@ Walk through phase gates from phasing-plan.md §2.5 mechanically:
 
 Plus phase-completion checklist from phasing-plan.md §2.7.
 
-### 8. Final judgment (Checkpoint 3 specific)
+### 7. Final judgment (Checkpoint 3 specific)
 
 ```
 v0.1 → v0.5 advancement: APPROVED | BLOCKED
 
 Reason: [reference specific gate failures or completion-checklist gaps]
 
-If APPROVED: BUILD_LOG entry committing to v0.5 entry date.
-If BLOCKED: BUILD_LOG entry documenting which gates failed, recovery plan, revised
-target date for re-evaluation. If recovery would push past kill threshold, kill
-criterion §2.6.4 has fired and v0.1 is concluded without advancement.
+If APPROVED: BUILD_LOG.md updated — phase flips to v0.5; operational cadences
+(daily monitor / weekly macro / monthly harvest / quarterly re-underwrite)
+become live.
+
+If BLOCKED: BUILD_LOG.md updated — which gates failed, recovery plan, revised
+step list. (Per BUILD_LOG decision 5, there is no kill threshold; the operator
+decides whether to extend with a revised step list or sunset v0.1. Path A
+reversal trigger from BUILD_LOG decision 1 — post-cutoff degradation >20% —
+remains in force regardless.)
 ```
 
-### 9. Notes for future-tired-you
+### 8. Notes
 
 Anything worth capturing — design decisions, surprises, references.
 
-### 10. Write the artifact
+### 9. Write the artifact
 
-Create `checkpoints/checkpoint_<N>.md` with all the above content. The artifact is the audit trail; future-tired-you reads this when questioning any v0.1 design decision.
+Create `checkpoints/checkpoint_<N>.md` with all the above content. The artifact is the audit trail; this is what gets re-read when any v0.1 design decision is later questioned.
 
-### 11. Commit
+### 10. Commit
 
 `git add checkpoints/checkpoint_<N>.md`
 `git commit -m "Checkpoint <N> evaluation"`
@@ -169,11 +161,13 @@ The artifact is the audit trail. The verbal "yeah it all worked" is not. This co
 
 ## When to use
 
-- End of week 4 (FTE) / week 7 (evenings): `/checkpoint 1`
-- End of week 8 (FTE) / week 12 (evenings): `/checkpoint 2`
-- End of week 13 (FTE) / week 20 (evenings): `/checkpoint 3`
+Run a checkpoint when its gating step boundary in BUILD_LOG.md is demonstrably complete:
 
-Off-schedule running is acceptable if a phase is extending. Document the extension in BUILD_LOG.md before running the checkpoint.
+- `/checkpoint 1` — after Foundation + Data Layer steps are all `[x]`
+- `/checkpoint 2` — after Agent Harness steps are all `[x]`
+- `/checkpoint 3` — after Backtesting + Sample Memo Generation steps are all `[x]`
+
+Per BUILD_LOG.md decision 5, there is no calendar trigger and no kill threshold. The artifact is still mandatory at each step boundary regardless of pass/fail (the audit trail is the load-bearing thing).
 
 ## Cost
 

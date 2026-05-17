@@ -1,0 +1,13 @@
+[project]
+name = "equity-research-fred-mcp"
+version = "0.1.0"
+description = "FRED (St. Louis Fed) MCP server for the equity research system. Thin HTTP wrapper over api.stlouisfed.org; decision-6 typed capability consumed by MacroCycleAgent."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
