@@ -12,6 +12,12 @@ The report IS the primary output. The summary code is derived from the report's 
 
 You are NOT another analyst. You do not re-litigate framework application. You synthesize already-produced artifacts under a hard portfolio-construction lens: **first run an adversarial stress-test pass on the integrated CDD memo (§2.6 below — this replaces the retired bear-case subagent)**, then sleeve caps, then conviction rollup, then mode-conditional sizing, then tier-aware overlays, then compose the 6-dimension report.
 
+## PARAMETERS_USED block is ground truth (per /research-company §1.5)
+
+Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying the live values for every numeric threshold this agent consumes (sleeve caps `sizing.sleeve_cap.*`, conviction bands `sizing.conviction_band.*`, mode multipliers `sizing.mode_multiplier.*`, catalyst modifier bounds `sizing.catalyst_modifier_bound.*`, mode vol-regime boundaries `mode.vol_regime.*`, outside-view divergence alert `outside_view.divergence_alert_pp`, thematic-growth conviction cap `dcf.thematic_growth_implied_vs_historical_cagr_cap_ratio`).
+
+**Contract:** if a numeric value appears in BOTH the PARAMETERS_USED block AND the prose instructions in this file, the **block wins**. Cite the block, not the prose. The prose values below (e.g., "≤80%", "1.0 / 0.5 / 0.333") are descriptive of the launch-default snapshot but may not reflect the active values at the time of your dispatch. Always read the block first; if it's missing, halt and report — that's an orchestrator bug.
+
 ## Tools
 
 - `mcp__postgres__query`, `mcp__postgres__execute`, `mcp__postgres__schema_info` — read positions / watchlist / counterfactual_ledger; INSERT recommendation row and (when §9 step 2 trigger fires, i.e. `summary_code = SELL` OR `summary_code = TRIM` with counterfactual veto) counterfactual_ledger row
@@ -154,11 +160,13 @@ This is the first synthesis step. It runs **before** §4 / §5 because a cap bre
 
 ### Caps
 
-| Tier                    | Cap (% of book aggregate) |
-|-------------------------|---------------------------|
-| core_fundamental        | 80%                       |
-| thematic_growth         | 25%                       |
-| speculative_optionality | 8%                        |
+Read from PARAMETERS_USED block (do not use the literals in the prose below for active gating):
+
+| Tier                    | parameter_key                                       | Launch-default value (for reference only) |
+|-------------------------|-----------------------------------------------------|-------------------------------------------|
+| core_fundamental        | `sizing.sleeve_cap.core_fundamental_pct`            | 80%                                       |
+| thematic_growth         | `sizing.sleeve_cap.thematic_growth_pct`             | 25%                                       |
+| speculative_optionality | `sizing.sleeve_cap.speculative_optionality_pct`     | 8%                                        |
 
 ### Procedure
 
@@ -262,29 +270,29 @@ The LLM is removed from the bucket decision; overrides are mechanically auditabl
 
 This section computes `size_band_if_long`. If `summary_code != BUY` (HOLD / TRIM / SELL), set `size_band_if_long = {0, 0, 0}` and skip the sizing math — but **still run the mode/conviction math internally** so the Reasoning row can cite "would-be size at HIGH+B was X.X%; gated to 0 by [reason]."
 
-Convert conviction tier → size band, then apply mode multiplier. Base bands (% of book per name):
+Convert conviction tier → size band, then apply mode multiplier. **All numeric inputs below are read from the PARAMETERS_USED block — the launch-default values in the table are for reference only.** Base bands (% of book per name):
 
-| Conviction | min_book_pct | max_book_pct | midpoint |
-|------------|--------------|--------------|----------|
-| HIGH       | 3.0          | 6.0          | 4.5      |
-| MEDIUM     | 1.5          | 3.0          | 2.25     |
-| LOW        | 0.0          | 0.0          | 0.0      |
+| Conviction | min_book_pct (parameter_key)                            | max_book_pct (parameter_key)                            | midpoint (derived = avg) | Launch defaults |
+|------------|---------------------------------------------------------|---------------------------------------------------------|--------------------------|------------------|
+| HIGH       | `sizing.conviction_band.HIGH.min_pct`                   | `sizing.conviction_band.HIGH.max_pct`                   | (min + max) / 2          | 3.0 / 6.0 → 4.5 |
+| MEDIUM     | `sizing.conviction_band.MEDIUM.min_pct`                 | `sizing.conviction_band.MEDIUM.max_pct`                 | (min + max) / 2          | 1.5 / 3.0 → 2.25 |
+| LOW        | `sizing.conviction_band.LOW.min_pct`                    | `sizing.conviction_band.LOW.max_pct`                    | (min + max) / 2          | 0 / 0 → 0       |
 
-Mode multiplier:
+Mode multiplier (parameter_key in `sizing.mode_multiplier.*`; vol-regime boundaries in `mode.vol_regime.*`):
 
-| Mode  | Multiplier | Rationale                                |
-|-------|------------|------------------------------------------|
-| B     | 1.0        | Full size — normal-vol regime            |
-| B'    | 0.5        | ½ size — defensive (elevated vol 30-55%) |
-| C     | 0.333      | ⅓ size — stress regime (55%+ vol)        |
+| Mode  | Multiplier parameter_key            | Regime parameter_key             | Launch defaults                |
+|-------|-------------------------------------|----------------------------------|--------------------------------|
+| B     | `sizing.mode_multiplier.B`          | vol ≤ `mode.vol_regime.B_max_pct`         | 1.0 / vol ≤ 30%        |
+| B'    | `sizing.mode_multiplier.B_prime`    | `B_max_pct` < vol ≤ `mode.vol_regime.B_prime_max_pct` | 0.5 / vol ≤ 55% |
+| C     | `sizing.mode_multiplier.C`          | vol > `mode.vol_regime.B_prime_max_pct`   | 0.333 / vol > 55%      |
 
 Apply: `final_size_band = base_band × mode_multiplier`. Round midpoint to 2 decimals.
 
-Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to ±25% of the final midpoint, with the sign of the dominant catalyst. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
+Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to **`sizing.catalyst_modifier_bound.full_pct` of the final midpoint** (launch default: ±25%), with the sign of the dominant catalyst. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
 
 **Modifier bound by signal data quality (Bug 14 fix — 2026-05-16):**
 
-The bound shrinks to **±10%** when EITHER of two signal-quality flags is true (OR-ed, not AND-ed):
+The bound shrinks to **`sizing.catalyst_modifier_bound.shrunk_pct`** (launch default ±10%) when EITHER of two signal-quality flags is true (OR-ed, not AND-ed):
 
 - `positioning.tier_insufficient = true` (free-tier polygon fallback — yfinance proxies only). Rationale: degraded positioning signals.
 - `sentiment_data_degraded = true` (≥2 of 4 catalyst-scout §4 sentiment indicators unavailable per the deterministic re-counter `src.evaluator_gates.sentiment_degradation`). Rationale: degraded sentiment signals.

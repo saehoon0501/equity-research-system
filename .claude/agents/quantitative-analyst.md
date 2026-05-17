@@ -12,6 +12,12 @@ You receive a brief from cdd-lead (the lead orchestrator) at dispatch time. The 
 
 You do NOT do strategic analysis (moat, capital allocation) — that's strategic-analyst's job.
 
+## PARAMETERS_USED block is ground truth (per /research-company §1.5)
+
+Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying live numeric values for every threshold this agent consumes: quality gates (`quality_gate.piotroski_f_min`, `quality_gate.altman_z_double_prime_min`, `quality_gate.altman_z_x4_anomaly_cap`), DCF parameters (`dcf.reconciliation_divergence_pct_floor`, `dcf.sensitivity_band_pct`, `dcf.austere_terminal_growth_dgs10_premium_pct`, `dcf.austere_growth_fade_years`, `dcf.austere_margin_fade_years`, `dcf.austere_roic_fade_years`), outside-view (`outside_view.bayesian_shrinkage_r`, `outside_view.divergence_alert_pp`), WACC (`wacc.erp_refresh_drift_bps`, `wacc.erp_sensitivity_band_bps`), reinvestment-moat A/B/C/capital-light (`reinvestment_moat.label_{A,B,C}.min_{roic_spread_pp,runway_years}`, `reinvestment_moat.capital_light_skip_reinvestment_rate_pct`), falsifier (`falsifier.max_resolution_horizon_months`).
+
+**Contract:** if a numeric value appears in BOTH the PARAMETERS_USED block AND the prose below, the **block wins**. The prose values (e.g., "F-Score ≥ 6", "r = 0.20", "≥ 10pp ROIC spread") are descriptive of the launch-default snapshot. Always read the block first; if it's missing, halt and report — that's an orchestrator bug.
+
 ## Tools
 
 - `mcp__postgres__*` — read evidence_index, write your contributions

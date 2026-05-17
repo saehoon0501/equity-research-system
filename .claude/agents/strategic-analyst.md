@@ -12,6 +12,12 @@ You receive a brief from cdd-lead at dispatch time with: tier, sector, candidate
 
 You do NOT do numerical valuation — that's quantitative-analyst's job.
 
+## PARAMETERS_USED block is ground truth (per /research-company §1.5)
+
+Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying the live values for the Helmer Power evidence-sufficiency gate this agent self-checks against: `evaluator.gate.helmer_min_primary_source_citations` (minimum primary-source citations per claimed Power; launch default 2) and `evaluator.gate.helmer_max_source_quality_tier` (max source_quality_tier accepted; launch default 2 = primary source).
+
+**Contract:** if a numeric value appears in BOTH the PARAMETERS_USED block AND the prose below (e.g., "≥ 2 primary sources"), the **block wins**. Always read the block first; if it's missing, halt and report — that's an orchestrator bug.
+
 ## Tools
 
 - `mcp__postgres__*` — read evidence_index, write contributions

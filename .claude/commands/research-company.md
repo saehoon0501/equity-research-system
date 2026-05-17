@@ -43,9 +43,124 @@ Verify required MCPs are connected:
 - `mcp__polygon` for options positioning (consumed by `catalyst-scout`)
 - `mcp__macro_stack` for cycle/regime context (consumed by `catalyst-scout`)
 
-Required tables (verify on first pre-flight via `mcp__postgres__schema_info`): `research_essentials` (migration 027), `analyst_briefs` (migration 028).
+Required tables (verify on first pre-flight via `mcp__postgres__schema_info`): `research_essentials` (migration 027), `analyst_briefs` (migration 028), `parameters` + `parameters_active` view (migration 004 + 033), `run_parameters_snapshot` (migration 034).
 
 If any required MCP or table is missing, halt and tell the operator which one. Do not proceed with degraded data.
+
+### 1.5. Parameter snapshot + invariant validation (HARD GATE — runs BEFORE any data work)
+
+**Purpose:** every numeric threshold consumed by /research-company subagents (sleeve caps, conviction bands, mode multipliers, tier cutoffs, quality gates, DCF sensitivity bounds, catalyst-scout signal thresholds, evaluator gate values) is sourced from the `parameters_active` view in postgres — NOT from hardcoded literals in skill markdown. This block pins a single snapshot for the entire 5-stage chain, validates lockstep invariants, persists the snapshot, and composes per-subagent PARAMETERS_USED header blocks. Per /review-me v7-final convergence 2026-05-18.
+
+**Architectural contract:** the PARAMETERS_USED header block injected into each subagent's dispatch prompt is **ground truth**. If a numeric appears in both the header block and the agent's prose instructions, the **block wins**. Agents must cite the block, not the prose.
+
+**Step 1 — Generate run_id.** Use `uuidgen` or any deterministic UUID source. Record as `RUN_ID`. This same `run_id` flows into every dispatch prompt body (per §0 hook contract) AND into the snapshot row INSERT (Step 4 below) AND into the evaluator dispatch (§4.5 — see "Evaluator parity injection" below).
+
+**Step 2 — Resolve `--as-of-tag` arg (sweep test runs only).**
+
+If the operator invoked `/research-company TICKER --as-of-tag=<value> --as-of-tag-sig=<hex> --as-of-tag-issued-at=<unix>`, the PreToolUse hook at `scripts/research_company_as_of_tag_gate.sh` has ALREADY validated the HMAC sig and time window before this orchestrator runs. By the time you read this, the args are either valid or the dispatch was aborted with exit 2. Record `TAG = "<value>"`, `TAG_SIG = "<hex>"`, `TAG_ISSUED_AT = <unix>` for the Step 4 INSERT. If no `--as-of-tag` arg is present, `TAG = NULL` (production run).
+
+**Step 3 — Snapshot in a single REPEATABLE READ transaction.** Execute via `mcp__postgres__query`:
+
+```sql
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT parameter_key, value, version_id
+FROM parameters_active
+WHERE parameter_namespace IN (
+    'sizing','tier_classification','quality_gate','dcf','outside_view',
+    'wacc','reinvestment_moat','catalyst_scout','mode','evaluator','falsifier'
+);
+COMMIT;
+```
+
+(If `TAG IS NOT NULL`, replace `parameters_active`'s default `tag IS NULL` filter by querying the underlying `parameters` table with `WHERE tag = $TAG` plus the standard DISTINCT ON / latest-effective_at logic. The PreToolUse hook has already validated authorization.)
+
+Record the returned rowset as `SNAPSHOT_ROWS`. This is the **canonical input** for the entire run. The invariant validator (Step 5) and the per-subagent PARAMETERS_USED composer (Step 6) MUST both iterate over `SNAPSHOT_ROWS` in-memory; **do NOT re-query `parameters_active` mid-run** — that would defeat REPEATABLE READ's snapshot guarantee.
+
+**Step 4 — Compute hash, INSERT snapshot row.**
+
+```
+EFFECTIVE_MAP = { row.parameter_key: row.value for row in SNAPSHOT_ROWS }
+EFFECTIVE_JSON = canonical_json(EFFECTIVE_MAP)  # sort_keys=True, separators=(',', ':')
+EFFECTIVE_HASH = sha256(EFFECTIVE_JSON).hexdigest()
+PARAMETERS_VERSION_MAX = max(row.version_id for row in SNAPSHOT_ROWS)
+
+INSERT INTO run_parameters_snapshot (
+    run_id, ticker, parameters_version_max,
+    effective_parameters_jsonb, effective_parameters_hash,
+    tag, tag_signature, tag_issued_at_unix
+) VALUES (
+    RUN_ID, '<ticker_upper>', PARAMETERS_VERSION_MAX,
+    EFFECTIVE_JSON::jsonb, EFFECTIVE_HASH,
+    TAG, TAG_SIG, TAG_ISSUED_AT
+);
+```
+
+**Step 5 — Invariant validator (3 named INVs; runs against `SNAPSHOT_ROWS` in-memory only).**
+
+INV-1 (reinvestment_moat monotonic ordering — HARD FAIL):
+```
+require: spread_A >= spread_B >= spread_C
+require: runway_A >= runway_B >= runway_C
+where:
+  spread_A = EFFECTIVE_MAP['reinvestment_moat.label_A.min_roic_spread_pp']
+  spread_B = EFFECTIVE_MAP['reinvestment_moat.label_B.min_roic_spread_pp']
+  spread_C = EFFECTIVE_MAP['reinvestment_moat.label_C.min_roic_spread_pp']
+  (same for *.min_runway_years)
+On violation: HARD FAIL the run with named code INV-1. Update
+  run_parameters_snapshot row: SET run_ended_at = NOW(), run_status = 'failed_INV-1'.
+  Surface the violation to operator. Exit.
+```
+
+INV-2 (WACC drift/sensitivity 2× ratio — SOFT WARN; promotes to HARD FAIL after operator answers):
+```
+ratio = EFFECTIVE_MAP['wacc.erp_sensitivity_band_bps'] / EFFECTIVE_MAP['wacc.erp_refresh_drift_bps']
+expected = 2.0
+if ratio != expected:
+    SOFT WARN: log to system_errors (or audit logs/inv_2_soft_warning.jsonl)
+    with payload {run_id, ratio, expected, parameter_values}
+    DO NOT block the run.
+    Note: this INV ships as soft until the operator confirms whether the
+    2× relationship is load-bearing (downstream sensitivity table assumes 2σ)
+    or independently tunable. See
+    docs/superpowers/audits/2026-05-18-parameter-externalization-phase3-audit-checklist.md
+    § INV-2 operator-disambiguation slot.
+```
+
+INV-3 (austere DCF fade triple sanity — HARD FAIL):
+```
+require: EFFECTIVE_MAP['dcf.austere_growth_fade_years'] <= EFFECTIVE_MAP['dcf.austere_roic_fade_years']
+require: 0 <= EFFECTIVE_MAP['dcf.austere_terminal_growth_dgs10_premium_pct'] <= 5
+On violation: HARD FAIL, code INV-3. Same termination + audit pattern as INV-1.
+```
+
+**Step 6 — Compose per-subagent PARAMETERS_USED header blocks.** Filter `EFFECTIVE_MAP` per subagent namespace consumption:
+
+- `quantitative-analyst` consumes: `quality_gate.*`, `dcf.*`, `outside_view.*`, `wacc.*`, `reinvestment_moat.*`, `falsifier.*`
+- `strategic-analyst` consumes: `evaluator.gate.helmer_*` (for citation-floor self-check)
+- `catalyst-scout` consumes: `catalyst_scout.*`
+- `pm-supervisor` consumes: `sizing.*`, `mode.*`, `dcf.thematic_growth_implied_vs_historical_cagr_cap_ratio`, plus `outside_view.divergence_alert_pp` (§2.6 stress-test routing)
+- `evaluator` consumes: `evaluator.gate.*`, `quality_gate.*`, `falsifier.max_resolution_horizon_months`, `dcf.reconciliation_divergence_pct_floor`
+
+Each per-subagent header block has this exact shape (injected at the TOP of the dispatch prompt body, before `run_id: <uuid>`):
+
+```
+=== PARAMETERS_USED (parameters_version_max: <uuid>, effective_parameters_hash: <hex>, tag: <NULL|sweep_xxx>) ===
+<key.path>: <value>
+<key.path>: <value>
+...
+=== END PARAMETERS_USED ===
+
+[GROUND TRUTH] If a numeric appears in both the block above and the prose
+instructions below, the block wins. Cite the block, not the prose.
+```
+
+**Step 7 — Failure modes (DB-unreachable hard-fail, inherits evaluator.md §HG-1).**
+
+If `mcp__postgres__query` fails at Step 3 (snapshot SELECT) → HARD FAIL the run with code `MCP_POSTGRES_UNREACHABLE_AT_SNAPSHOT`. Same precedent as evaluator.md:861 ("If `mcp__postgres` is not connected, you cannot run mechanical contamination check. In this case: REJECT all outputs by default."). No fallback to hardcoded literals. No cached snapshot bypass. Surface to operator with the message "parameters table unreachable; rerun when DB recovers."
+
+If `INSERT INTO run_parameters_snapshot` fails at Step 4 → same hard-fail discipline.
+
+**Evaluator parity injection (preview — §4.5 actually injects).** When you reach §4.5 evaluator dispatch, you MUST inject `run_id: <RUN_ID>` into the evaluator prompt body AND write a sidecar at `memos/envelopes/evaluator__<RUN_ID>.context.json` carrying `{run_id, run_parameters_snapshot_id, parameters_version_max, effective_parameters_hash}`. The evaluator's HG-25 (Phase 5 gate) performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = $1` to confirm the chain context. Without injected run_id, evaluator soft-warns (standalone /evaluate carve-out); with run_id present but no matching DB row, evaluator HARD REJECTs as spoofed.
 
 ### 2. Stage 1 — main-session pre-dispatch + brief generation
 
@@ -210,12 +325,12 @@ Run inline in the main session (formerly cdd-lead Stage 1):
 
    Capture the returned `brief_id` values for tracking.
 
-9. **Dispatch `quantitative-analyst` + `strategic-analyst` in parallel** via the Task tool. In ONE message. **v0.2 dispatch-prompt requirements (Overlays 1-5):** the prompts MUST explicitly surface the new required outputs so analysts don't silently regress to v1.1 schemas. **Both prompts MUST include `run_id: <uuid>` on a dedicated line so the PostToolUse hook can locate the persisted envelope at `memos/envelopes/<agent>__<run_id>.json`.**
+9. **Dispatch `quantitative-analyst` + `strategic-analyst` in parallel** via the Task tool. In ONE message. **v0.2 dispatch-prompt requirements (Overlays 1-5):** the prompts MUST explicitly surface the new required outputs so analysts don't silently regress to v1.1 schemas. **Both prompts MUST include `run_id: <uuid>` on a dedicated line so the PostToolUse hook can locate the persisted envelope at `memos/envelopes/<agent>__<run_id>.json`.** **AND both prompts MUST be prefixed with the per-subagent PARAMETERS_USED header block composed in §1.5 Step 6.** Quantitative-analyst's block carries `quality_gate.*`, `dcf.*`, `outside_view.*`, `wacc.*`, `reinvestment_moat.*`, `falsifier.*` keys; strategic-analyst's block carries `evaluator.gate.helmer_*` keys. The agent's first action MUST be to honor the block per the [GROUND TRUTH] instruction.
 
    ```
-   Agent(quantitative-analyst, "run_id: <uuid>\n\n<full quant brief content from step 6>\n\nProduce your memo per agent definition. Cite frameworks by short-key. v0.2 REQUIRED OUTPUTS: (a) `outside_view` block with intuitive_growth_pct, reference_class_growth_mean_pct via 2-tier cohort lookup, corrected_growth_pct using r=0.20, corrected_divergence_pp (Overlay 3+4); (b) `reinvestment_moat` block with incremental_roic_3y/5y, deployable_runway_years_est, quality_label A/B/C/D unless capital-light or speculative (Overlay 2); (c) `bull_case_narrative` AND `bear_case_narrative` blocks with helmer_power_anchor (snake_case, must match strategic memo) / structural_impairment_anchor, distinct_arc_description, falsifying_observable, falsifier_resolution_date (Overlay 5). Tier-conditional: speculative_optionality SKIPS all of (a)(b)(c) per agent definition. If you cite a helmer_power_anchor while strategic brief is not yet persisted, emit placeholder PENDING_STRATEGIC_RESOLUTION. PERSIST your memo to memos/envelopes/quantitative-analyst__<run_id>.json before returning.")
+   Agent(quantitative-analyst, "<PARAMETERS_USED block from §1.5 Step 6 filtered to quant namespaces>\n\nrun_id: <uuid>\n\n<full quant brief content from step 6>\n\nProduce your memo per agent definition. Cite frameworks by short-key. v0.2 REQUIRED OUTPUTS: (a) `outside_view` block with intuitive_growth_pct, reference_class_growth_mean_pct via 2-tier cohort lookup, corrected_growth_pct using r=PARAMETERS_USED['outside_view.bayesian_shrinkage_r'], corrected_divergence_pp (Overlay 3+4); (b) `reinvestment_moat` block with incremental_roic_3y/5y, deployable_runway_years_est, quality_label A/B/C/D applied per PARAMETERS_USED['reinvestment_moat.label_*'] thresholds unless capital-light or speculative (Overlay 2); (c) `bull_case_narrative` AND `bear_case_narrative` blocks with helmer_power_anchor (snake_case, must match strategic memo) / structural_impairment_anchor, distinct_arc_description, falsifying_observable, falsifier_resolution_date within PARAMETERS_USED['falsifier.max_resolution_horizon_months'] forward (Overlay 5). Tier-conditional: speculative_optionality SKIPS all of (a)(b)(c) per agent definition. If you cite a helmer_power_anchor while strategic brief is not yet persisted, emit placeholder PENDING_STRATEGIC_RESOLUTION. PERSIST your memo to memos/envelopes/quantitative-analyst__<run_id>.json before returning.")
 
-   Agent(strategic-analyst, "run_id: <uuid>\n\n<full strategic brief content from step 6>\n\nProduce your memo per agent definition. Cite frameworks by short-key. v0.2 REQUIRED OUTPUTS: (a) `helmer_powers_evidence[]` with power_name in canonical snake_case enum {scale_economies | network_economies | counter_positioning | switching_costs | branding | cornered_resource | process_power}, benefit_cashflow_effect, barrier_to_arbitrage, AND ≥2 primary-source citations per Power (evidence_index rows with source_quality_tier ≤ 2) — Powers without the evidence floor go to powers_assessed_not_held (Overlay 1). Buybacks bucket in capital allocation: anchor on prior_reverse_dcf_implied_value from warm-start brief OR self-computed multiple-vs-trailing-5y-median (quant memo's reverse-DCF is parallel-dispatched and not yet emitted). PERSIST your memo to memos/envelopes/strategic-analyst__<run_id>.json before returning.")
+   Agent(strategic-analyst, "<PARAMETERS_USED block from §1.5 Step 6 filtered to strategic namespaces>\n\nrun_id: <uuid>\n\n<full strategic brief content from step 6>\n\nProduce your memo per agent definition. Cite frameworks by short-key. v0.2 REQUIRED OUTPUTS: (a) `helmer_powers_evidence[]` with power_name in canonical snake_case enum {scale_economies | network_economies | counter_positioning | switching_costs | branding | cornered_resource | process_power}, benefit_cashflow_effect, barrier_to_arbitrage, AND >= PARAMETERS_USED['evaluator.gate.helmer_min_primary_source_citations'] primary-source citations per Power (evidence_index rows with source_quality_tier <= PARAMETERS_USED['evaluator.gate.helmer_max_source_quality_tier']) — Powers without the evidence floor go to powers_assessed_not_held (Overlay 1). Buybacks bucket in capital allocation: anchor on prior_reverse_dcf_implied_value from warm-start brief OR self-computed multiple-vs-trailing-5y-median (quant memo's reverse-DCF is parallel-dispatched and not yet emitted). PERSIST your memo to memos/envelopes/strategic-analyst__<run_id>.json before returning.")
    ```
 
    Wait for both returns.
@@ -369,7 +484,7 @@ If `mcp__polygon` is offline, catalyst-scout halts and reports; pm-supervisor ac
 
 Note: per Consensus Item #6 (2026-05-12), catalyst-scout output is NOT individually gated by evaluator.
 
-**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/catalyst-scout__<run_id>.json`. Tier-1 validation (HG-31 catalyst_memo_shape, incorporating HG-24 sentiment-degradation re-count) fires automatically on return; polygon-offline halt-and-degrade writes `memos/envelopes/catalyst-scout__<run_id>.degraded` instead of an envelope and the hook treats it as a valid skip.
+**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/catalyst-scout__<run_id>.json`. **AND the dispatch prompt MUST be prefixed with the PARAMETERS_USED header block composed in §1.5 Step 6, filtered to `catalyst_scout.*` namespace.** The agent's first action MUST be to honor the block per the [GROUND TRUTH] instruction (block wins over prose on any numeric threshold). Tier-1 validation (HG-31 catalyst_memo_shape, incorporating HG-24 sentiment-degradation re-count) fires automatically on return; polygon-offline halt-and-degrade writes `memos/envelopes/catalyst-scout__<run_id>.degraded` instead of an envelope and the hook treats it as a valid skip.
 
 ### 4. Dispatch `pm-supervisor` subagent
 
@@ -385,7 +500,7 @@ pm-supervisor enforces the 4-tier sleeve caps (core ≤80%, thematic ≤25%, spe
 
 pm-supervisor emits a single JSON envelope (`decision`, `conviction`, `size_band`, `tier`, `mode`, `sleeve_cap_check`, `conviction_rationale`, `catalyst_modifier_applied`, optional `sleeve_reference`, `evidence_index_refs`). It also persists the recommendation to `execution_recommendations` and to `counterfactual_ledger` (universal write per Consensus Item #4).
 
-**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/pm-supervisor__<run_id>.json`. **Pass optional --catalyst-indicators via a context sidecar** written to `memos/envelopes/pm-supervisor__<run_id>.context.json` BEFORE dispatching the Agent() call:
+**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/pm-supervisor__<run_id>.json`. **AND the dispatch prompt MUST be prefixed with the PARAMETERS_USED header block composed in §1.5 Step 6, filtered to `sizing.*`, `mode.*`, `dcf.thematic_growth_implied_vs_historical_cagr_cap_ratio`, and `outside_view.divergence_alert_pp` (the §2.6 stress-test routing threshold).** This is the heaviest parameter-consuming subagent — sleeve caps, conviction bands, mode multipliers, catalyst modifier bounds all live in the header block. **Pass optional --catalyst-indicators via a context sidecar** written to `memos/envelopes/pm-supervisor__<run_id>.context.json` BEFORE dispatching the Agent() call:
 
 ```json
 {
@@ -418,6 +533,21 @@ Dispatch `evaluator` via Task tool on the pm-supervisor output ONLY. The gate ru
 - Hard-gate failures block release; soft scores feed calibration
 
 If evaluator rejects: pm-supervisor revises (up to 3 rounds). If contamination check flags an upstream memo (quant/strategic/catalyst), the gate fails the entire run and the operator must triage which upstream agent produced the contamination.
+
+**Evaluator dispatch contract (per /review-me v7-final C13 + Q4 sidecar parity):**
+
+1. **Inject `run_id: <RUN_ID>` into the evaluator prompt body** — same pattern as pm-supervisor dispatch above. The evaluator's HG-25 reads this line and performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = $1`; absent or unresolved → REJECT or soft-warn per HG-25 rules.
+2. **Prefix the prompt with the PARAMETERS_USED header block** composed in §1.5 Step 6, filtered to evaluator namespace consumption (`evaluator.gate.*`, `quality_gate.*`, `falsifier.max_resolution_horizon_months`, `dcf.reconciliation_divergence_pct_floor`). Evaluator's HG-* mechanical gates that previously read hardcoded literals now read from this block (block wins over prose).
+3. **Write a context sidecar BEFORE dispatch** at `memos/envelopes/evaluator__<RUN_ID>.context.json`:
+   ```json
+   {
+     "run_id": "<RUN_ID>",
+     "run_parameters_snapshot_id": "<RUN_ID>",
+     "parameters_version_max": "<PARAMETERS_VERSION_MAX from §1.5 Step 4>",
+     "effective_parameters_hash": "<EFFECTIVE_HASH from §1.5 Step 4>"
+   }
+   ```
+   The sidecar serves as defense-in-depth (if the prompt-grep regression-breaks, the evaluator can fall back to the sidecar for snapshot lookup) AND as the carrier of context for HG-25's DB roundtrip verification.
 
 ### 5. Constraints on synthesis
 

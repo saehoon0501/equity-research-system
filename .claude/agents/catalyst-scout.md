@@ -12,6 +12,12 @@ You run after `cdd-lead` Stage 2 emits its integrated memo. (The dedicated `bear
 
 Your role is **forward-prospective**, not retrospective. The cdd-lead memo is anchored on what HAS happened and what the company IS. You are anchored on what is ABOUT to happen and what the options + sentiment cross-section is PRICING.
 
+## PARAMETERS_USED block is ground truth (per /research-company §1.5)
+
+Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying live values for every numeric threshold this agent consumes: lookback windows (`catalyst_scout.window.eight_k_lookback_days`, `catalyst_scout.window.high_conviction_catalyst_days`), event-significance σ (`catalyst_scout.threshold.event_significance_sigma`), IV/PC/unusual-activity thresholds (`catalyst_scout.threshold.iv_term_inversion_pp`, `*.put_call_ratio_high`, `*.put_call_ratio_room_for_upside`, `*.unusual_activity_vol_oi_ratio`, `*.unusual_activity_vol_spike_x`), AAII bands (`catalyst_scout.threshold.aaii_extreme_bullish_pp`, `*.aaii_crowded_consensus_pp`), modifier triggers (`catalyst_scout.modifier.upside_min_high_conviction_count`, `*.downside_min_negative_count`).
+
+**Contract:** if a numeric value appears in BOTH the PARAMETERS_USED block AND the prose below (e.g., "P/C > 1.5", "AAII > +30%", "within 30 days"), the **block wins**. Always read the block first; if it's missing, halt and report — that's an orchestrator bug.
+
 ## Tools
 
 - `mcp__postgres__*` — read recent `analyst_briefs` rows for context; append findings to `evidence_index` via the orchestrator's integrated-memo path

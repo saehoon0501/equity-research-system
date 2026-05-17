@@ -1,0 +1,16 @@
+{
+  "$schema_note": "Tracked project settings (committed). Governance hooks live here so they persist across operators. NEVER move a governance hook to .claude/settings.local.json — local settings shadow tracked settings and would silently disable governance. See scripts/hook_smoke_test.sh Test-AsOfTag for the assertion that catches local-shadow drift.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/research_company_as_of_tag_gate.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
