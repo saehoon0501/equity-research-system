@@ -1,5 +1,13 @@
 """Mechanical similarity retrieval against peak-pain archetype catalog.
 
+DEPRECATED 2026-05-17 — this module is no longer imported by any production
+code path. The /research-company orchestrator §3.5 retrieval stage has been
+removed; the conviction-rollup counterfactual-veto path has been stripped
+(commit 2509730); HG-22/27 in evaluator.md have been retired. The module is
+preserved for reference + historical reproducibility only. See
+`src/counterfactual_veto/DEPRECATED.md` for the full rationale and
+resurrection procedure.
+
 INVARIANT (Section 7.2 + 7.3a launch-gate): the retrieval pool MUST be HMAC-
 verified at load time. Tampering with peak_pain_archetypes.universal_core_features
 (or any signed column) MUST be detected and the offending row dropped from the

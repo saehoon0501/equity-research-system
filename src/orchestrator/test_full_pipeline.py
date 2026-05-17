@@ -292,74 +292,25 @@ def stage_l4_daily_monitor_synthetic(
 def stage_l5_counterfactual_veto(
     conn: Any, ticker: str,
 ) -> dict:
-    """L5 — Counterfactual veto retrieval against catalog."""
+    """L5 — RETIRED 2026-05-17.
+
+    The counterfactual-veto / peak_pain_archetypes retrieval stage has been
+    removed from the live `/research-company` pipeline. See
+    `src/counterfactual_veto/DEPRECATED.md` and BUILD_LOG.md.
+
+    This shim returns a 'skip' stage result so existing pipeline harness
+    runners continue to function without modification. The retired modules
+    remain importable for reference but are not exercised here.
+    """
     _print_banner(
-        "L5: Counterfactual Veto",
-        "top-3 from peak_pain_archetypes (45 rows)",
+        "L5: Counterfactual Veto (RETIRED 2026-05-17)",
+        "stage skipped — see src/counterfactual_veto/DEPRECATED.md",
     )
-    try:
-        from src.counterfactual_veto.retrieval import (
-            retrieve_top_3, archetype_distribution, load_catalog_from_pg,
-        )
-        import psycopg2
-        import psycopg2.extras
-        dsn = os.environ["DATABASE_URL"]
-
-        def query_fn(sql):
-            with psycopg2.connect(dsn) as c, c.cursor(
-                cursor_factory=psycopg2.extras.RealDictCursor
-            ) as cur:
-                cur.execute(sql)
-                return [dict(r) for r in cur.fetchall()]
-
-        catalog = load_catalog_from_pg(query_fn)
-        print(f"  catalog loaded: {len(catalog)} HMAC-verified rows")
-
-        # PLTR features as of post-event (q1_miss reduces growth assumption,
-        # so revenue_trajectory shifts from growing→flat or declining)
-        UC = {
-            "founder_in_place": "yes",
-            "founder_insider_stake_direction": "decreasing",
-            "cash_runway": ">24mo",
-            "margin_trajectory": "deteriorating",  # shifted by q1_miss
-            "revenue_trajectory": "flat",  # shifted by q1_miss
-            "industry_tailwind": "weakening",
-        }
-        SE = {
-            "engagement_decoupling_from_price": "no",
-            "moat_state": "intact",
-            "cycle_state": "secular-decline",
-        }
-        matches = retrieve_top_3(
-            candidate_sector="tech_saas",
-            candidate_universal_core=UC,
-            candidate_sector_extensions=SE,
-            catalog=catalog,
-        )
-        for i, m in enumerate(matches, 1):
-            print(f"  #{i}: {m.case.case_id} ({m.case.outcome}) "
-                  f"sim={m.similarity:.4f}")
-        dist = archetype_distribution(matches)
-        survivor = dist.get("SURVIVOR", 0) + dist.get("DILUTED-SURVIVOR", 0)
-        nonsurvivor = dist.get("NON-SURVIVOR", 0)
-        print(f"  archetype distribution: SURVIVOR={survivor} "
-              f"NON-SURVIVOR={nonsurvivor}")
-        if survivor >= 2:
-            gate = "PROCEED"
-        elif nonsurvivor >= 2:
-            gate = "BLOCK"
-        else:
-            gate = "MIXED"
-        print(f"  HIGH-gate: {gate}")
-        return _stage_result(
-            "L5_veto", "pass",
-            f"top-3: {[m.case.case_id for m in matches]} gate={gate}",
-        )
-    except Exception as exc:
-        print(f"  ✗ FAILED: {type(exc).__name__}: {exc}")
-        import traceback
-        traceback.print_exc()
-        return _stage_result("L5_veto", "fail", str(exc))
+    return _stage_result(
+        "L5_veto", "skip",
+        "stage retired 2026-05-17 — adversarial pressure now lives in "
+        "pm-supervisor §2.6 stress-test",
+    )
 
 
 def stage_l6_cut_evaluator(conn: Any, ticker: str, mode: str) -> dict:
