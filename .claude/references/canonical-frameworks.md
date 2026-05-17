@@ -6,9 +6,37 @@ Citation source of truth for `cdd-lead`, `quantitative-analyst`, `strategic-anal
 
 ### damodaran_narrative_dcf
 
-**Source:** Damodaran, "Narrative and Numbers: The Value of Stories in Business" (Columbia Business School Publishing, 2017). PDF: https://pages.stern.nyu.edu/~adamodar/pdfiles/eqnotes/narrativeandnumbers.pdf
+**Source:** Damodaran, "Narrative and Numbers: The Value of Stories in Business" (Columbia Business School Publishing, 2017). PDF: https://pages.stern.nyu.edu/~adamodar/pdfiles/eqnotes/narrativeandnumbers.pdf — and Damodaran's post-2017 evolution applying the framework to AI/hyperscaler narratives (NVDA, TSLA, hyperscaler valuations on his blog https://aswathdamodaran.blogspot.com/).
 
 Bind a defensible business narrative to a numerical DCF. Stress test 3 cases (bear/base/bull). Use NYU Stern data for ERP, country risk, industry betas, and multiples by sector: https://pages.stern.nyu.edu/~adamodar/
+
+**Bull-case (and bear-case) structural-distinctiveness requirement (Overlay 5 / v0.2):** the bear/base/bull cases must be three *qualitatively distinct narrative arcs*, not a sensitivity-band perturbation on a single path. Specifically, the bull and bear cases each MUST cite:
+1. **Helmer Power anchor** — for bull case: a specific Helmer Power from the strategic-analyst memo's `helmer_powers_evidence[]` that is the structural differentiator driving the bull revenue/margin trajectory. For bear case: a specific structural impairment (moat fade, Power lost, capital-allocation misstep, regulatory shift) — typically with a `peak_pain_archetypes` analog case_id citation.
+2. **Distinct narrative arc** — a qualitatively different business outcome from base (e.g., bull: "AWS becomes platform tax for AI economy at $50B+ AI run-rate by 2027"; bear: "AWS AI run-rate stalls below $20B as CSP capex bubble deflates and Trainium yields slip behind TSMC competitors"). NOT "base ± 10% on growth/margin sensitivity."
+3. **Forward-observable falsifying condition** — a specific, dated, observable that would invalidate this narrative arc within 12-36 months. The falsifier feeds pm-supervisor's `reevaluation_triggers` block and the dashboard's monitoring queue.
+
+A bull or bear case lacking any of (1)/(2)/(3) is a process failure — the cases collapse to sensitivity analysis and the multi-framework-convergence value of the DCF is lost. Evaluator HG-15 catches this.
+
+**Speculative tier exempt:** DCF is skipped entirely for `speculative_optionality` tier per the tier-conditional rule in `quantitative-analyst.md` §4; the structural-distinctiveness requirement does not apply (the milestone-tree framework in cdd-lead memo carries the speculative-tier narrative discipline instead).
+
+### austere_dcf
+
+**Bug 8 cross-reference (2026-05-15):** the AMZN 2026-05-13 cold-start vs 2026-05-14 15:55 fresh-re-run variance — same v0.2-2026-05-12 engine, same name, BUY @ HIGH @ 4.5% vs HOLD @ MEDIUM @ 0.0% — was driven by which DCF reconstructions were engaged. The cold-start engaged only the inherited narrative DCF; the fresh re-run engaged both inherited + austere and surfaced a 53-65% base-value gap. `austere_dcf` is the second DCF mandated by the dual-DCF framework-engagement floor (see `quantitative-analyst.md` §4 "Dual-DCF mandate," evaluator HG-20, pm-supervisor §2.7 R4).
+
+**Methodological lineage:** Damodaran's "mean reversion" frame applied throughout his sector papers and industry data pages (https://pages.stern.nyu.edu/~adamodar/), combined with Mauboussin's "fade rate" concept on excess returns. The austere DCF is the disciplined counterweight to the inherited narrative DCF: where the narrative DCF embeds the analyst's frame about what management can sustain, the austere DCF mean-reverts growth, margin, and ROIC to industry/macro reference levels over the explicit horizon. The two reconstructions converging is informative (the price-discipline signal is consistent); the two diverging by >30% is informative (the inherited narrative is sustaining a meaningful premium over the mean-reverted base case, which MUST be reconciled with evidence — see `## Inherited-vs-Austere Reconciliation` requirement in quantitative-analyst.md §4).
+
+**Methodology (mean-reversion reconstruction):**
+
+- **Horizon:** same FCF projection horizon as the inherited_dcf (typically 10 years explicit period + terminal value)
+- **Growth fades to GDP-plus-inflation by year 5:** terminal growth = (current 10Y Treasury yield + 1.5%) as a proxy for nominal GDP growth. The 10Y Treasury yield comes from `.claude/references/damodaran_implied_erp_cache.json` (DGS10 cached value or fresh FRED pull per §3.9 of quantitative-analyst.md). Year-1 growth is anchored to recent 3-5y realized revenue CAGR (NOT the inherited narrative). Linear fade from year-1 to terminal by year 5; flat thereafter.
+- **Margins revert to industry median by year 5:** linear fade from current operating margin to industry median operating margin by year 5. Industry median margin comes from Damodaran's industry data pages (https://pages.stern.nyu.edu/~adamodar/) — cite which industry-median source you used (e.g., `damodaran_industry_data_<year>_<sector>`). If Damodaran's industry data is unavailable for the relevant sector, a Bloomberg-style sector median is an acceptable fallback (cite inline).
+- **ROIC fades linearly to WACC over the explicit-period horizon:** over the 10-year explicit window, ROIC declines from current ROIC to WACC by year 10. This collapses the competitive-advantage period (CAP) to zero by terminal year — the mean-reversion assumption that no business sustains excess returns indefinitely (the Mauboussin fade-rate operationalization).
+- **Terminal value:** uses the SAME WACC as the inherited_dcf (computed in §3.9 `wacc_regime`) but applied to the mean-reverted FCF — same discount rate, mean-reverted cash flow.
+- **Reverse-DCF cross-check at year 5:** compute the implied growth rate at year 5 that would justify the year-5 cash flow under the fade assumption; verify it matches the input fade rate. If not, flag `austere_dcf.reverse_check_inconsistent: true` in the output schema.
+
+**Operational invocation:** see `quantitative-analyst.md` §4 "Dual-DCF mandate" for the integrated workflow, output schema (`austere_dcf_base`, `dcf_divergence_pct`, `## Inherited-vs-Austere Reconciliation` evidenced-reconciliation requirement). The gate enforcement lives in evaluator HG-20 + pm-supervisor §2.7 R4.
+
+**Tier-conditional applicability:** core_fundamental + thematic_growth tiers ONLY. Speculative_optionality EXEMPT (per Overlay 3 C-4 skip rule — DCF is correctly skipped for speculative names; the milestone-tree framework carries the speculative-tier narrative discipline instead).
 
 ### mauboussin_reverse_dcf
 
@@ -40,6 +68,21 @@ Power = superior + significant + sustainable. Seven types: Scale Economies, Netw
 
 Five-bucket framework graded against ROIC vs WACC: CapEx, R&D, M&A, dividends, buybacks, debt paydown (treat debt as a sixth lever where material). Rubric: past behavior, current ROIC, alignment of incentives, stated principles. Empirical data back to 1970.
 
+### buffett_2007_inevitables
+
+**Source:** Berkshire Hathaway 2007 Shareholder Letter, "Businesses — The Great, the Good and the Gruesome." https://www.berkshirehathaway.com/letters/2007ltr.pdf — operationalized for public-equity analysis by Christopher Bloomstran's Semper Augustus annual letters (https://www.semperaugustus.com/clientletter).
+
+The reinvestment-moat math: a great business reinvests large amounts of capital at high incremental ROIC. A growth-rate-only valuation collapses two distinct dimensions — (1) **incremental ROIC** on deployed capital (capex + ΔNWC + acquisitions), and (2) **deployable runway** (dollar size of the addressable reinvestment opportunity at the maintained ROIC level) — into one number, and is wrong for high-reinvestment compounders. The framework is operationalized in `quantitative-analyst.md` §4 `reinvestment_moat` block: report `incremental_roic_3y_trailing`, `incremental_roic_5y_trailing`, `current_reinvestment_rate_pct`, `deployable_runway_years_est`, and a composite `quality_label`:
+
+- **A**: incremental_roic_3y > WACC + 10pp AND deployable_runway_years_est ≥ 5
+- **B**: incremental_roic_3y > WACC + 5pp AND deployable_runway_years_est ≥ 3
+- **C**: incremental_roic_3y > WACC AND deployable_runway_years_est ≥ 2
+- **D**: incremental_roic_3y ≤ WACC OR deployable_runway_years_est < 2
+
+Cite alongside `koller_valuation_7e` (ROIC × growth value-driver tree) when a business has capex/revenue ≥ 3%. Capital-light businesses (capex/revenue < 3%) skip the dimension — the framework applies only where reinvestment economics meaningfully drive value. Speculative-tier names skip entirely (no trailing reinvestment history).
+
+The pm-supervisor §2.6 stress-test consumes `quality_label`: label A reinforces structural justification for above-base-rate growth divergence (alongside the Helmer-Power gate); label D contradicts moat-narrative bull cases (the math says reinvestment economics don't support the growth story regardless of which Power is claimed) and forces `stress_failed` even when Powers are evidenced.
+
 ## Quality gate (precondition, not a "framework")
 
 ### piotroski_2000
@@ -53,6 +96,85 @@ Five-bucket framework graded against ROIC vs WACC: CapEx, R&D, M&A, dividends, b
 **Source:** Altman, "Financial Ratios, Discriminant Analysis and the Prediction of Corporate Bankruptcy," J. Finance 23(4) (1968), pp. 589–609. PDF: https://www.calctopia.com/papers/Altman1968.pdf
 
 Z-score (manufacturers) or Z'' (non-manufacturers/EM). Memo gates to REJECT if Z'' < 1.1.
+
+### sloan_1996
+
+**Source:** Sloan, "Do Stock Prices Fully Reflect Information in Accruals and Cash Flows About Future Earnings?" The Accounting Review 71(3) (1996), pp. 289–315. PDF: https://www.stern.nyu.edu/sites/default/files/assets/documents/con_032093.pdf
+
+TATA = (NI − CFO) / Total Assets. High-positive TATA = earnings outrunning cash; high-negative TATA = cash outrunning earnings. Sloan 1996 used cross-sectional deciles; the |TATA| > 0.05 cutoff is a folk-canonical operationalization (also appears in Richardson/Sloan/Soliman/Tuna 2005 in some specifications). **Phase 1 status: OBSERVATION-ONLY.** Agent computes and emits the value; no disposition consequence. Promotion to gating gated on operator-validated thresholds via Phase 2 calibration workstream.
+
+### beneish_1999_dsri
+
+**Source:** Beneish, "The Detection of Earnings Manipulation," Financial Analysts Journal 55(5) (1999), pp. 24–36. https://en.wikipedia.org/wiki/Beneish_M-score (canonical restatement of the 8-ratio formula; original paywalled at FAJ).
+
+DSRI = (Receivables_t / Sales_t) / (Receivables_{t-1} / Sales_{t-1}). Days-Sales-in-Receivables Index — catches channel-stuffing and premature revenue recognition that aggregate Sloan TATA misses (because TATA can wash out at firm level even when receivables drift). DSRI is robust to cycle-state (channel-stuffing into a peak quarter still pumps DSRI directionally). **Phase 1 status: OBSERVATION-ONLY** alongside Sloan TATA. Beneish's full 8-ratio M-Score and Dechow F-Score deferred until calibration cohort exists. Beneish 1999 threshold M > −1.78 ("manipulator") and DSRI > 1.465 component-threshold are NOT enforced at Phase 1 — values surfaced only.
+
+### damodaran_implied_erp
+
+**Source:** Damodaran, monthly implied equity risk premium data. https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/implprem.html (published monthly; cached locally at `.claude/references/damodaran_implied_erp_cache.json`).
+
+Implied ERP backed out from S&P 500 dividend+buyback yield + analyst growth + 10Y Treasury. Replaces static ERP in WACC build. Agent refreshes the cache inline when FRED DGS10 has moved >50bp since the cached snapshot's `cached_dgs10_at_fetch_pct`; otherwise cached value is used as-is. Fallback when fetch fails: last-good cache + `damodaran_erp_stale: true` flag in WACC output.
+
+### lovallo_kahneman_2003
+
+**Source:** Lovallo & Kahneman, "Delusions of Success: How Optimism Undermines Executives' Decisions," Harvard Business Review (July 2003). https://hbr.org/2003/07/delusions-of-success-how-optimism-undermines-executives-decisions
+
+Outside-view / reference-class forecasting. Five-step procedure: (1) select reference class, (2) assess outcome distribution, (3) make intuitive prediction (inside view), (4) assess predictability (correlation r between predictor and outcome), (5) corrected = intuitive + r × (reference_mean − intuitive).
+
+**Phase 1.5 (Overlay 3 / 2026-05 update):** the full r-correction is now applied with placeholder **r = 0.20**. Quantitative-analyst computes `corrected_growth_pct = intuitive + 0.20 × (reference − intuitive)` and emits all three values (intuitive, reference, corrected). pm-supervisor routes on `corrected_divergence_pp` (corrected − reference), not on raw `outside_view_divergence_pp`. Raw divergence is preserved in `conviction_rationale` for audit.
+
+**Justification for r = 0.20** (from 2026-05 /research synthesis, canonical-citations-only):
+- Mauboussin Base Rate Book (S&P 1500, 1994-2014): year-over-year sales-growth correlation r = 0.27; correlations decline at longer horizons (Mauboussin's own guidance: "base rate should receive the majority of the weight for forecasts of three years or longer")
+- Chan, Karceski & Lakonishok 2003 (J. Finance): "no persistence in long-term earnings growth beyond chance"; IBES long-term-growth forecasts "overly optimistic and add little predictive power"
+- Kahneman 2011 *Thinking, Fast and Slow* Ch.18: uses r = 0.30 as "most optimistic guess" for a more-predictable single-feature toy domain — 10y revenue CAGR on mega-cap equities should sit *below* 0.27
+- IBES LTG forecasts run 2-5× realized growth (systematic optimism in the inside view we're shrinking) — asymmetric loss (capital loss > opportunity cost) favors the low end of LK's canonical 0.20-0.40 range
+
+**Phase 2 calibration**: r = 0.20 is a placeholder pending empirical recalibration from the system's own forecast-vs-realized cohort once 8+ quarters of post-overlay data accumulate. The Phase 2 path replaces 0.20 with a per-cohort empirical r estimated from the realized-CAGR distribution of the system's own predictions over the post-2026 calibration window. Until then, 0.20 is the locked value; do not vary per-name.
+
+### mauboussin_base_rates_2016
+
+**Source (generic bucket — 2016 Base Rate Book):** Mauboussin, Callahan & Majd, "The Base Rate Book — Integrating the Past to Better Anticipate the Future" (Credit Suisse Plus 2016; Counterpoint Global mirrors). Primary PDFs returned 403 in research; reference numbers below sourced from secondary aggregators citing the same tables and consistent across sources. **Replace with Primary citations when source acquired.**
+
+**Source (cohort refinement — Overlay 4 / v0.2):** AQR/Bessembinder/Shumway methodology — Asness, Frazzini & Pedersen "Quality Minus Junk" (2018); Bessembinder "Do Stocks Outperform Treasuries?" (J. Financial Economics 2018) + 2023 64,000-stock global update (CFA Institute Financial Analysts Journal); Shumway 1997 "The Delisting Bias in CRSP Data" (J. Finance) for exit-treatment convention. The 2016 BRB is itself survivors-only (10y survival ~59%, 20y ~38%) — for high-skew cohorts that fact inflates 10y CAGR means by an estimated 200-400 bps and the cohort-refined table corrects this.
+
+**2-tier lookup procedure** (used in `quantitative-analyst.md` §4.5 outside-view emission):
+1. Attempt sector-and-scale match against `base_rates_cohort_refined` (table below + JSON at `.claude/references/base_rates_cohort_refined.json`). If matched → use the cohort's mean as `reference_class_growth_mean_pct` and emit `reference_source: "base_rates_cohort_refined.<cohort_name>"`.
+2. If no cohort match → fall back to the generic revenue-bucket table below. Emit `reference_source: "mauboussin_base_rates_2016_generic_fallback"` so pm-supervisor §2.6 applies slightly more skepticism to the divergence routing (the survivors-only construction is known to overstate by 200-400 bps for high-skew cohorts).
+
+#### base_rates_cohort_refined (cohort-matched, AQR/Bessembinder-aware construction)
+
+**Cohort construction rule (load-bearing):**
+- **Entry:** at t=0 of the cohort window, include every US-listed firm meeting the reference-class entry criteria. Entry is based on observable t=0 characteristics — NOT on what happened next (no survivorship filter at entry).
+- **Tracking:** follow each entity 10y forward or until exit, whichever comes first.
+- **Exit treatment (per Shumway 1997 / AQR convention, adapted for revenue-space):**
+  - Acquired/merged → partial-period CAGR through last reported quarter; residual period assumed at cohort median CAGR.
+  - Bankruptcy / delisted for cause → partial-period CAGR through last 10-Q; residual revenue assumed at last-reported level with 0% growth (revenue-space analog of Shumway's −30% equity convention).
+  - Spin-off / split → track larger remainco for residual window; smaller spin-off exits cohort.
+  - Going-private / strategic exit → treat as acquired.
+- **Aggregation:** equal-weight every cohort entity's hybrid 10y revenue CAGR. Report mean AND p10/p25/p50/p75/p90 distribution.
+
+| Cohort key | Entry criteria | Cohort windows | 10y rev CAGR — mean | Median | p10 | p90 |
+|---|---|---|---|---|---|---|
+| `mega_cap_tech_compounders` | $50B+ market cap + GICS Software/Internet/Semis + R&D/sales ≥ 8% | 2004, 2009, 2014 (3 windows) | **~11%** | ~9% | ~−2% | ~22% |
+| `mega_cap_consumer_retail` | $50B+ market cap + GICS Consumer Discretionary/Staples | 2004, 2009, 2014 | **~5%** | ~4% | ~−3% | ~12% |
+| `mega_cap_financials` | $50B+ market cap + GICS Financials | 2004, 2009, 2014 | **~4%** | ~3% | ~−5% | ~10% |
+| `biopharma_at_scale` | $20B+ market cap + GICS Biotech/Pharma | 2004, 2009, 2014 | **~6%** | ~5% | ~−4% | ~15% |
+
+`source_confidence: low (initial release)` — table values above are placeholders pending empirical population in `.claude/references/base_rates_cohort_refined.json` via a one-time Sharadar PIT backfill script using `mcp__fundamentals__get_fundamentals(kind='PIT')`. The JSON file is the source of truth; the markdown table is a human-readable summary. The cohort-construction rule above is locked; the numerical values will tighten once the backfill completes. **Until backfill, agents should cite this entry but flag `cohort_values_placeholder: true` in the outside_view block.**
+
+#### Generic revenue-bucket fallback (preserved from 2016 BRB; survivors-only — use only when no cohort match)
+
+Reference-class distributions for 10-year forward revenue CAGR conditioned on starting-revenue bucket:
+
+| Starting revenue bucket | 10y revenue CAGR — historical mean | 10y revenue CAGR — historical median |
+|---|---|---|
+| <$1B | ~11% | ~8% |
+| $1B–$5B | ~9% | ~7% |
+| $5B–$10B | ~7% | ~6% |
+| $10B–$50B | ~6% | ~5% |
+| $50B+ | ~4% | ~3.5% |
+
+Operating margin and ROIC-fade base rates available in the same source; not embedded here for Phase 1 (only revenue-CAGR outside-view is wired into the prompt). `source_confidence: medium` — values are directionally consistent across secondary citations but specific decile thresholds not Primary-verified. **Known limitation:** survivors-only construction inflates 10y mean by an estimated 200-400 bps for high-skew cohorts (Brown-Goetzmann 1995 found 20-80 bps for mutual funds; scaled up for equity-level skew per Bessembinder). When this fallback is used, pm-supervisor §2.6 should apply marginally more skepticism to the divergence routing.
 
 ## Supporting references
 
@@ -153,3 +275,79 @@ Put/call volume ratio carries information about future stock returns: informed t
 **Source:** Bank of America Global Fund Manager Survey (monthly). Coverage via BofA Research portal + aggregated summaries (ZeroHedge, MarketWatch, Reuters).
 
 Monthly survey of ~250 institutional fund managers covering ~$700B AUM. Surfaces cash levels (contrarian-bullish below 4%, contrarian-bearish above 5%), most-crowded trades (contrarian-bearish on the named trade), biggest tail-risk identified (regime-context for catalyst impact). Used by `catalyst-scout` §4 sentiment sweep — calibrates whether the cdd-lead thesis is consensus or differentiated.
+
+---
+
+## Canonical §2.6 stress-test claim list by tier (drift-fix 2026-05-17)
+
+The §2.6 adversarial stress-test pass in pm-supervisor.md previously allowed the LLM to "select 6-9 load-bearing claims" per run, which produced run-to-run drift (MSFT 5-14/15/16 inverted 6/6/9 claims with different verdicts; MU 5-12 → 5-14 inverted 6 → 7 with stress_failed 0 → 3 catastrophic in 48h despite no material data change). This section pins the claim list per tier; pm-supervisor must mark **every** canonical claim with one of `{stress_passed, stress_open, stress_failed}` — selection of which claims to invert is forbidden.
+
+**Enforcement:** evaluator HG-28 verifies that the `adversarial_stress_test.canonical_claims_evaluated` list emitted by pm-supervisor matches the canonical list for the cdd-lead tier (set-equality, not subset). Missing or extra claims are a hard fail.
+
+**Grandfathering:** rows in `analyst_briefs` / `execution_recommendations` with `created_at < 2026-05-17T00:00:00Z` are exempt from HG-28 (old schema).
+
+### core_fundamental (10 claims)
+
+For tier `core_fundamental`, pm-supervisor MUST invert and mark each of the following 10 claims:
+
+| claim_id | claim_text | framework_anchor |
+|---|---|---|
+| `cf-01` | Damodaran narrative-DCF base midpoint > spot (positive margin of safety to base case) | `damodaran_narrative_dcf` |
+| `cf-02` | ≥1 Helmer Power held at strict evidence floor (≥2 primary-source citations, source_quality_tier ≤ 2) | `helmer_7_powers` |
+| `cf-03` | Capital-allocation overall grade ∈ {A, A-, B+, B} (no C/D) | `mauboussin_capital_allocation_2024` |
+| `cf-04` | Piotroski F-Score ≥ 5 of 9 (quality signals dominant) | `piotroski_2000` |
+| `cf-05` | Altman Z'' > 1.1 (above distress threshold; book-equity X4 path acceptable) | `altman_1968` |
+| `cf-06` | reinvestment_moat quality_label ∈ {A, B} (incremental_roic ≥ WACC for B; ≥ WACC+10pp for A) | `mauboussin_moat_2024` |
+| `cf-07` | Reverse-DCF implied growth ≤ 2× Mauboussin cohort mean (no extreme-overpricing signal) | `mauboussin_reverse_dcf` + `mauboussin_base_rates_2016` |
+| `cf-08` | Outside-view corrected_divergence_pp ≤ +2pp OR Helmer-Power gate cleared | `lovallo_kahneman_2003` |
+| `cf-09` | WACC sensitivity ±25bp does not flip base-case MoS sign (β stability) | `damodaran_narrative_dcf` + `damodaran_implied_erp` |
+| `cf-10` | Counterfactual top-3 has ≥2 SURVIVOR matches AND <2 NON-SURVIVOR | `peak_pain_archetypes` |
+
+### thematic_growth (10 claims)
+
+For tier `thematic_growth`, pm-supervisor MUST invert and mark each of the following 10 claims:
+
+| claim_id | claim_text | framework_anchor |
+|---|---|---|
+| `tg-01` | Damodaran + austere dual-DCF gap < 30% OR conditional reconciliation via ≥3 evidenced pillars (switching_costs, reinvestment_moat A, cohort base rate ≥ austere terminal) | `damodaran_narrative_dcf` + `austere_dcf` |
+| `tg-02` | ≥2 Helmer Powers held at evidence floor; for capital-light (`reinvestment_moat: N/A capital-light`), ≥1 must be operating-leverage-relevant (switching_costs / network_economies / branding) | `helmer_7_powers` |
+| `tg-03` | Capital-allocation overall grade ∈ {A, A-, B+, B} | `mauboussin_capital_allocation_2024` |
+| `tg-04` | reinvestment_moat quality_label A (incremental_roic_3y > WACC+10pp; runway ≥ 5y) OR capital-light with operating-leverage Powers cited | `mauboussin_moat_2024` |
+| `tg-05` | Reverse-DCF implied growth ≤ 2× cohort mean (no `reverse_dcf_implied_growth_double_cohort_mean_signal` fire) | `mauboussin_reverse_dcf` + `mauboussin_base_rates_2016` |
+| `tg-06` | Outside-view corrected_divergence_pp ≤ +2pp OR (Helmer-gate cleared AND reinvestment_moat quality_label A reinforces) | `lovallo_kahneman_2003` |
+| `tg-07` | Net Dollar Retention ≥ 105% OR module attach ≥ 25% OR sector-equivalent KPI from brief §2.0 anchor (NRR / cohort retention / unit economics) | sector-conditional: `bessemer_cloud_100`, `skok_saas_metrics` |
+| `tg-08` | FCF margin trajectory positive (YoY improvement OR consistent above 20%) | `mauboussin_meroi` + `sacks_burn_multiple` |
+| `tg-09` | Counterfactual top-3 has ≥2 SURVIVOR matches | `peak_pain_archetypes` |
+| `tg-10` | No `hyperscaler_capex_outlier_cisco_1999_trigger` active OR named watch-condition resolvable within 12mo | `peak_pain_archetypes` |
+
+### speculative_optionality (10 claims)
+
+For tier `speculative_optionality`, pm-supervisor MUST invert and mark each of the following 10 claims (DCF + reverse-DCF + outside-view skipped per C-4; milestone-tree carries discipline):
+
+| claim_id | claim_text | framework_anchor |
+|---|---|---|
+| `so-01` | Cash runway ≥ 12mo at current burn rate | `sacks_burn_multiple` |
+| `so-02` | Milestone tree has ≥3 dated falsifiable resolutions in next 24mo | milestone-tree (cdd-lead framework) |
+| `so-03` | ≥1 Helmer Power emerging (Provisional acceptable; evidence-floor relaxed to ≥1 primary citation) | `helmer_7_powers` |
+| `so-04` | No Altman Z'' < 0.5 (catastrophic distress) | `altman_1968` |
+| `so-05` | Cumulative-dilution baseline anchored to a SINGLE share-count baseline (no quant-vs-strategic dilution-baseline disagreement) | cross-agent consistency rule |
+| `so-06` | Counterfactual top-3 has ≥2 SURVIVOR matches AND <2 NON-SURVIVOR | `peak_pain_archetypes` |
+| `so-07` | Primary-source citation ≥1 for the bull-case structural anchor (single-source allowed at speculative tier) | evidence_index discipline |
+| `so-08` | No D-rated bucket in capital-allocation grading (R&D, M&A, capex specifically) | `mauboussin_capital_allocation_2024` |
+| `so-09` | Regulatory / scientific / commercial pathway has a named resolution event in next 36mo | milestone-tree (cdd-lead framework) |
+| `so-10` | Partner / customer concentration ≤ 50% of revenue OR contracted ≥3y forward | sector-conditional |
+
+### Procedure for pm-supervisor.md §2.6
+
+1. Read `cdd-lead.tier` from the integrated memo.
+2. Load the canonical 10-claim list for that tier from this section.
+3. For each canonical claim:
+   - Invert (1-line falsification check).
+   - Categorize as `stress_passed` / `stress_open` / `stress_failed` (catastrophic if terminal-thesis-impairing).
+   - Emit `{claim_id, claim_text, verdict, falsification_check_note}` in the envelope's `adversarial_stress_test.canonical_claims_evaluated[]` array.
+4. Compute totals from the marked list — `claims_inverted_count` MUST equal 10; `stress_passed + stress_open + stress_failed` MUST sum to 10. Mismatch → process failure.
+5. Do NOT add extra claims. Do NOT skip canonical claims. The list is exhaustive and exclusive for the tier.
+
+### When to update this list
+
+Pre-plan parameter changes (claim addition/removal/edit) require operator approval via `/grill-me` followed by a versioned bump (record `canonical_claims_version` in the envelope so audit can pin which list was applied). The current version is `v1-2026-05-17`.
