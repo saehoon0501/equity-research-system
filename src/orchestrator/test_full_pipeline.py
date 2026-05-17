@@ -15,7 +15,7 @@ What it exercises (in order):
     L3 → Watchlist row — verify ticker is on watchlist with HMAC-signed pillars
     L4 → Daily monitor — inject synthetic event; materiality classifier;
             router picks 2-4 of 5 P4 debate agents on M-2 / full 5 on M-3
-    L5 → Counterfactual veto retrieval — top-3 from peak_pain_archetypes catalog
+    L5 → (RETIRED 2026-05-17) — counterfactual-veto retrieval stage skipped
     L6 → Cut evaluator + anchor drift — mode-tuned thresholds + 3-channel drift
     L7 → P7 emitter — execution_recommendations row with HMAC signature
     L8 → Audit trail — verify HMAC chain end-to-end
@@ -373,20 +373,17 @@ def stage_l8_audit_chain(conn: Any, ticker: str) -> dict:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM audit_provenance")
             count = cur.fetchone()[0]
-            cur.execute(
-                "SELECT COUNT(*) FROM peak_pain_archetypes "
-                "WHERE hmac_signature IS NOT NULL AND hmac_signature != ''"
-            )
-            catalog_signed = cur.fetchone()[0]
             cur.execute("SELECT COUNT(*) FROM watchlist")
             watchlist_count = cur.fetchone()[0]
         print(f"  audit_provenance rows: {count}")
-        print(f"  peak_pain_archetypes HMAC-signed: {catalog_signed}")
         print(f"  watchlist HMAC-signed: {watchlist_count}")
+        # peak_pain_archetypes catalog HMAC check retired 2026-05-17 alongside
+        # the counterfactual-veto framework removal. The table may be renamed
+        # by Phase 4 of the removal plan (HMAC-gated); querying it directly
+        # is no longer safe and the audit-chain smoke check no longer needs it.
         return _stage_result(
             "L8_audit_chain", "pass",
-            f"audit={count}, catalog={catalog_signed}, "
-            f"watchlist={watchlist_count}",
+            f"audit={count}, watchlist={watchlist_count}",
         )
     except Exception as exc:
         print(f"  ✗ FAILED: {type(exc).__name__}: {exc}")
