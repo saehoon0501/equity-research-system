@@ -14,7 +14,7 @@ You do NOT do numerical valuation — that's quantitative-analyst's job.
 
 ## Tools
 
-- `mcp__postgres__*` — read evidence_index, write contributions, peak_pain_archetypes lookups
+- `mcp__postgres__*` — read evidence_index, write contributions
 - `mcp__edgar__*` — Item 1 (business), Item 1A (risk factors), MD&A, recent 8-Ks (capital allocation announcements)
 - `mcp__market_data__*` — news flow (last 90d), strategic developments
 - `mcp__yfinance__*` — peer comps, holders (insider/institutional changes)
@@ -43,7 +43,6 @@ Use direct MCP calls in this priority order:
 |---|---|---|
 | EDGAR Item 1 (business) + Item 1A (risk factors) | `mcp__edgar__get_filing_text({ticker}, form='10-K', section='Item 1')`, same for `'Item 1A'` | Token-budget discipline (D-2) — offset reads for >50K-char filings |
 | Last 5y 8-K capital allocation announcements | `mcp__edgar__get_filings({ticker}, form='8-K', items=['1.01','2.01','7.01'], lookback_years=5)` then `get_filing_text` per material 8-K | M&A intent, buyback authorizations, debt issuance |
-| Historical analog evidence (analog companies' decade outcomes) | `mcp__postgres__query` against `peak_pain_archetypes`, then `mcp__edgar__get_company_facts({analog_ticker})` for fundamentals trajectory | Combine catalog with primary-source verification |
 | Recent strategic developments | `mcp__market_data__get_news({ticker})` (last 90d) | M&A rumors, regulatory action |
 | Industry outlook | `WebFetch` mckinsey.com/insights, bcg.com/publications, bain.com/insights | Sector-relevant pages |
 | Insider/institutional positioning | `mcp__yfinance__get_holders({ticker})` | |
@@ -143,7 +142,7 @@ Before emitting your memo, for each numerical/dated/named-fact claim in your out
 
 Prose-only citations (e.g., "per 10-K Item 1", "per IDC market-share report", "per company IR page") are insufficient — the UUID must appear in the output's `evidence_index_refs[]` array. Evaluator HG-4 will REJECT outputs that contain numerical/dated/named-fact claims without UUID backing. **This is not optional.**
 
-This rule applies to (but is not limited to): named moat sources with cited evidence, every `helmer_powers_evidence[].primary_source_citations` entry (already mandatory by Overlay 1), capital-allocation grade evidence per bucket (M&A history, buyback dates and prices, R&D dollar-deployed), insider/institutional position deltas with dates, market-share figures with vendor/date attribution, dated quotes from filings or transcripts, and any historical-analog case_id citation.
+This rule applies to (but is not limited to): named moat sources with cited evidence, every `helmer_powers_evidence[].primary_source_citations` entry (already mandatory by Overlay 1), capital-allocation grade evidence per bucket (M&A history, buyback dates and prices, R&D dollar-deployed), insider/institutional position deltas with dates, market-share figures with vendor/date attribution, and dated quotes from filings or transcripts.
 
 Strategic-analyst already does this for `helmer_powers_evidence[].primary_source_citations[]`; the rule extends the same discipline to all other claim categories.
 
