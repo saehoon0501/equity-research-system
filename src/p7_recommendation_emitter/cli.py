@@ -3,7 +3,6 @@
     python -m src.p7_recommendation_emitter.cli emit \\
         --ticker NVDA --mode B_prime --quality HIGH \\
         --debate-add-count 4 --kills-fired 0 \\
-        --counterfactual SURVIVOR,SURVIVOR,SURVIVOR \\
         --anchor-drift 0 \\
         --primary BUY --pacing "DCA over 21 days" \\
         --triggered-by new_candidate
@@ -45,11 +44,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Human-readable debate consensus summary",
     )
     em.add_argument("--kills-fired", type=int, required=True)
-    em.add_argument(
-        "--counterfactual",
-        required=True,
-        help="comma-separated SURVIVOR/NON_SURVIVOR top-3 tags",
-    )
     em.add_argument("--anchor-drift", type=int, required=True)
     em.add_argument(
         "--primary",
@@ -98,9 +92,6 @@ def _connect() -> Any:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
-    counterfactual = [
-        s.strip().upper() for s in args.counterfactual.split(",") if s.strip()
-    ]
     inp = EmitInputs(
         ticker=args.ticker,
         mode=args.mode,
@@ -111,7 +102,6 @@ def main(argv: list[str] | None = None) -> int:
             args.debate_summary or f"{args.debate_add_count}/5 ADD"
         ),
         kills_fired=args.kills_fired,
-        counterfactual_top_3=counterfactual,
         anchor_drift_channels_triggered=args.anchor_drift,
         primary_recommendation=args.primary,
         suggested_pacing=args.pacing,

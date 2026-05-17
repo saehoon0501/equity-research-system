@@ -110,15 +110,13 @@ class ExecutionContext:
 def aggregate_risk_flags(
     *,
     s0_regime_state: Optional[Mapping[str, Any]] = None,
-    s2_counterfactual_top_3: Optional[Sequence[str]] = None,
     s4_smart_money: Optional[Mapping[str, Any]] = None,
     extra: Optional[Sequence[str]] = None,
 ) -> list[str]:
-    """Aggregate risk_flags from S0 + S2 + S4 sidecars + caller-provided extras.
+    """Aggregate risk_flags from S0 + S4 sidecars + caller-provided extras.
 
     Per v3 spec sidecars (Section 2.6 + 4.7):
       S0 — regime classification + BOCPD short_run_mass
-      S2 — counterfactual ledger (NON_SURVIVOR matches in top-3 → flag)
       S4 — smart-money signals (catastrophic / fraud-signature → flag)
 
     Returns a deduplicated list of human-readable risk-flag strings.
@@ -139,16 +137,6 @@ def aggregate_risk_flags(
                 )
         if s0_regime_state.get("vol_elevated"):
             flags.append("S0 vol dimension elevated (>+1σ)")
-
-    # S2 — counterfactual top-3 NON_SURVIVOR matches
-    if s2_counterfactual_top_3:
-        non_survivor = sum(
-            1 for x in s2_counterfactual_top_3 if str(x).upper() == "NON_SURVIVOR"
-        )
-        if non_survivor >= 1:
-            flags.append(
-                f"S2 counterfactual top-3 NON_SURVIVOR matches: {non_survivor}"
-            )
 
     # S4 — smart-money flags (catastrophic / fraud / drawdown-divergence)
     if s4_smart_money:

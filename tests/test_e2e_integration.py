@@ -307,7 +307,6 @@ def _baseline_emit_inputs(**overrides: Any) -> EmitInputs:
         debate_add_count=4,
         debate_consensus_summary="4/5 ADD (Quant-Technical dissents HOLD on RSI > 70)",
         kills_fired=0,
-        counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
         anchor_drift_channels_triggered=0,
         primary_recommendation="BUY",
         suggested_pacing="DCA over 21 days",

@@ -30,12 +30,11 @@ def _run_cli(args: list[str]) -> subprocess.CompletedProcess:
 
 
 def test_cli_msft_inputs_returns_high_with_correct_json_shape():
-    """Happy path: MSFT 2026-05-15 inputs should rollup to HIGH per the
+    """Happy path: HIGH gate satisfied inputs should rollup to HIGH per the
     audit's HIGH-1 finding. Exit 0, JSON envelope has the documented keys."""
     result = _run_cli([
         "--debate-add-count", "4",
         "--kills-fired", "0",
-        "--counterfactual", "SURVIVOR", "SURVIVOR", "SURVIVOR",
         "--anchor-drift", "0",
     ])
     assert result.returncode == 0, f"CLI exit non-zero: stderr={result.stderr}"
@@ -52,19 +51,18 @@ def test_cli_msft_inputs_returns_high_with_correct_json_shape():
 
 
 def test_cli_adversarial_inputs_returns_low():
-    """LOW path: 2+ kills_fired + low debate + NON_SURVIVOR cluster trigger LOW.
+    """LOW path: 2+ kills_fired + low debate trigger LOW.
     Confirms the CLI propagates the deterministic LOW gate verdict."""
     result = _run_cli([
         "--debate-add-count", "2",
         "--kills-fired", "3",
-        "--counterfactual", "NON_SURVIVOR", "NON_SURVIVOR", "SURVIVOR",
         "--anchor-drift", "2",
     ])
     assert result.returncode == 0, f"CLI exit non-zero: stderr={result.stderr}"
 
     payload = json.loads(result.stdout)
     assert payload["bucket"] == "LOW"
-    # Multiple LOW triggers should appear in triggered_rules (kills + debate + NON_SURVIVOR)
+    # Multiple LOW triggers should appear in triggered_rules (kills + debate)
     assert len(payload["triggered_rules"]) >= 2
 
 
@@ -74,7 +72,6 @@ def test_cli_missing_required_arg_exits_non_zero():
     result = _run_cli([
         "--debate-add-count", "4",
         # missing --kills-fired
-        "--counterfactual", "SURVIVOR", "SURVIVOR",
         "--anchor-drift", "0",
     ])
     assert result.returncode != 0
@@ -83,31 +80,15 @@ def test_cli_missing_required_arg_exits_non_zero():
     assert "kills-fired" in result.stderr.lower() or "required" in result.stderr.lower()
 
 
-def test_cli_out_of_range_input_exits_with_validation_error():
-    """ValueError from roll_up_conviction (e.g., counterfactual_top_3 > 3 cases)
-    should produce a clean non-zero exit with the error written to stderr,
-    not crash uncaught."""
-    result = _run_cli([
-        "--debate-add-count", "4",
-        "--kills-fired", "0",
-        "--counterfactual", "SURVIVOR", "SURVIVOR", "SURVIVOR", "SURVIVOR",  # 4 — over the 3-cap
-        "--anchor-drift", "0",
-    ])
-    assert result.returncode != 0
-    assert "ValueError" in result.stderr or "at most 3" in result.stderr
-
-
 def test_cli_medium_default_path():
-    """When no LOW trigger fires and HIGH gate is not fully satisfied (3/4
-    criteria), conviction is MEDIUM. Confirms the CLI propagates the
-    fallback default cleanly."""
+    """When no LOW trigger fires and HIGH gate is not fully satisfied,
+    conviction is MEDIUM. Confirms the CLI propagates the fallback cleanly."""
     result = _run_cli([
         "--debate-add-count", "4",
         "--kills-fired", "0",
-        "--counterfactual", "SURVIVOR", "SURVIVOR", "SURVIVOR",
         "--anchor-drift", "2",  # fails anchor-drift gate (>1)
     ])
     assert result.returncode == 0
     payload = json.loads(result.stdout)
-    # 3/4 HIGH criteria → MEDIUM per pm-supervisor.md:832 monotonic rule
+    # HIGH criteria not fully met → MEDIUM
     assert payload["bucket"] == "MEDIUM"

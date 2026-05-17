@@ -204,7 +204,6 @@ def _derive_mid(row: Any, *, is_primary: bool) -> HorizonSignal:
     breakdown = row.conviction_breakdown or {}
     debate = breakdown.get("debate_consensus")
     kills = breakdown.get("kills_fired")
-    cf = breakdown.get("counterfactual_top_3")
 
     pieces: list[str] = []
     if rec:
@@ -213,8 +212,6 @@ def _derive_mid(row: Any, *, is_primary: bool) -> HorizonSignal:
         pieces.append(f"debate {debate}")
     if kills:
         pieces.append(f"kills {kills}")
-    if cf:
-        pieces.append(f"cf {cf}")
     key = "; ".join(pieces) if pieces else "no recommendation envelope yet"
 
     sizing = row.sizing_suggestion or {}
@@ -246,18 +243,12 @@ def _derive_long(row: Any, *, is_primary: bool) -> HorizonSignal:
     drift = breakdown.get("drift_channels", "0 of 3 triggered")
     mode_certainty = breakdown.get("mode_certainty", "rule_clean")
     regime_sens = row.regime_sensitivity or "MEDIUM"
-    cf = breakdown.get("counterfactual_top_3", "")
 
-    # Long-horizon signal is dominated by anchor drift + counterfactual.
-    survivor_match = "SURVIVOR" in str(cf).upper()
-    non_survivor = "NON_SURVIVOR" in str(cf).upper() or "NON-SURVIVOR" in str(cf).upper()
     triggered = _drift_triggered_count(drift)
 
-    if non_survivor and triggered >= 2:
-        signal = "SELL"
-    elif triggered >= 2:
+    if triggered >= 2:
         signal = "TRIM"
-    elif survivor_match and (row.conviction or "").upper() == "HIGH":
+    elif (row.conviction or "").upper() == "HIGH":
         signal = "BUY"
     else:
         signal = "HOLD"
@@ -273,7 +264,6 @@ def _derive_long(row: Any, *, is_primary: bool) -> HorizonSignal:
         "mode_certainty": mode_certainty,
         "drift_channels": drift,
         "regime_sensitivity": regime_sens,
-        "counterfactual_top_3": cf,
         "conviction_threshold": row.conviction_threshold,
     }
     return HorizonSignal(

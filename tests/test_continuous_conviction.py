@@ -15,7 +15,6 @@ def _inp(**kw):
     defaults = {
         "debate_add_count": 5,
         "kills_fired": 0,
-        "counterfactual_top_3": ("SURVIVOR", "SURVIVOR", "SURVIVOR"),
         "anchor_drift_channels_triggered": 0,
         "debate_total": 5,
     }
@@ -24,32 +23,22 @@ def _inp(**kw):
 
 
 def test_perfect_inputs_score_one():
-    """5/5 debate, 0 kills, 3 SURVIVOR, 0 drift → score = 1.0."""
+    """5/5 debate, 0 kills, 0 drift → score = 1.0."""
     out = score_conviction(_inp())
     assert out.score == pytest.approx(1.0)
     assert out.components["debate"] == 1.0
     assert out.components["kills"] == 1.0
-    assert out.components["cf_balance"] == 1.0
     assert out.components["drift"] == 1.0
 
 
 def test_worst_inputs_score_zero():
-    """0/5 debate, 2 kills, 3 NON-SURVIVOR, 3 drift → score = 0.0."""
+    """0/5 debate, 2 kills, 3 drift → score = 0.0."""
     out = score_conviction(_inp(
         debate_add_count=0,
         kills_fired=2,
-        counterfactual_top_3=("NON_SURVIVOR", "NON_SURVIVOR", "NON_SURVIVOR"),
         anchor_drift_channels_triggered=3,
     ))
     assert out.score == pytest.approx(0.0)
-
-
-def test_balanced_counterfactual_at_half():
-    """1 SURVIVOR + 1 NON-SURVIVOR → cf_balance = 0.5."""
-    out = score_conviction(_inp(
-        counterfactual_top_3=("SURVIVOR", "NON_SURVIVOR"),
-    ))
-    assert out.components["cf_balance"] == pytest.approx(0.5)
 
 
 def test_one_kill_halfway():
@@ -64,26 +53,21 @@ def test_partial_drift_step_third():
 
 
 def test_score_is_weighted_average_with_default_weights():
-    """Each component gets 0.25; score should be the mean."""
+    """Each component gets 1/3; score should be the mean."""
     inp = _inp(
         debate_add_count=4,                # 0.8
         kills_fired=1,                     # 0.5
-        counterfactual_top_3=(
-            "SURVIVOR", "SURVIVOR", "NON_SURVIVOR",
-        ),                                 # cf_balance = (2-1)/3 + 0.5/2... let's compute
         anchor_drift_channels_triggered=2, # drift = 1/3
     )
     out = score_conviction(inp)
-    # cf_balance = 0.5 + ((2-1)/3) * 0.5 = 0.5 + 0.1667 = 0.667
-    assert out.components["cf_balance"] == pytest.approx(2 / 3)
-    expected = 0.25 * (0.8 + 0.5 + 2 / 3 + 1 / 3)
+    expected = (0.8 + 0.5 + 1 / 3) / 3.0
     assert out.score == pytest.approx(expected)
 
 
 def test_custom_weights_renormalize_to_one():
     """Pass weights summing to 2.0 — function should renormalize."""
     inp = _inp(debate_add_count=4, kills_fired=0)
-    weights = {"debate": 1.0, "kills": 1.0, "cf_balance": 0.0, "drift": 0.0}
+    weights = {"debate": 1.0, "kills": 1.0, "drift": 0.0}
     out = score_conviction(inp, weights=weights)
     # debate=0.8, kills=1.0, equal weight → 0.9
     assert out.score == pytest.approx(0.9)
@@ -94,11 +78,11 @@ def test_zero_weights_falls_back_to_default():
     inp = _inp()
     out = score_conviction(
         inp,
-        weights={"debate": 0.0, "kills": 0.0, "cf_balance": 0.0, "drift": 0.0},
+        weights={"debate": 0.0, "kills": 0.0, "drift": 0.0},
     )
-    # Fallback to DEFAULT_COMPONENT_WEIGHTS → all four contribute equally
-    for k in ("debate", "kills", "cf_balance", "drift"):
-        assert out.weights[k] == pytest.approx(0.25)
+    # Fallback to DEFAULT_COMPONENT_WEIGHTS → all three contribute equally
+    for k in ("debate", "kills", "drift"):
+        assert out.weights[k] == pytest.approx(1.0 / 3.0)
 
 
 def test_score_clamped_to_unit_interval():

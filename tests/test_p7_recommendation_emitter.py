@@ -160,7 +160,6 @@ def test_conviction_high_gate_all_satisfied() -> None:
         ConvictionInputs(
             debate_add_count=4,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
         )
     )
@@ -173,7 +172,6 @@ def test_conviction_high_blocked_by_kill() -> None:
         ConvictionInputs(
             debate_add_count=4,
             kills_fired=1,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
         )
     )
@@ -185,19 +183,6 @@ def test_conviction_low_2_kills() -> None:
         ConvictionInputs(
             debate_add_count=5,
             kills_fired=2,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
-            anchor_drift_channels_triggered=0,
-        )
-    )
-    assert out.bucket == CONVICTION_LOW
-
-
-def test_conviction_low_2_non_survivor() -> None:
-    out = roll_up_conviction(
-        ConvictionInputs(
-            debate_add_count=5,
-            kills_fired=0,
-            counterfactual_top_3=["NON_SURVIVOR", "NON_SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
         )
     )
@@ -209,7 +194,6 @@ def test_conviction_low_under_3_debate() -> None:
         ConvictionInputs(
             debate_add_count=2,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
         )
     )
@@ -218,14 +202,12 @@ def test_conviction_low_under_3_debate() -> None:
 
 def test_conviction_low_takes_precedence_over_high() -> None:
     """Spec ambiguity resolution: LOW > HIGH when both could fire."""
-    # 4 ADD + 0 kills + 2 SURVIVOR + 0 drift would be HIGH...
-    # ...but ≥2 NON_SURVIVOR fires LOW.
+    # 4 ADD + 0 kills + 0 drift would be HIGH...
+    # ...but ≥2 kills_fired fires LOW.
     out = roll_up_conviction(
         ConvictionInputs(
             debate_add_count=4,
-            kills_fired=0,
-            # 2 NON_SURVIVOR fires LOW even though 1 SURVIVOR
-            counterfactual_top_3=["NON_SURVIVOR", "NON_SURVIVOR", "SURVIVOR"],
+            kills_fired=2,
             anchor_drift_channels_triggered=0,
         )
     )
@@ -237,25 +219,6 @@ def test_conviction_medium_3_debate() -> None:
         ConvictionInputs(
             debate_add_count=3,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
-            anchor_drift_channels_triggered=0,
-        )
-    )
-    assert out.bucket == CONVICTION_MEDIUM
-
-
-def test_conviction_medium_mixed_counterfactual() -> None:
-    """Mixed counterfactual = 1 SURVIVOR + 1 NON_SURVIVOR (no third match) →
-    fails HIGH gate (≥2 SURVIVOR not met) but fires MEDIUM mixed-trigger.
-
-    Spec ambiguity resolution: HIGH gate is strict AND (≥2 SURVIVOR); when
-    SURVIVOR<2, HIGH fails and MEDIUM fires on mixed counterfactual.
-    """
-    out = roll_up_conviction(
-        ConvictionInputs(
-            debate_add_count=3,  # 3/5 — already fires MEDIUM
-            kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "NON_SURVIVOR"],
             anchor_drift_channels_triggered=0,
         )
     )
@@ -267,21 +230,7 @@ def test_conviction_medium_2_drift_channels() -> None:
         ConvictionInputs(
             debate_add_count=4,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=2,
-        )
-    )
-    assert out.bucket == CONVICTION_MEDIUM
-
-
-def test_conviction_medium_fallback_when_underspecified() -> None:
-    """4/5 debate, 0 kills, 1 SURVIVOR + 0 NON_SURVIVOR → no rule fires; fallback MEDIUM."""
-    out = roll_up_conviction(
-        ConvictionInputs(
-            debate_add_count=4,
-            kills_fired=0,
-            counterfactual_top_3=["SURVIVOR"],  # only 1 SURVIVOR
-            anchor_drift_channels_triggered=0,
         )
     )
     assert out.bucket == CONVICTION_MEDIUM
@@ -478,13 +427,6 @@ def test_risk_flags_s0_regime_shift() -> None:
     assert any("vol_vrp" in f for f in flags)
 
 
-def test_risk_flags_s2_non_survivor() -> None:
-    flags = aggregate_risk_flags(
-        s2_counterfactual_top_3=["NON_SURVIVOR", "SURVIVOR", "SURVIVOR"]
-    )
-    assert any("NON_SURVIVOR" in f for f in flags)
-
-
 def test_risk_flags_s4_catastrophic() -> None:
     flags = aggregate_risk_flags(s4_smart_money={"category": "catastrophic"})
     assert any("catastrophic" in f for f in flags)
@@ -538,7 +480,6 @@ def _baseline_inputs(**overrides: Any) -> EmitInputs:
         debate_add_count=4,
         debate_consensus_summary="4/5 (Quant-Technical dissents HOLD)",
         kills_fired=0,
-        counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
         anchor_drift_channels_triggered=0,
         primary_recommendation="BUY",
         suggested_pacing="DCA over 21 days",
@@ -563,8 +504,7 @@ def _baseline_inputs(**overrides: Any) -> EmitInputs:
             },
             "stage_3_kill_criteria": {"fired": 0},
             "stage_4_counterfactual": {
-                "top_3_archetype": ["SURVIVOR", "SURVIVOR", "SURVIVOR"],
-                "veto_status": "no_veto",
+                "note": "deprecated stage, retained for chain shape",
             },
             "materiality": {
                 "classification": "M-1",
@@ -606,7 +546,6 @@ def test_emit_full_q1_schema_populated(monkeypatch: pytest.MonkeyPatch) -> None:
     cb = out.conviction_breakdown
     assert "debate_consensus" in cb
     assert "kills_fired" in cb
-    assert "counterfactual_top_3" in cb
     assert "mode_certainty" in cb
     assert "drift_channels" in cb
 
@@ -807,63 +746,6 @@ def test_audit_signature_includes_conviction_changed_from_prior(
             f"state-machine column {state_col!r} must be excluded from "
             "signed payload (migration 008 trigger allows narrow UPDATE)"
         )
-
-
-def test_counterfactual_top_3_rejects_more_than_3() -> None:
-    """Per Section 4.6 Phase 4 Q2: top-3 cap.
-
-    Caller must select exactly the 3 most-similar peak-pain matches.
-    Passing >3 widens the HIGH gate ('≥2 SURVIVOR matches in top-3') in
-    a way the spec doesn't authorize, so we reject explicitly.
-    """
-    with pytest.raises(ValueError, match="at most 3"):
-        roll_up_conviction(
-            ConvictionInputs(
-                debate_add_count=4,
-                kills_fired=0,
-                counterfactual_top_3=[
-                    "SURVIVOR",
-                    "SURVIVOR",
-                    "SURVIVOR",
-                    "SURVIVOR",
-                    "SURVIVOR",
-                ],
-                anchor_drift_channels_triggered=0,
-            )
-        )
-
-
-def test_2_survivor_1_non_survivor_with_high_signals_resolves_to_HIGH() -> None:
-    """DECISION LOCK: HIGH gate with monotonic SURVIVOR semantics (Phase 4 Q2).
-
-    Inputs that satisfy every HIGH gate condition (≥4/5 debate, 0 kills,
-    ≥2 SURVIVOR, ≤1 drift channel) MUST return HIGH even with 1 NON_SURVIVOR
-    in the top-3 — adding NON_SURVIVOR evidence does not block HIGH once
-    SURVIVOR≥2 is met. The mixed-counterfactual MEDIUM trigger explicitly
-    requires ``1 <= survivor <= 2`` (i.e., it doesn't fire when SURVIVOR≥2
-    in the strict sense the spec uses for the gate).
-
-    This test pins the lock so a future regression flipping ``cf_ok`` to
-    ``survivor >= 2 and non_survivor == 0`` (the rejected alternative
-    interpretation) breaks here.
-
-    Reference: ``src/p7_recommendation_emitter/conviction_rollup.py::_is_high``
-    docstring; v3 spec Section 4.6 Phase 4 Q2.
-    """
-    out = roll_up_conviction(
-        ConvictionInputs(
-            debate_add_count=4,
-            kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "NON_SURVIVOR"],
-            anchor_drift_channels_triggered=0,
-        )
-    )
-    assert out.bucket == CONVICTION_HIGH
-    # And the LOW NON_SURVIVOR trigger requires ≥2 NON_SURVIVOR; a single
-    # one must NOT have downgraded us.
-    assert "NON_SURVIVOR" not in (
-        " ".join(out.triggered_rules).upper().split("MATCHES=")[0]
-    )
 
 
 def test_hysteresis_pending_target_change_starts_fresh_cycle_count() -> None:

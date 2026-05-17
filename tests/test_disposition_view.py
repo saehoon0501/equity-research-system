@@ -511,8 +511,8 @@ def test_derive_horizon_signal_routing_sell_on_m3(conn: FakeConnection) -> None:
 def test_derive_horizon_signal_routing_long_drift(conn: FakeConnection) -> None:
     rows = get_disposition_rows(conn, ticker="RKLB")
     sigs = derive_horizon_signals(rows[0])
-    # 2 of 3 drift channels triggered + NON_SURVIVOR → SELL.
-    assert sigs["long"].signal == "SELL"
+    # 2 of 3 drift channels triggered → TRIM (post-counterfactual-decoupling).
+    assert sigs["long"].signal == "TRIM"
 
 
 # -----------------------------------------------------------------------------

@@ -102,9 +102,6 @@ class EmitInputs:
     # P3 kill criteria
     kills_fired: int
 
-    # S2 counterfactual top-3 archetype tags ('SURVIVOR' / 'NON_SURVIVOR')
-    counterfactual_top_3: Sequence[str]
-
     # S6 anchor-drift channel state (0..3 channels triggered)
     anchor_drift_channels_triggered: int
 
@@ -339,7 +336,6 @@ def emit_recommendation(
     conv_in = ConvictionInputs(
         debate_add_count=inp.debate_add_count,
         kills_fired=inp.kills_fired,
-        counterfactual_top_3=list(inp.counterfactual_top_3),
         anchor_drift_channels_triggered=inp.anchor_drift_channels_triggered,
     )
     conv: ConvictionRollup = roll_up_conviction(conv_in)
@@ -358,7 +354,6 @@ def emit_recommendation(
     # 4. Risk flags + execution_context.
     risk_flags = aggregate_risk_flags(
         s0_regime_state=inp.s0_regime_state,
-        s2_counterfactual_top_3=list(inp.counterfactual_top_3),
         s4_smart_money=inp.s4_smart_money,
         extra=list(inp.extra_risk_flags),
     )
@@ -387,7 +382,6 @@ def emit_recommendation(
     conviction_breakdown = {
         "debate_consensus": inp.debate_consensus_summary,
         "kills_fired": f"{inp.kills_fired} of 7",
-        "counterfactual_top_3": list(inp.counterfactual_top_3),
         "mode_certainty": (
             "rule-clean (no LLM tie-breaker)"
             if inp.mode_certainty == "rule_clean"

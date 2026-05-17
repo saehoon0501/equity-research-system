@@ -89,7 +89,6 @@ class TestColdStartCap:
         return ConvictionInputs(
             debate_add_count=5,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,  # vacuous on day-1
             debate_total=5,
         )
@@ -126,7 +125,6 @@ class TestColdStartCap:
         inp = ConvictionInputs(
             debate_add_count=3,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
             debate_total=5,
         )
@@ -143,7 +141,6 @@ class TestColdStartCap:
         inp = ConvictionInputs(
             debate_add_count=1,
             kills_fired=0,
-            counterfactual_top_3=["SURVIVOR", "SURVIVOR", "SURVIVOR"],
             anchor_drift_channels_triggered=0,
             debate_total=5,
         )

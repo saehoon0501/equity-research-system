@@ -117,7 +117,6 @@ class TestNvda2023ConvictionRollup:
             ConvictionInputs(
                 debate_add_count=5,  # 5/5 ADD per walkthrough
                 kills_fired=0,  # no kill criteria fired (BUY-side)
-                counterfactual_top_3=rollup_top_3,
                 anchor_drift_channels_triggered=0,
                 debate_total=5,
             )
@@ -149,7 +148,6 @@ class TestNvda2023ConvictionRollup:
             ConvictionInputs(
                 debate_add_count=4,
                 kills_fired=0,
-                counterfactual_top_3=rollup_top_3,
                 anchor_drift_channels_triggered=0,
             )
         )
@@ -176,7 +174,6 @@ class TestNvda2023ConvictionRollup:
             ConvictionInputs(
                 debate_add_count=3,
                 kills_fired=0,
-                counterfactual_top_3=rollup_top_3,
                 anchor_drift_channels_triggered=0,
             )
         )
@@ -203,7 +200,6 @@ class TestNvda2023ConvictionRollup:
             ConvictionInputs(
                 debate_add_count=5,
                 kills_fired=0,
-                counterfactual_top_3=rollup_top_3,
                 anchor_drift_channels_triggered=2,  # drift active
             )
         )

@@ -10,7 +10,7 @@ from the same inputs so:
     * the band hysteresis (Phase 4 Q7) operates on score-distance rather
       than band-flip count
 
-The score is a weighted average of four normalized component signals.
+The score is a weighted average of three normalized component signals.
 Equal weights at v0.5-entry; per spec §6.4, weights recalibrate
 empirically once N≥50 outcomes per cell accrue.
 
@@ -18,10 +18,6 @@ Signal components (each in [0, 1], higher = more bullish):
 
     debate    : debate_add_count / debate_total
     kills     : 1 if kills_fired==0; 0.5 if exactly 1; 0 if ≥2
-    cf_balance: max(0, (survivor - non_survivor) / 3 + 0.5)
-                — 3 SURVIVOR & 0 NON-SURV → 1.0
-                — 0 SURVIVOR & 3 NON-SURV → 0.0
-                — balanced → 0.5
     drift     : 1 - (anchor_drift_channels_triggered / 3)
 
 The score is stored in `execution_recommendations.conviction_breakdown`
@@ -36,7 +32,6 @@ from typing import Optional
 
 from src.p7_recommendation_emitter.conviction_rollup import (
     ConvictionInputs,
-    _count_survivor,
 )
 
 # Equal weights at v0.5-entry. Per spec §6.4, recalibrated against
@@ -44,10 +39,9 @@ from src.p7_recommendation_emitter.conviction_rollup import (
 # expose this as a module constant so the recalibration job can write back
 # directly without circular imports.
 DEFAULT_COMPONENT_WEIGHTS: dict[str, float] = {
-    "debate": 0.25,
-    "kills": 0.25,
-    "cf_balance": 0.25,
-    "drift": 0.25,
+    "debate": 1.0 / 3.0,
+    "kills": 1.0 / 3.0,
+    "drift": 1.0 / 3.0,
 }
 
 
@@ -86,14 +80,6 @@ def _kills_component(inp: ConvictionInputs) -> float:
     return 0.0
 
 
-def _cf_balance_component(inp: ConvictionInputs) -> float:
-    survivor, non_survivor = _count_survivor(inp.counterfactual_top_3)
-    # net ∈ [-3, 3]; map to [-0.5, 0.5] then shift to [0, 1].
-    net = (survivor - non_survivor) / 3.0
-    raw = 0.5 + net * 0.5
-    return max(0.0, min(1.0, raw))
-
-
 def _drift_component(inp: ConvictionInputs) -> float:
     triggered = inp.anchor_drift_channels_triggered
     return max(0.0, min(1.0, 1.0 - triggered / 3.0))
@@ -126,7 +112,6 @@ def score_conviction(
     components = {
         "debate": _debate_component(inp),
         "kills": _kills_component(inp),
-        "cf_balance": _cf_balance_component(inp),
         "drift": _drift_component(inp),
     }
 
