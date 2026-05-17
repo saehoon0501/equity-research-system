@@ -71,6 +71,12 @@
 
 BEGIN;
 
+-- Lock-hold convoy mitigation: this migration acquires ACCESS EXCLUSIVE on
+-- 15 tables for the entire transaction. On a shared dev DB with active
+-- worktrees, fail fast rather than convoy-blocking concurrent writers.
+-- Per /review-me iteration 1 SQL review (2026-05-18) defect #5.
+SET LOCAL lock_timeout = '5s';
+
 -- -----------------------------------------------------------------------------
 -- Apply-timestamp capture: store the apply moment so triggers can distinguish
 -- pre-mig-035 (legacy, grandfathered) rows from post-mig-035 (must use new
@@ -102,20 +108,56 @@ END $$;
 -- when parameters_version is also NULL. This forces NEW writers to use the
 -- new column without breaking legacy backfills (which would populate
 -- parameters_version and leave run_parameters_snapshot_id NULL).
+--
+-- Table-agnostic via TG_ARGV[0] = name of timestamp column to consult for the
+-- grandfathering check. 13 of 15 affected tables use 'created_at'; watchlist
+-- (mig 007) uses 'added_at'; mode_classifications (mig 008) uses
+-- 'classified_at'. Each CREATE TRIGGER below passes the right column name.
+-- Per /review-me iteration 2 SQL review (2026-05-18) — original implementation
+-- hardcoded NEW.created_at, which would raise 'record "new" has no field
+-- "created_at"' on watchlist and mode_classifications.
 CREATE OR REPLACE FUNCTION enforce_run_parameters_snapshot_on_insert() RETURNS TRIGGER AS $$
 DECLARE
     apply_ts TIMESTAMPTZ := COALESCE(
-        current_setting('app.mig_035_apply_ts', true)::timestamptz,
+        -- current_setting(..., true) returns '' (empty string) when GUC unset,
+        -- not NULL. Cast of '' to timestamptz raises 'invalid input syntax'.
+        -- NULLIF converts '' → NULL so COALESCE can advance to the fallback
+        -- literal in subsequent sessions where the GUC isn't set. Per
+        -- /review-me iteration 1 SQL review (2026-05-18) defect #2.
+        NULLIF(current_setting('app.mig_035_apply_ts', true), '')::timestamptz,
         '2026-05-18T00:00:00Z'::timestamptz  -- conservative fallback
     );
+    ts_col_name TEXT;
+    row_ts TIMESTAMPTZ;
 BEGIN
-    IF NEW.created_at IS NOT NULL
-       AND NEW.created_at >= apply_ts
+    -- Argument must be passed by every CREATE TRIGGER (see below).
+    IF TG_NARGS < 1 THEN
+        RAISE EXCEPTION 'enforce_run_parameters_snapshot_on_insert: missing TG_ARGV[0] timestamp column name (table=%)',
+            TG_TABLE_NAME;
+    END IF;
+    ts_col_name := TG_ARGV[0];
+
+    -- Dynamic column access via JSON serialization. Required because the 15
+    -- affected tables use 3 different timestamp column names (created_at,
+    -- added_at, classified_at) and PL/pgSQL has no syntax for variable column
+    -- access on a record without dynamic SQL or this JSON detour.
+    --
+    -- Fail loud if a future ALTER TABLE drops/renames the timestamp column
+    -- (otherwise the missing-key NULL would silently bypass the grandfathering
+    -- guard). Per /review-me iteration 3 SQL review polish (2026-05-18).
+    IF NOT (to_jsonb(NEW) ? ts_col_name) THEN
+        RAISE EXCEPTION 'enforce_run_parameters_snapshot_on_insert: timestamp column "%" not found on table % — was it dropped or renamed? Update the CREATE TRIGGER arg.',
+            ts_col_name, TG_TABLE_NAME;
+    END IF;
+    row_ts := (to_jsonb(NEW) ->> ts_col_name)::timestamptz;
+
+    IF row_ts IS NOT NULL
+       AND row_ts >= apply_ts
        AND NEW.run_parameters_snapshot_id IS NULL
        AND NEW.parameters_version IS NULL
     THEN
-        RAISE EXCEPTION 'post-mig-035 rows MUST populate run_parameters_snapshot_id (got NULL on both legacy parameters_version and new run_parameters_snapshot_id; table=%, created_at=%)',
-            TG_TABLE_NAME, NEW.created_at;
+        RAISE EXCEPTION 'post-mig-035 rows MUST populate run_parameters_snapshot_id (got NULL on both legacy parameters_version and new run_parameters_snapshot_id; table=%, %=%)',
+            TG_TABLE_NAME, ts_col_name, row_ts;
     END IF;
     RETURN NEW;
 END;
@@ -128,17 +170,38 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION enforce_run_parameters_snapshot_on_update() RETURNS TRIGGER AS $$
 DECLARE
     apply_ts TIMESTAMPTZ := COALESCE(
-        current_setting('app.mig_035_apply_ts', true)::timestamptz,
+        -- See enforce_run_parameters_snapshot_on_insert above for the NULLIF
+        -- rationale (per /review-me iteration 2 SQL review, 2026-05-18 — the
+        -- v1→v2 fix was applied only to the INSERT fn; v2→v3 propagates here).
+        NULLIF(current_setting('app.mig_035_apply_ts', true), '')::timestamptz,
         '2026-05-18T00:00:00Z'::timestamptz
     );
+    ts_col_name TEXT;
+    row_ts TIMESTAMPTZ;
 BEGIN
-    IF OLD.created_at IS NOT NULL
-       AND OLD.created_at >= apply_ts
+    -- Per /review-me v2→v3, this trigger is also table-agnostic. Currently
+    -- installed only on STATE tables (scenarios, watchlist); scenarios uses
+    -- 'created_at' and watchlist uses 'added_at'.
+    IF TG_NARGS < 1 THEN
+        RAISE EXCEPTION 'enforce_run_parameters_snapshot_on_update: missing TG_ARGV[0] timestamp column name (table=%)',
+            TG_TABLE_NAME;
+    END IF;
+    ts_col_name := TG_ARGV[0];
+
+    -- Same future-proof check as the INSERT fn (per /review-me iter 3 polish).
+    IF NOT (to_jsonb(OLD) ? ts_col_name) THEN
+        RAISE EXCEPTION 'enforce_run_parameters_snapshot_on_update: timestamp column "%" not found on table % — was it dropped or renamed? Update the CREATE TRIGGER arg.',
+            ts_col_name, TG_TABLE_NAME;
+    END IF;
+    row_ts := (to_jsonb(OLD) ->> ts_col_name)::timestamptz;
+
+    IF row_ts IS NOT NULL
+       AND row_ts >= apply_ts
        AND OLD.run_parameters_snapshot_id IS NOT NULL
        AND NEW.run_parameters_snapshot_id IS NULL
     THEN
-        RAISE EXCEPTION 'post-mig-035 rows: run_parameters_snapshot_id is immutable to NULL (table=%, row created_at=%)',
-            TG_TABLE_NAME, OLD.created_at;
+        RAISE EXCEPTION 'post-mig-035 rows: run_parameters_snapshot_id is immutable to NULL (table=%, row %=%)',
+            TG_TABLE_NAME, ts_col_name, row_ts;
     END IF;
     RETURN NEW;
 END;
@@ -161,7 +224,7 @@ ALTER TABLE regime_classification_history
 DROP TRIGGER IF EXISTS regime_classification_enforce_snapshot_insert ON regime_classification_history;
 CREATE TRIGGER regime_classification_enforce_snapshot_insert
     BEFORE INSERT ON regime_classification_history
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN regime_classification_history.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead. Will be DROPped at mig 036+ after backfill window.';
 
@@ -176,11 +239,11 @@ ALTER TABLE scenarios
 DROP TRIGGER IF EXISTS scenarios_enforce_snapshot_insert ON scenarios;
 CREATE TRIGGER scenarios_enforce_snapshot_insert
     BEFORE INSERT ON scenarios
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 DROP TRIGGER IF EXISTS scenarios_enforce_snapshot_update ON scenarios;
 CREATE TRIGGER scenarios_enforce_snapshot_update
     BEFORE UPDATE ON scenarios
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_update();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_update('created_at');
 COMMENT ON COLUMN scenarios.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead. Existing FK to parameters(version_id) will be dropped at mig 036+ after backfill window.';
 
@@ -195,11 +258,12 @@ ALTER TABLE watchlist
 DROP TRIGGER IF EXISTS watchlist_enforce_snapshot_insert ON watchlist;
 CREATE TRIGGER watchlist_enforce_snapshot_insert
     BEFORE INSERT ON watchlist
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    -- watchlist (mig 007) uses 'added_at', not 'created_at'.
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('added_at');
 DROP TRIGGER IF EXISTS watchlist_enforce_snapshot_update ON watchlist;
 CREATE TRIGGER watchlist_enforce_snapshot_update
     BEFORE UPDATE ON watchlist
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_update();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_update('added_at');
 COMMENT ON COLUMN watchlist.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead. Existing FK to parameters(version_id) will be dropped at mig 036+ after backfill window.';
 
@@ -214,7 +278,7 @@ ALTER TABLE audit_provenance
 DROP TRIGGER IF EXISTS audit_provenance_enforce_snapshot_insert ON audit_provenance;
 CREATE TRIGGER audit_provenance_enforce_snapshot_insert
     BEFORE INSERT ON audit_provenance
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN audit_provenance.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -229,7 +293,7 @@ ALTER TABLE execution_recommendations
 DROP TRIGGER IF EXISTS execution_recommendations_enforce_snapshot_insert ON execution_recommendations;
 CREATE TRIGGER execution_recommendations_enforce_snapshot_insert
     BEFORE INSERT ON execution_recommendations
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN execution_recommendations.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -244,7 +308,8 @@ ALTER TABLE mode_classifications
 DROP TRIGGER IF EXISTS mode_classifications_enforce_snapshot_insert ON mode_classifications;
 CREATE TRIGGER mode_classifications_enforce_snapshot_insert
     BEFORE INSERT ON mode_classifications
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    -- mode_classifications (mig 008) uses 'classified_at', not 'created_at'.
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('classified_at');
 COMMENT ON COLUMN mode_classifications.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -259,7 +324,7 @@ ALTER TABLE daily_refresh_log
 DROP TRIGGER IF EXISTS daily_refresh_log_enforce_snapshot_insert ON daily_refresh_log;
 CREATE TRIGGER daily_refresh_log_enforce_snapshot_insert
     BEFORE INSERT ON daily_refresh_log
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN daily_refresh_log.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -274,7 +339,7 @@ ALTER TABLE materiality_events
 DROP TRIGGER IF EXISTS materiality_events_enforce_snapshot_insert ON materiality_events;
 CREATE TRIGGER materiality_events_enforce_snapshot_insert
     BEFORE INSERT ON materiality_events
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN materiality_events.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -289,7 +354,7 @@ ALTER TABLE anchor_drift_checks
 DROP TRIGGER IF EXISTS anchor_drift_checks_enforce_snapshot_insert ON anchor_drift_checks;
 CREATE TRIGGER anchor_drift_checks_enforce_snapshot_insert
     BEFORE INSERT ON anchor_drift_checks
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN anchor_drift_checks.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -304,7 +369,7 @@ ALTER TABLE materiality_classifier_drift
 DROP TRIGGER IF EXISTS materiality_classifier_drift_enforce_snapshot_insert ON materiality_classifier_drift;
 CREATE TRIGGER materiality_classifier_drift_enforce_snapshot_insert
     BEFORE INSERT ON materiality_classifier_drift
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN materiality_classifier_drift.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -319,7 +384,7 @@ ALTER TABLE counterfactual_retrievals
 DROP TRIGGER IF EXISTS counterfactual_retrievals_enforce_snapshot_insert ON counterfactual_retrievals;
 CREATE TRIGGER counterfactual_retrievals_enforce_snapshot_insert
     BEFORE INSERT ON counterfactual_retrievals
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN counterfactual_retrievals.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead. Existing FK to parameters(version_id) will be dropped at mig 036+ after backfill window.';
 
@@ -334,7 +399,7 @@ ALTER TABLE premortem
 DROP TRIGGER IF EXISTS premortem_enforce_snapshot_insert ON premortem;
 CREATE TRIGGER premortem_enforce_snapshot_insert
     BEFORE INSERT ON premortem
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN premortem.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -349,7 +414,7 @@ ALTER TABLE operator_overrides
 DROP TRIGGER IF EXISTS operator_overrides_enforce_snapshot_insert ON operator_overrides;
 CREATE TRIGGER operator_overrides_enforce_snapshot_insert
     BEFORE INSERT ON operator_overrides
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN operator_overrides.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -364,7 +429,7 @@ ALTER TABLE calibration_test_results
 DROP TRIGGER IF EXISTS calibration_test_results_enforce_snapshot_insert ON calibration_test_results;
 CREATE TRIGGER calibration_test_results_enforce_snapshot_insert
     BEFORE INSERT ON calibration_test_results
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN calibration_test_results.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 
@@ -379,7 +444,7 @@ ALTER TABLE anchor_drift_review_decisions
 DROP TRIGGER IF EXISTS anchor_drift_review_decisions_enforce_snapshot_insert ON anchor_drift_review_decisions;
 CREATE TRIGGER anchor_drift_review_decisions_enforce_snapshot_insert
     BEFORE INSERT ON anchor_drift_review_decisions
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert();
+    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
 COMMENT ON COLUMN anchor_drift_review_decisions.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
 

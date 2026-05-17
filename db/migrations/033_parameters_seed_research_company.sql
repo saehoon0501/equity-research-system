@@ -575,7 +575,7 @@ WHERE approved_by = 'launch_default_2026-05-18'
 GROUP BY parameter_namespace
 ORDER BY parameter_namespace;
 
--- Expected seed_row_count by namespace (40+ rows total under launch_default):
+-- Expected seed_row_count by namespace (63 rows total under launch_default):
 --   catalyst_scout       : 12
 --   dcf                  :  7
 --   evaluator            :  8
@@ -586,8 +586,9 @@ ORDER BY parameter_namespace;
 --   reinvestment_moat    :  7
 --   sizing               : 14
 --   tier_classification  :  5
--- (Subset of full ~63 inventory; additional namespaces may be added in
---  follow-on migrations after operator review.)
+--   wacc                 :  2
+--   ------------------------
+--   TOTAL                : 63
 
 -- VERIFY: no production-row hijack risk — any tagged rows must NOT surface in
 -- parameters_active.
