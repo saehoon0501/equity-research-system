@@ -7,7 +7,7 @@ argument-hint: <ticker>
 
 **Goal:** orchestrate a full slow-layer research run on `<ticker>` and emit one execution recommendation (BUY/HOLD/TRIM/SELL).
 
-**Architecture:** main session runs 2-stage CDD inline → parallel dispatch quant + strategic specialists → integrate → catalyst-scout → pm-supervisor (synthesis + adversarial stress-test) → evaluator (single end-gate). Adversarial pressure: §3.5 counterfactual-veto (analog-based), §4 pm-supervisor §2.6 stress-test (claim inversion), §4.5 evaluator contamination check.
+**Architecture:** main session runs 2-stage CDD inline → parallel dispatch quant + strategic specialists → integrate → catalyst-scout → pm-supervisor (synthesis + adversarial stress-test) → evaluator (single end-gate). Adversarial pressure: §4 pm-supervisor §2.6 stress-test (claim inversion), §4.5 evaluator contamination check. (§3.5 counterfactual-veto retrieval retired 2026-05-17 — see BUILD_LOG.)
 
 Refactor provenance (cdd-lead retired, bear-case retired, search-agent retired): BUILD_LOG.md.
 
@@ -110,7 +110,6 @@ Run inline in the main session (formerly cdd-lead Stage 1):
    - `mcp__market_data__get_news({ticker})` — last 90d strategic developments
    - `mcp__market_data__get_real_time_quote({ticker})` + `mcp__market_data__get_prices({ticker}, lookback=90)` — D-1 mandatory 90d sanity check
    - `mcp__fred__get_series(<sector-relevant ID>)` — yield curve for banks, WTI for E&P, etc.
-   - `mcp__postgres__query` against `peak_pain_archetypes` for historical analog candidates
 
    **Warm-start delta sweep (4-6 MCP calls):** since `prior_brief.created_at`, focus on `mcp__market_data__get_news` + `mcp__edgar__get_filings({ticker}, lookback_days=N)` + `mcp__yfinance__get_recommendations({ticker})` delta + new peer additions.
 
@@ -330,29 +329,15 @@ If ESCALATE: this is a structural defect in the integration logic itself, not an
 
 ### 3. (deleted — bear-case subagent removed 2026-05-12)
 
-The dedicated `bear-case` adversarial subagent has been retired. Adversarial pressure now lives in three places:
-- §3.5 counterfactual-veto retrieval (analog-based, FEATURE analogs from the catalog)
+The dedicated `bear-case` adversarial subagent has been retired. Adversarial pressure now lives in two places:
 - §4 pm-supervisor stress-test pass (claim-level inversion of the integrated CDD memo's load-bearing assertions, before synthesis)
 - §4.5 evaluator contamination check (process-level guardrail)
 
 If the operator wants a deeper adversarial pass, the historical `bear-case.md.removed-20260512` agent definition is preserved in `.claude/agents/` for reference and can be re-spawned ad-hoc as a one-off `Agent(general-purpose, ...)` with that prompt body.
 
-### 3.5. Counterfactual veto retrieval
+### 3.5. (RETIRED 2026-05-17 — counterfactual-veto retrieval removed)
 
-Run `src.counterfactual_veto.retrieval.retrieve_top_3` against the live `peak_pain_archetypes` table with the candidate's universal-core + sector-extension features extracted from the integrated CDD memo. With the dedicated bear-case subagent removed (see §3), this is now the primary structured adversarial mechanism — FEATURE analogs from the catalog, not PRICE analogs from the news flow.
-
-Inputs to the orchestrator-side retrieval call:
-- `candidate_sector` — canonical sector from the memo (`tech_saas`, `semis_hardware`, etc.)
-- `candidate_universal_core` — 6 universal-core feature values (founder_in_place, founder_insider_stake_direction, cash_runway, margin_trajectory, revenue_trajectory, industry_tailwind)
-- `candidate_sector_extensions` — sector-specific feature dict
-- `catalog` — loaded via `load_catalog_from_pg` (HMAC-verified)
-
-Outputs:
-- Top-3 RetrievalMatch objects with `case.case_id`, `case.outcome`, `similarity`, `universal_core_similarity`, `matching_features`
-- `archetype_distribution(matches)` → SURVIVOR / DILUTED-SURVIVOR / NON-SURVIVOR counts
-- HIGH-gate evaluation (Section 4.4 Q3 monotonic): ≥2 SURVIVOR-type → PROCEED; ≥2 NON-SURVIVOR → BLOCK; mixed → operator review
-
-PMSupervisor consumes this in step 4 below.
+The peak_pain_archetypes / counterfactual_veto FEATURE-analog retrieval mechanism has been retired. Rationale: archetype matching anchored bear-DCFs at NON-SURVIVOR drawdown magnitudes regardless of falsifier clearance, producing structural HOLD bias on names that had already cleared the cited bear arcs (e.g., GOOGL Q1 FY26). Adversarial pressure for analog-based displacement-thesis pressure-testing is now handled by §4 pm-supervisor §2.6 stress-test (mechanism + falsifying-observable framing) rather than named historical analogs. See BUILD_LOG.md for the full removal rationale.
 
 ### 3.6. Mode classifier — provisional
 
@@ -391,21 +376,19 @@ Note: per Consensus Item #6 (2026-05-12), catalyst-scout output is NOT individua
 Dispatch `pm-supervisor` via Task tool. Pass as inputs:
 
 1. **Integrated CDD memo** (from §2.5)
-2. **counterfactual-veto top-3 retrieval result** (from §3.5)
-3. **mode classification** (from §3.6)
-4. **catalyst-scout output** (from §3.7; pass `null` only if catalyst-scout halted on polygon offline)
+2. **mode classification** (from §3.6)
+3. **catalyst-scout output** (from §3.7; pass `null` only if catalyst-scout halted on polygon offline)
 
 **New responsibility (post bear-case removal 2026-05-12):** pm-supervisor MUST run an adversarial stress-test pass on the integrated CDD memo before synthesis — invert each load-bearing claim (margin assumption, moat strength, capital allocation grade, terminal value) and ask "what evidence would falsify this, and is it surfaced?" Concerns surfaced by this pass feed into the LOW-conviction trigger logic the same way bear-case findings used to.
 
 pm-supervisor enforces the 4-tier sleeve caps (core ≤80%, thematic ≤25%, speculative ≤8%) as a **HARD GATE that runs BEFORE conviction rollup**. If a proposed ADD would breach a cap, the decision is downgraded to WATCH with a `sleeve_cap_violation` block citing the headroom remaining. Conviction rollup precedence (LOW > HIGH > MEDIUM per v3 §4.6 Phase 4 Q2), tier-aware overlays, mode-conditional sizing, and banned-outputs check all live inside the agent — see `.claude/agents/pm-supervisor.md`.
 
-pm-supervisor emits a single JSON envelope (`decision`, `conviction`, `size_band`, `tier`, `mode`, `sleeve_cap_check`, `counterfactual_top3_summary`, `veto_reason`, `conviction_rationale`, `catalyst_modifier_applied`, optional `sleeve_reference`, `evidence_index_refs`). It also persists the recommendation to `execution_recommendations` (and on REJECT, `counterfactual_ledger`).
+pm-supervisor emits a single JSON envelope (`decision`, `conviction`, `size_band`, `tier`, `mode`, `sleeve_cap_check`, `conviction_rationale`, `catalyst_modifier_applied`, optional `sleeve_reference`, `evidence_index_refs`). It also persists the recommendation to `execution_recommendations` and to `counterfactual_ledger` (universal write per Consensus Item #4).
 
-**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/pm-supervisor__<run_id>.json`. **Pass optional --case-ids and --catalyst-indicators via a context sidecar** written to `memos/envelopes/pm-supervisor__<run_id>.context.json` BEFORE dispatching the Agent() call:
+**Dispatch prompt MUST include `run_id: <uuid>`** so the PostToolUse hook can locate the envelope at `memos/envelopes/pm-supervisor__<run_id>.json`. **Pass optional --catalyst-indicators via a context sidecar** written to `memos/envelopes/pm-supervisor__<run_id>.context.json` BEFORE dispatching the Agent() call:
 
 ```json
 {
-  "case_ids": "<comma-separated case_ids from §3.5 retrieval>",
   "catalyst_indicators": "<path-to-§3.7-sentiment-indicators.json or null>",
   "resolve_evidence_db": true
 }
@@ -421,7 +404,7 @@ The hook reads the sidecar and forwards values to the validator. Absence is fine
 - HG-25 sizing math: conviction × mode → expected band mismatch; speculative-tier headroom clip; non-BUY zero-band invariant.
 - HG-26 evidence UUIDs: `evidence_index_refs` empty / non-UUID / placeholder / duplicate / (with `resolve_evidence_db=true` in the sidecar) unresolved against `evidence_index`.
 - HG-27 outside-view blend math: `corrected = intuitive*(1-r) + reference*r` consistency, including the AMZN raw==corrected signature.
-- HG-28 counterfactual top-3: canonical bucket schema, invented field rejection, optional case_id catalog membership.
+- HG-28 (RETIRED 2026-05-17 — counterfactual top-3 bucket schema check removed alongside §3.5 retrieval).
 - HG-24 sentiment_data_degraded: cross-check emitted flag vs the deterministic re-count from the catalyst-indicators path in the context sidecar.
 
 **Why before §4.5:** the LLM evaluator is expensive ($3-6) and probabilistic. The hook reserves it for the semantic checks (contamination, narrative coherence, evidence sufficiency).
