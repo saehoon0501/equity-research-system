@@ -27,10 +27,11 @@
 -- Reference: /review-me v7-final convergence 2026-05-18.
 -- Audit doc:  docs/superpowers/audits/2026-05-18-parameter-externalization-phase3-audit-checklist.md
 --
--- Affected tables (15 total, from Phase 0 inventory):
+-- Affected tables (14 total, from Phase 0 inventory + live-DB correction
+-- 2026-05-18 — audit_provenance dropped from scope because it stores
+-- parameters_version inside a `versions` JSONB blob, not as a column):
 --   APPEND-ONLY (UPDATE trigger skipped — existing no_modify guard covers):
 --     - regime_classification_history (mig 005; guard: regime_classification_no_modify)
---     - audit_provenance              (mig 008; guard: audit_provenance_no_modify)
 --     - execution_recommendations     (mig 008; guard: exec_recs_no_modify)
 --     - mode_classifications          (mig 008; guard: mode_classifications_no_modify)
 --     - daily_refresh_log             (mig 009; guard: daily_refresh_log_no_modify)
@@ -72,7 +73,7 @@
 BEGIN;
 
 -- Lock-hold convoy mitigation: this migration acquires ACCESS EXCLUSIVE on
--- 15 tables for the entire transaction. On a shared dev DB with active
+-- 14 tables for the entire transaction. On a shared dev DB with active
 -- worktrees, fail fast rather than convoy-blocking concurrent writers.
 -- Per /review-me iteration 1 SQL review (2026-05-18) defect #5.
 SET LOCAL lock_timeout = '5s';
@@ -110,7 +111,7 @@ END $$;
 -- parameters_version and leave run_parameters_snapshot_id NULL).
 --
 -- Table-agnostic via TG_ARGV[0] = name of timestamp column to consult for the
--- grandfathering check. 13 of 15 affected tables use 'created_at'; watchlist
+-- grandfathering check. 12 of 14 affected tables use 'created_at'; watchlist
 -- (mig 007) uses 'added_at'; mode_classifications (mig 008) uses
 -- 'classified_at'. Each CREATE TRIGGER below passes the right column name.
 -- Per /review-me iteration 2 SQL review (2026-05-18) — original implementation
@@ -267,20 +268,16 @@ CREATE TRIGGER watchlist_enforce_snapshot_update
 COMMENT ON COLUMN watchlist.parameters_version IS
     'DEPRECATED (mig 035): use run_parameters_snapshot_id instead. Existing FK to parameters(version_id) will be dropped at mig 036+ after backfill window.';
 
--- ===== audit_provenance (mig 008, append-only) =====
-ALTER TABLE audit_provenance
-    ADD COLUMN IF NOT EXISTS run_parameters_snapshot_id UUID REFERENCES run_parameters_snapshot(run_id);
-ALTER TABLE audit_provenance
-    DROP CONSTRAINT IF EXISTS audit_provenance_pv_xor_rpsi;
-ALTER TABLE audit_provenance
-    ADD CONSTRAINT audit_provenance_pv_xor_rpsi
-    CHECK (parameters_version IS NULL OR run_parameters_snapshot_id IS NULL);
-DROP TRIGGER IF EXISTS audit_provenance_enforce_snapshot_insert ON audit_provenance;
-CREATE TRIGGER audit_provenance_enforce_snapshot_insert
-    BEFORE INSERT ON audit_provenance
-    FOR EACH ROW EXECUTE FUNCTION enforce_run_parameters_snapshot_on_insert('created_at');
-COMMENT ON COLUMN audit_provenance.parameters_version IS
-    'DEPRECATED (mig 035): use run_parameters_snapshot_id instead.';
+-- NOTE: audit_provenance (mig 008) DOES NOT carry parameters_version as a
+-- column — instead it lives inside the `versions` JSONB blob per mig 008
+-- schema comment. The original Phase 0 audit (which grepped migration
+-- source files) matched the schema comment, not an actual column. Per
+-- live-DB verification 2026-05-18 during mig 035 application: there is
+-- no audit_provenance.parameters_version column, so no XOR CHECK or
+-- INSERT trigger is needed here. Calls querying audit_provenance for
+-- parameter lineage should extract `versions->>'parameters_version'`
+-- and follow that to run_parameters_snapshot_id on the recommendation
+-- row instead.
 
 -- ===== execution_recommendations (mig 008, append-only) =====
 ALTER TABLE execution_recommendations
@@ -454,31 +451,31 @@ COMMIT;
 -- VERIFY: run these after applying.
 -- =============================================================================
 
--- VERIFY: all 15 tables now have run_parameters_snapshot_id column.
+-- VERIFY: all 14 tables now have run_parameters_snapshot_id column.
 SELECT table_name, column_name, data_type
 FROM information_schema.columns
 WHERE column_name = 'run_parameters_snapshot_id'
 ORDER BY table_name;
--- Expected: 15 rows (regime_classification_history, scenarios, watchlist,
+-- Expected: 14 rows (regime_classification_history, scenarios, watchlist,
 -- audit_provenance, execution_recommendations, mode_classifications,
 -- daily_refresh_log, materiality_events, anchor_drift_checks,
 -- materiality_classifier_drift, counterfactual_retrievals, premortem,
 -- operator_overrides, calibration_test_results, anchor_drift_review_decisions).
 
--- VERIFY: all 15 tables have the XOR CHECK constraint.
+-- VERIFY: all 14 tables have the XOR CHECK constraint.
 SELECT conrelid::regclass AS table_name, conname,
        pg_get_constraintdef(oid) AS definition
 FROM pg_constraint
 WHERE conname LIKE '%_pv_xor_rpsi'
 ORDER BY conrelid::regclass::text;
--- Expected: 15 rows.
+-- Expected: 14 rows.
 
--- VERIFY: all 15 tables have BEFORE INSERT trigger.
+-- VERIFY: all 14 tables have BEFORE INSERT trigger.
 SELECT tgname AS trigger_name, c.relname AS table_name
 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
 WHERE tgname LIKE '%_enforce_snapshot_insert'
 ORDER BY c.relname;
--- Expected: 15 rows.
+-- Expected: 14 rows.
 
 -- VERIFY: 2 STATE tables (scenarios, watchlist) have BEFORE UPDATE trigger.
 SELECT tgname AS trigger_name, c.relname AS table_name
@@ -496,4 +493,4 @@ JOIN pg_class c ON c.oid = a.attrelid
 WHERE a.attname = 'parameters_version'
   AND d.description LIKE '%DEPRECATED (mig 035)%'
 ORDER BY c.relname;
--- Expected: at least 15 rows (one COMMENT per affected table).
+-- Expected: at least 14 rows (one COMMENT per affected table).

@@ -14,23 +14,24 @@ The mig 035 spec installs a BEFORE INSERT trigger on every table carrying `param
 
 ## Per-table audit
 
-| # | Table | Source mig | Append-only? | Guard trigger function | UPDATE trigger installed by mig 035? | Re-review trigger |
-|---|---|---|---|---|---|---|
-| 1 | `regime_classification_history` | 005 | YES | `regime_classification_no_modify` | NO (carved out) | If `regime_classification_no_modify` is dropped or loosened in a future mig → ADD `regime_classification_enforce_snapshot_update` |
-| 2 | `scenarios` | 006 | NO (STATE) | — | YES (`scenarios_enforce_snapshot_update`) | n/a (already installed) |
-| 3 | `watchlist` | 007 | NO (STATE) | — | YES (`watchlist_enforce_snapshot_update`) | n/a (already installed) |
-| 4 | `audit_provenance` | 008 | YES | `audit_provenance_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 5 | `execution_recommendations` | 008 | YES | `exec_recs_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 6 | `mode_classifications` | 008 | YES | `mode_classifications_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 7 | `daily_refresh_log` | 009 | YES | `daily_refresh_log_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 8 | `materiality_events` | 009 | YES | `materiality_events_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 9 | `anchor_drift_checks` | 010 | YES | `anchor_drift_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 10 | `materiality_classifier_drift` | 010 | YES | `materiality_drift_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 11 | `counterfactual_retrievals` | 011 | YES | `counterfactual_retrievals_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 12 | `premortem` | 012 | YES | `premortem_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 13 | `operator_overrides` | 013 | YES | `operator_overrides_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 14 | `calibration_test_results` | 015 | YES | `calibration_test_results_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
-| 15 | `anchor_drift_review_decisions` | 018 | YES | `anchor_drift_review_decisions_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+**Live-DB correction (2026-05-18 apply):** initial Phase 0 audit grepped migration source files and incorrectly listed `audit_provenance` (mig 008). Live-DB inspection during mig 035 application showed `audit_provenance.parameters_version` does NOT exist as a column — the grep matched a schema comment describing the `versions` JSONB blob shape, which embeds `parameters_version` as one of its keys. Audit_provenance is therefore dropped from mig 035 scope (14 tables, not 15). For parameter-lineage on audit_provenance rows, extract `versions->>'parameters_version'` and follow to the recommendation row's `run_parameters_snapshot_id`.
+
+| # | Table | Source mig | Append-only? | Timestamp col arg | Guard trigger function | UPDATE trigger installed by mig 035? | Re-review trigger |
+|---|---|---|---|---|---|---|---|
+| 1 | `regime_classification_history` | 005 | YES | `created_at` | `regime_classification_no_modify` | NO (carved out) | If `regime_classification_no_modify` is dropped or loosened in a future mig → ADD `regime_classification_enforce_snapshot_update` |
+| 2 | `scenarios` | 006 | NO (STATE) | `created_at` | — | YES (`scenarios_enforce_snapshot_update`) | n/a (already installed) |
+| 3 | `watchlist` | 007 | NO (STATE) | `added_at` | — | YES (`watchlist_enforce_snapshot_update`) | n/a (already installed) |
+| 4 | `execution_recommendations` | 008 | YES | `created_at` | `exec_recs_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 5 | `mode_classifications` | 008 | YES | `classified_at` | `mode_classifications_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 6 | `daily_refresh_log` | 009 | YES | `created_at` | `daily_refresh_log_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 7 | `materiality_events` | 009 | YES | `created_at` | `materiality_events_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 8 | `anchor_drift_checks` | 010 | YES | `created_at` | `anchor_drift_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 9 | `materiality_classifier_drift` | 010 | YES | `created_at` | `materiality_drift_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 10 | `counterfactual_retrievals` | 011 | YES | `created_at` | `counterfactual_retrievals_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 11 | `premortem` | 012 | YES | `created_at` | `premortem_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 12 | `operator_overrides` | 013 | YES | `created_at` | `operator_overrides_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 13 | `calibration_test_results` | 015 | YES | `created_at` | `calibration_test_results_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
+| 14 | `anchor_drift_review_decisions` | 018 | YES | `created_at` | `anchor_drift_review_decisions_no_modify` | NO (carved out) | If guard dropped → ADD UPDATE trigger |
 
 ## Verification queries
 
