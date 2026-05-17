@@ -38,6 +38,14 @@ const fmtPct = (n: number) => `${(n * 100).toFixed(2)}%`;
 const fmtInt = (n: number) => n.toLocaleString();
 const signed = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(2);
 
+// Treat 0 as "missing" in price/timestamp fall-through chains. Polygon
+// snapshots zero out day OHLC and `updated` on weekends/holidays, which
+// would otherwise short-circuit `??` and render $0.00.
+const nz = (n: number | null | undefined): number | undefined =>
+  typeof n === "number" && n !== 0 ? n : undefined;
+
+const POLL_MS = 15_000;
+
 // Determine the US/Eastern session for a given epoch-ms timestamp.
 // Pre 04:00–09:30 ET, Reg 09:30–16:00 ET, After 16:00–20:00 ET. Weekends → CLOSED.
 const sessionFor = (ms: number): Session => {
@@ -166,32 +174,62 @@ export const LivePanel = ({ ticker }: { ticker: string }) => {
     setErr(null);
     setQuote(null);
     setOptions(null);
-    Promise.all([
-      fetch(`/__api/polygon/quote?ticker=${ticker}`).then((r) => r.json()),
-      fetch(`/__api/polygon/options?ticker=${ticker}`).then((r) => r.json()),
-    ])
-      .then(([q, o]) => {
+
+    // `silent` = poll-driven refresh: don't flash the loading state or wipe
+    // the last-good payload; on error we keep the previous quote rather than
+    // showing a banner that flickers every 15s.
+    const load = async (silent: boolean) => {
+      try {
+        const [q, o] = await Promise.all([
+          fetch(`/__api/polygon/quote?ticker=${ticker}`).then((r) => r.json()),
+          fetch(`/__api/polygon/options?ticker=${ticker}`).then((r) => r.json()),
+        ]);
         if (cancelled) return;
         setQuote(q);
         setOptions(o);
-      })
-      .catch((e) => !cancelled && setErr(String(e)))
-      .finally(() => !cancelled && setLoading(false));
+        setErr(null);
+      } catch (e) {
+        if (cancelled || silent) return;
+        setErr(String(e));
+      } finally {
+        if (!cancelled && !silent) setLoading(false);
+      }
+    };
+
+    load(false);
+    const interval = setInterval(() => {
+      if (sessionFor(Date.now()) !== "CLOSED") load(true);
+    }, POLL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [ticker, refreshCount]);
 
   const view = useMemo(() => {
     const snap = quote?.snapshot?.ticker;
     if (!snap) return null;
-    const last = snap.lastTrade?.p ?? snap.min?.c ?? snap.day?.c ?? null;
-    const prev = snap.prevDay?.c ?? null;
-    const dayChange = snap.todaysChange ?? (last != null && prev != null ? last - prev : null);
+    const last =
+      nz(snap.lastTrade?.p) ??
+      nz(snap.min?.c) ??
+      nz(snap.day?.c) ??
+      nz(snap.prevDay?.c) ??
+      null;
+    const prev = nz(snap.prevDay?.c) ?? null;
+    // When `last` falls through to `prevDay.c` (weekend/holiday) the dayChange
+    // is logically zero — suppress it so the UI doesn't render "▲ $0.00 (0.00%)".
+    const isFlatFromPrev = last != null && prev != null && last === prev;
+    const dayChangeRaw = nz(snap.todaysChange) ?? (last != null && prev != null ? last - prev : null);
+    const dayChange = isFlatFromPrev ? null : dayChangeRaw;
     const dayChangePct =
-      snap.todaysChangePerc != null
-        ? snap.todaysChangePerc / 100
-        : (dayChange != null && prev ? dayChange / prev : null);
+      dayChange == null
+        ? null
+        : nz(snap.todaysChangePerc) != null
+          ? (snap.todaysChangePerc as number) / 100
+          : prev
+            ? dayChange / prev
+            : null;
 
     const updatedMs = snap.updated ? toMs(snap.updated) : Date.now();
     const lastTradeMs = snap.lastTrade?.t ? toMs(snap.lastTrade.t) : updatedMs;
