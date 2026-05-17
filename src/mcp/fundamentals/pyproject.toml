@@ -1,0 +1,13 @@
+[project]
+name = "equity-research-fundamentals-mcp"
+version = "0.1.0"
+description = "Fundamentals MCP server (STUB). Reserves the tool surface (get_fundamentals, get_delistings) pending Sharadar Core Fundamentals subscription per BUILD_LOG.md decision 2. See docs/tier4-deferred-work.md."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

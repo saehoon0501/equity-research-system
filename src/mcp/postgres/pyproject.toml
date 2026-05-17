@@ -1,0 +1,10 @@
+[project]
+name = "equity-research-postgres-mcp"
+version = "0.1.0"
+description = "Postgres MCP server for the equity research system. Tier 1 substrate; decision-6 example of code as a tool consumed by Claude Code."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "psycopg[binary]>=3.2.0",
+    "python-dotenv>=1.0.0",
+]

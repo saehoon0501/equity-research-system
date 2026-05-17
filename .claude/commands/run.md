@@ -1,326 +1,147 @@
 ---
-description: Master orchestrator that wraps all skills into one workflow. Auto-detects current phase (v0.1 build vs v0.5+ operations) and cadence (daily/weekly/monthly/quarterly), then routes to appropriate sub-commands in the right order. Use this as the single daily entry point to operate the system.
-argument-hint: [auto|daily|weekly|monthly|quarterly|build-day|status] (default: auto)
+description: Master orchestrator that wraps all skills into one workflow. Auto-detects current phase (v0.1 build vs v0.5+ operations) and routes to appropriate sub-commands. v0.1 surfaces step status; v0.5/v1.0 runs the daily/weekly/monthly/quarterly operational cadences. Use this as the single entry point to operate the system.
+argument-hint: [briefing|status|launch-gates|today] (default: briefing)
 ---
 
 # /run
 
-The single entry point to operate the equity research system. Wraps all 12 sub-commands and 3 subagents into a coherent workflow keyed to phase + calendar position.
+Single entry point to operate the equity-research system. Per v3 spec
+Section 5.4 — auto-detects current phase from Postgres state and renders
+the appropriate operator briefing. Render-only: surfaces work, never
+auto-executes downstream commands.
 
-The intent: the operator doesn't think "what command do I need today?" — they type `/run` and the orchestrator figures it out. Override with explicit modes when needed.
+## Arguments
 
-## Argument
+`[mode]` — optional. Default: `briefing`.
 
-`[mode]` — optional. Default: `auto`.
+- **`briefing`** (default) — full operator briefing: phase, gates or
+  cadence actions, pending decisions, alerts, system health.
+- **`status`** — phase status only (key/value lines, no markdown).
+- **`launch-gates`** — Section 7 launch-gate status grid (any phase).
+- **`today`** — today's recommended cadence actions (v0.1-active+).
 
-Modes:
-- **`auto`** (default) — detect phase + calendar position, run what's due
-- **`daily`** — force daily operating cadence
-- **`weekly`** — force daily + weekly cadence
-- **`monthly`** — force weekly + monthly cadence
-- **`quarterly`** — force monthly + quarterly cadence
-- **`build-day`** — v0.1 build phase: today's build work + BUILD_LOG entry
-- **`status`** — read-only status report; no execution
+## Procedure
 
-## Phase detection
+### 1. Pre-flight checks
 
-The orchestrator first reads `BUILD_LOG.md` to determine:
-- Current phase: v0.1 (paper-only) / v0.5 (limited real money) / v1.0 (full deployment)
-- Operating model: FTE / evenings (per Day-1 commitment)
-- Build clock start date and current week N
-- Whether all v0.1 phase gates have been passed (advancement to v0.5)
-- Whether all v0.5 phase gates have been passed (advancement to v1.0)
+- `mcp__postgres` connected (load-bearing — every phase predicate reads
+  Postgres).
+- Either `psycopg` (v3) or `psycopg2` available in the Python environment
+  running the CLI.
 
-If any of this is unclear or missing, `/run` halts and reports — the system needs the BUILD_LOG.md to be consistent before orchestration can proceed.
+### 2. Invoke the renderer
 
-## v0.1 phase: build-focused workflow
+The slash command shells out to the Python module via Bash:
 
-In v0.1, the system has no live positions and no daily operating cadence in the v0.5/v1.0 sense. The "operating" workflow is the build cadence.
-
-### `/run auto` in v0.1
-
-1. **Determine current build week** from BUILD_LOG.md and today's date.
-
-2. **Check what's due today** based on the FTE or evenings track week-by-week plan in `docs/implementation-sequencing.md`:
-   - Is today end-of-week? If yes: weekly BUILD_LOG entry due
-   - Is today a checkpoint date? If yes: checkpoint artifact due
-   - Is today within a buffer week? Different scope guidance
-
-3. **Surface today's planned scope** from the relevant week's section.
-
-4. **Check status of external dependencies** that should be in flight:
-   - Has Anthropic verification been captured?
-   - Have databases been provisioned?
-   - Is Sharadar application status known? (deferred per Day-1 decision)
-
-5. **Surface outstanding Day-1 items if not yet complete:**
-   - §9.3 commitment statement written?
-   - Anthropic verification artifacts captured?
-   - Database provisioning done?
-
-6. **If end-of-week**: invoke `/weekly-buildlog`.
-
-7. **If checkpoint date**: invoke `/checkpoint <N>` — but only if the planned scope items for the checkpoint are demonstrably complete. Otherwise surface "checkpoint due but scope not complete; run `/checkpoint <N>` after the gating work is done."
-
-8. **Output unified status:**
-
-```
-RUN — v0.1 BUILD PHASE — Week N (date X to date Y)
-Operating model: FTE / evenings
-
-PHASE PROGRESS:
-  Build clock: <today> (week <N> of 24-week kill threshold)
-  Margin to kill threshold: <weeks remaining>
-
-DAY-1 OUTSTANDING:
-  □ §9.3 commitment statement: [written / not written]
-  □ Anthropic verification: [captured / pending]
-  □ Database provisioning: [done / pending]
-  [If any pending: surface clearly as blocker for week 1 day 2+ work]
-
-THIS WEEK'S SCOPE (from implementation-sequencing.md §4 or §5):
-  - [item 1]: [status]
-  - [item 2]: [status]
-  ...
-
-TODAY'S RECOMMENDED FOCUS:
-  - [based on what's pending and what's earliest in the week]
-
-UPCOMING:
-  - End of week: <date> — weekly BUILD_LOG entry due (run /weekly-buildlog)
-  - Next checkpoint: Checkpoint <N> on <date>
-  - Buffer week: week <N> (<date>)
-
-PACE JUDGMENT (last BUILD_LOG entry): <on pace / behind / kill threshold becoming relevant>
-
-NEXT ACTIONS:
-  - [actionable items]
+```bash
+python -m src.orchestrator.cli              # full briefing
+python -m src.orchestrator.cli status       # phase only
+python -m src.orchestrator.cli launch-gates # Section 7 gate grid
+python -m src.orchestrator.cli today        # cadence actions today
 ```
 
-### `/run build-day` in v0.1
+The CLI prints terminal-rendered Markdown. Render the output as-is to
+the operator.
 
-Explicit "I'm working on the build today" mode:
+Exit code mapping:
+- `0` — success
+- `4` — bad arguments
+- `5` — environment / driver missing
 
-1. Surface today's scope from the relevant week's plan
-2. After operator does the work and reports completion: invoke `/weekly-buildlog` if end-of-week, or remind operator to run it then
-3. Do not run any operational commands (no /daily-monitor, /macro-cycle, etc.) — those don't apply in v0.1
+### 3. Phase detection (no operator config)
 
-### `/run status` in v0.1
+The orchestrator infers phase from observable Postgres state:
 
-Read-only:
-- Current week + days remaining in week
-- Margin to kill threshold
-- Outstanding Day-1 items
-- This week's planned scope
-- Pace judgment from last BUILD_LOG entry
+| Phase | Trigger |
+|---|---|
+| `v0.1-launch-readiness` | launch gates not all green / launch_readiness_log unsigned |
+| `v0.1-active` | launched; < 50 resolved predictions; < 540 days since launch |
+| `v0.5-active` | ≥ 50 resolved predictions OR ≥ 540 days since launch (Section 8.1) |
+| `v1.0-active` | parameters_active contains real_money_execution = LIVE |
 
-No execution, no prompts. Just report.
+Detection is defensive: missing tables (e.g., early v0.1 builds) default
+to `v0.1-launch-readiness` rather than raising.
 
-### Phase boundaries in v0.1
+### 4. Briefing structure
 
-- **End of week 4 (FTE) / week 7 (evenings):** prompt operator to run `/checkpoint 1` if not already done
-- **End of week 8 (FTE) / week 12 (evenings):** prompt for `/checkpoint 2`
-- **End of week 13 (FTE) / week 20 (evenings):** prompt for `/checkpoint 3`
-- **If `/checkpoint 3` advancement = APPROVED:** congratulate; switch phase to v0.5; future `/run auto` invocations use v0.5 workflow
-- **If `/checkpoint 3` advancement = BLOCKED:** surface the blockers; recovery mode
+**v0.1-launch-readiness** — surfaces the Section 7 gate grid:
+- Section 7.1: 11 hard gates (functional correctness)
+- Section 7.2: 6 calibration gates (≥80%/≥90% targets)
+- Section 7.3: 6 operator sign-off attestations
+- Section 7.3a: 10 walkthrough launch gates
 
-## v0.5 / v1.0 phase: operational workflow
+Each gate shows status (`PASS` / `FAIL` / `PENDING`) + evidence link
+(when recorded in `launch_readiness_log`). Operator records PASS via
+`/launch-confirm <gate_name>`.
 
-In v0.5/v1.0, the system has live positions with a real daily cadence.
+**v0.1-active+** — surfaces cadence actions:
+- **Daily** (post-market close + 30 min): `/daily-monitor`, `/alerts`,
+  `/system-health`
+- **Mode-tuned per ticker** (P5+P6+P7 emit cycle): Mode B weekly Mon
+  open / Mode B' every 3d / Mode C daily
+- **Quarterly** (Q-end): `/parameters-review`,
+  `/premortem --cadence-floor`, catalog hygiene 10% audit
+- **Annual** (Jan 1): full peak-pain catalog audit, materiality drift
+  gold-standard refresh
 
-### `/run auto` in v0.5/v1.0
+Plus, in every active phase:
+- Pending operator decisions (anchor-drift forced reviews,
+  counterfactual-veto overrides, mode reclassification proposals)
+- Unread alert summary (links to `/alerts`)
+- System health summary (links to `/system-health`)
 
-1. **Determine today's cadence triggers:**
-   - Daily: always (if positions exist)
-   - Weekly: today is end-of-week
-   - Monthly: today is last business day of month
-   - Quarterly: today is last business day of quarter
+### 5. Examples
 
-2. **Run cadence in order from highest to lowest:** quarterly first (if applicable), then monthly, weekly, daily. Some commands within each layer are idempotent — they'll detect prior runs from today and skip.
-
-3. **Daily layer (always runs in v0.5/v1.0):**
-
-   a. **Pre-flight check MCPs:**
-      - `mcp__postgres` connected (load-bearing)
-      - `mcp__edgar` connected
-      - `mcp__market_data` connected
-      - `mcp__brokerage` connected (v0.5+)
-      - If any required MCP missing: halt and report
-
-   b. **Run brokerage reconciliation:**
-      - Per v2-final §4.5, market close + 1 hour
-      - Compare system's expected positions vs brokerage actual
-      - If reconciliation fails: enter READ_ONLY_MODE, halt further execution, alert operator
-
-   c. **Resolution job:**
-      - Resolve any predictions due today per `prediction-resolution.md`
-      - Insert resolution records (append-only)
-      - Update calibration history
-
-   d. **Invoke `/daily-monitor`:**
-      - Tier 1 + Tier 2 classification of news/filings
-      - Surface materiality-3 escalations
-      - For each escalation: prompt operator to consider `/quarterly-reunderwrite <ticker>`
-
-   e. **Invoke `/exit-check <ticker>` for every held position:**
-      - Tax-aware exit signal evaluation
-      - Surface signals; do NOT auto-execute trades (per §4.5 hard human-approval gate)
-      - For positions at a loss with stable thesis: surface optional `/wash-sale-harvest <ticker>` invocation
-
-   f. **Invoke `/entry-check <ticker>` for any watchlist names with PMSupervisor approval but not currently held:**
-      - Entry quality scoring
-      - Surface STRONG_ENTRY signals; recommend operator run `/size <ticker>` next
-
-4. **Weekly layer (if today is end-of-week):**
-
-   a. **Invoke `/macro-cycle delta`** — refresh cycle/regime view
-      - If regime changed: highlight prominently; sizing modifier shifted
-
-   b. **Invoke `/weekly-buildlog`** — guided weekly entry per the BUILD_LOG.md schema
-
-5. **Monthly layer (if today is end-of-month):**
-
-   a. **Tax-loss harvest scan:**
-      - Identify all positions down >15% with stable thesis
-      - For each, surface `/wash-sale-harvest <ticker>` recommendation
-      - Operator decides whether to execute
-
-   b. **Counterfactual ledger quarterly summary** (if quarter-end approaching):
-      - Aggregate per-agent attribution
-      - Cumulative system performance vs counterfactual baselines
-
-6. **Quarterly layer (if today is end-of-quarter):**
-
-   a. **Invoke `/macro-cycle full`** — full structural cycle view rebuild
-
-   b. **Invoke `/quarterly-reunderwrite`** (no ticker arg = all held positions) — full re-underwrite per held name
-      - This is expensive ($1500-4750/quarter for 30-50 positions); flag the cost
-      - Run sequentially per position; surface results
-
-   c. **LearningLoop activation gate check** (v1.0 only):
-      - Per phasing-plan.md §4.5: ≥90 resolved predictions, ≥10 closed positions with postmortems, regime diversity, strategy quality bar
-      - If gates pass for first time: prompt operator to consider activation; activation is a one-way door
-
-7. **Compose unified output:**
-
+Full briefing (default):
 ```
-RUN — v0.5 OPERATING PHASE — <date>
-Cadence layers run: daily | weekly | monthly | quarterly
-
-DAILY:
-  Reconciliation: PASS | FAIL (READ_ONLY_MODE if FAIL)
-  Predictions resolved today: N
-  Daily monitor digest: [summary; full output below]
-    Materiality-3 escalations: [list or "none"]
-    Score distribution: [breakdown]
-  Exit signals: [list of held positions with non-NONE signals]
-  Entry signals: [list of watchlist names with STRONG_ENTRY]
-
-[If weekly: WEEKLY section with macro cycle update + buildlog confirmation]
-
-[If monthly: MONTHLY section with harvest candidates + counterfactual summary]
-
-[If quarterly: QUARTERLY section with re-underwrite results]
-
-ACTIONS REQUIRING OPERATOR DECISION:
-  1. [each requires explicit yes/no/defer]
-  2. ...
-
-COST TODAY: $X
-RUNNING MONTHLY COST: $Y vs $400 budget cap
-
-PACE / CALIBRATION:
-  Per-agent calibration trends: [brief summary]
-  Counterfactual ledger trend: [brief]
-  Drawdown from peak: <if relevant>
+/run
 ```
 
-### `/run daily` (force) in v0.5/v1.0
+Phase status only (machine-friendly key/value):
+```
+/run status
+```
 
-Skip phase detection; run only the daily layer above.
+Launch gate grid:
+```
+/run launch-gates
+```
 
-### `/run weekly` (force)
-
-Run daily + weekly layers.
-
-### `/run monthly` (force)
-
-Run weekly + monthly.
-
-### `/run quarterly` (force)
-
-Run all four layers.
-
-### `/run status` in v0.5/v1.0
-
-Read-only:
-- Current portfolio composition (from Postgres)
-- Drawdown from peak
-- Latest cycle score and aggressiveness modifier
-- Per-agent calibration trends
-- Counterfactual ledger summary
-- Outstanding actions awaiting operator decision
-
-## Idempotency
-
-The orchestrator detects prior runs from today and avoids duplicating work:
-
-- If `/daily-monitor` already ran successfully today: skip the run, surface yesterday's summary as "yesterday's last completed daily run"
-- If `/weekly-buildlog` was completed this week: skip the prompt, confirm done
-- If `/macro-cycle delta` ran this week: skip
-- If `/quarterly-reunderwrite` ran this quarter: skip (full re-underwrite is expensive)
-
-Force a re-run with explicit mode: `/run daily` re-runs daily even if already done.
-
-## Read-only mode (status)
-
-`/run status` is always safe — it reads but never executes. Use this when:
-- Returning to the project after time away (orient yourself)
-- Before a checkpoint to review what's accumulated
-- During a calibration safety alert (calibration degrading two consecutive months)
+Today's cadence actions (v0.1-active+):
+```
+/run today
+```
 
 ## What `/run` does NOT do
 
-- Does not auto-execute trades. Per v2-final §4.5 hard human-approval gate, all trade actions require explicit operator confirmation.
-- Does not auto-approve materiality-3 escalations as thesis re-underwrites. The operator decides whether to invoke `/quarterly-reunderwrite <ticker>` after seeing the escalation.
-- Does not auto-execute tax-loss harvests. Recommendations surfaced; operator executes manually with brokerage.
-- Does not auto-activate LearningLoop. Activation is a one-way door per phasing-plan.md §4.5; requires explicit operator confirmation when gates pass.
-- Does not skip the mechanical contamination check. Every memo produced through subagent invocation goes through the Evaluator hard gate; outputs that fail are returned for revision.
-- Does not bypass the hard concentration limits. Position sizing recommendations are bounded by single-name (8%), sector (35%), top-5 (50%) caps regardless of model output.
-
-## Cost guidance
-
-- v0.1 daily / build-day: ~$0 — mostly orchestration of operator-driven work
-- v0.5 daily: ~$3-5 (DailyMonitor Tier 1 + Tier 2 escalations + ExitSignals)
-- v0.5 weekly day: ~$8-12 (daily + macro-cycle delta + buildlog)
-- v0.5 monthly day: ~$12-20 (weekly + harvest scan)
-- v0.5 quarterly day: ~$200-500 (monthly + macro-cycle full + quarterly-reunderwrite for all held positions; this is the cost spike)
-
-The quarterly cost spike is the largest single contributor in v0.5/v1.0. Document in BUILD_LOG.md when invoked.
-
-## When to invoke
-
-**Daily** in v0.5/v1.0 — typical morning routine: `/run` (auto detects daily cadence)
-
-**Weekly day** (Friday for FTE; Sunday for evenings) — `/run` will detect end-of-week and add weekly layer
-
-**Monthly / quarterly** — `/run` detects calendar boundaries
-
-**v0.1 build days** — `/run build-day` to focus on build work + BUILD_LOG cadence
-
-**Returning after time away** — `/run status` first to orient; then `/run` to execute what's due
-
-**Phase transitions** (v0.1 → v0.5, v0.5 → v1.0) — `/run` detects phase change after `/checkpoint` advancement decision; switches to new phase's workflow on next invocation
-
-## Implementation note
-
-This command is the orchestrator; it doesn't replace any sub-command. Each sub-command remains independently invocable. `/run` is the wrapper that knows the canonical sequencing. If the operator wants to run individual commands directly (e.g., `/research-company NVDA` ad-hoc), that path remains.
-
-The orchestrator runs in main context (no subagent), so the operator sees its execution. Sub-commands invoked from within `/run` may spawn their own subagents (CompanyDeepDive, BearCase, Evaluator) — those isolations are preserved.
+- **No auto-execution.** Briefing surfaces work; the operator triggers
+  each downstream slash command (`/daily-monitor`, `/alerts`,
+  `/parameters-review`, etc.) manually.
+- **No trade execution.** Per v3 Section 1.4, the system does not
+  execute trades. v0.1 is research/recommendation only.
+- **No gate auto-marking.** Section 7 gates flip green only when the
+  operator runs `/launch-confirm <gate_name>` which writes to
+  `launch_readiness_log`.
+- **No state writes.** Read-only across all subcommands.
+- **No bypass of `/spec-approve` / `/launch-confirm`.** The orchestrator
+  reflects state but does not initiate spec or launch sign-off.
 
 ## Failure modes
 
-- **MCP missing** mid-execution: halt the current cadence layer; report which MCP; do NOT attempt subsequent commands that depend on it
-- **Sub-command error**: capture the error, log to BUILD_LOG.md, attempt to continue with remaining commands; surface failures in unified output
-- **Cost cap hit mid-execution**: per v2-final §4.7, hard cap at $600/mo halts non-essential agent runs. `/run` will surface "cost cap reached; deferring remaining non-essential commands; daily-monitor + exit-check still ran (essential)"
-- **Reconciliation failure**: enter READ_ONLY_MODE; do NOT proceed to any commands that could produce trade recommendations or modify state
+- **Postgres unreachable** — CLI exits with driver error; operator must
+  resolve before any phase decision can be made.
+- **Missing tables** (early v0.1) — phase falls back to
+  `v0.1-launch-readiness` with explanatory `reason`; gate grid renders
+  all PENDING.
+- **Bad subcommand** — exit code 4 with helpful message.
+
+## Reference
+
+- v3 spec: `docs/superpowers/specs/2026-04-29-empirical-foundation-design-v3.md`
+  Section 5.4 (slash commands), Section 7 (launch gates), Section 8.1
+  (v0.5+ activation triggers).
+- Module: `src/orchestrator/` (phase_detector, v01_launch_status,
+  v01_active_routing, operator_briefing, cli).
+- Companion commands: `/audit-trail`, `/alerts`, `/ack`, `/system-health`,
+  `/disposition`, `/research-company`, `/parameters-review`, `/premortem`,
+  `/spec-approve`, `/launch-confirm`.

@@ -1,0 +1,13 @@
+[project]
+name = "equity-research-contamination-check-mcp"
+version = "0.1.0"
+description = "Mechanical contamination check MCP server for the equity research system. Tier 2 hard-gate over the Evidence Index; decision-6 typed capability consumed by the Evaluator subagent."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "psycopg[binary]>=3.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

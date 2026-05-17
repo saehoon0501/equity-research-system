@@ -59,7 +59,7 @@ Skills and subagents in this repo assume specific MCP servers are connected to e
 
 **Why soft:** v0.1 backtests can use any historical price source; live position monitoring (v0.5+) needs reliable real-time data.
 
-**Provider selection:** deferred per BUILD_LOG.md Day 1. Commit by week 4 of build clock.
+**Provider selection:** deferred per BUILD_LOG.md Day 1. Commit before sample memo generation step (per the BUILD_LOG.md step list).
 
 ### 5. `mcp__fred` (Federal Reserve Economic Data)
 

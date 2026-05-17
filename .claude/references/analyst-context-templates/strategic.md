@@ -73,10 +73,9 @@ Sector-specific allocation patterns:
 Fresh from search-agent (≤90 days):
 {cdd-lead fills: management changes, strategic pivots, M&A announcements, regulatory actions, key competitor moves}
 
-## Section 7: Historical analogs to consult
+## Section 7: (RETIRED 2026-05-17 — historical-analog matching removed)
 
-When considering how the moat fades or compounds, look at these historical analogs:
-{cdd-lead fills 2-3 named analogs from peak_pain_archetypes catalog OR from research_essentials, e.g., "NVIDIA 2024 vs Cisco 1999/2000 (concentration of demand from a single use case); Microsoft 2024 vs IBM 1985 (platform incumbent in transition)"}
+The peak_pain_archetypes catalog has been retired. Analog-driven moat-fade pressure-testing is now handled by §4 pm-supervisor §2.6 stress-test using mechanism + falsifying-observable framing instead of named historical analogs.
 
 ## Section 8: Warm-start delta (skip on cold-start)
 
@@ -96,4 +95,3 @@ Memo MUST emit:
 - moat_sources (production / consumer / external) with fade pattern
 - powers_held (1-N of 7 with Benefit + Barrier each)
 - capital_allocation_grade (5-bucket; A-F or 1-5)
-- historical_analogs_cited (for use by bear-case as non-overlap input)

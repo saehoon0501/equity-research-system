@@ -1,0 +1,14 @@
+[project]
+name = "equity-research-market-data-mcp"
+version = "0.1.0"
+description = "Market data MCP server for the equity research system. Polygon (default) / yfinance (fallback) prices, news, quotes; decision-6 typed capability consumed by Claude Code subagents."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "yfinance>=0.2.40",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.27.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

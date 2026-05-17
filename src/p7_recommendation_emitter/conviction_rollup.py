@@ -2,12 +2,11 @@
 
 Per v3 spec lines 622-629::
 
-    HIGH = ≥4/5 debate AND 0 kills fired AND ≥2 SURVIVOR matches in top-3
+    HIGH = ≥4/5 debate AND 0 kills fired
            AND ≤1 of {1 anchor-drift channel triggered}
-    MEDIUM = ANY ONE of {3/5 debate, 1 kill fired, mixed counterfactual
-            (1-2 SURVIVOR + 1-2 NON-SURVIVOR), ≥2 anchor-drift channels triggered}
-    LOW = ANY ONE of {<3/5 debate, ≥2 kills fired, ≥2 NON-SURVIVOR matches
-          in top-3}
+    MEDIUM = ANY ONE of {3/5 debate, 1 kill fired,
+            ≥2 anchor-drift channels triggered}
+    LOW = ANY ONE of {<3/5 debate, ≥2 kills fired}
 
     `mode_certainty: rule_clean | llm_tiebreaker` is a separate annotation
     field, NOT a conviction-bucket determinant.
@@ -20,13 +19,6 @@ Returns ``ConvictionRollup`` matching the JSONB schema embedded in
 (Section 4.6 Q1).
 
 DECISION LOCKS (Section 4.6 Phase 4 Q2):
-  * HIGH gate counterfactual condition: ``survivor >= 2`` (monotonic).
-    A NON_SURVIVOR alongside ≥2 SURVIVORs does NOT block HIGH; the
-    mixed-counterfactual MEDIUM trigger fires only when SURVIVOR<2 (i.e.,
-    HIGH gate failed for an independent reason). See ``_is_high`` docstring.
-  * Counterfactual top-3 length: at most 3 cases. ``roll_up_conviction``
-    raises ``ValueError`` when given >3 to prevent the HIGH gate from
-    silently broadening to "≥2 SURVIVORs anywhere in the input".
   * LOW takes precedence over HIGH/MEDIUM when both could fire (LOW
     triggers are stronger negative-evidence than MEDIUM mixed-evidence).
 """
@@ -50,14 +42,11 @@ class ConvictionInputs:
     debate_add_count: number of styles voting ADD (out of 5).
     debate_total: total styles (default 5).
     kills_fired: count of kill-criterion firings.
-    counterfactual_top_3: list of 'SURVIVOR' / 'NON_SURVIVOR' tags
-        (length up to 3; missing entries treated as none).
     anchor_drift_channels_triggered: 0..3.
     """
 
     debate_add_count: int
     kills_fired: int
-    counterfactual_top_3: Sequence[str]  # 'SURVIVOR' or 'NON_SURVIVOR'
     anchor_drift_channels_triggered: int
     debate_total: int = 5
 
@@ -76,78 +65,43 @@ class ConvictionRollup:
 # ---------------------------------------------------------------------------
 
 
-def _count_survivor(top_3: Sequence[str]) -> tuple[int, int]:
-    survivor = sum(1 for x in top_3 if str(x).upper() == "SURVIVOR")
-    non_survivor = sum(1 for x in top_3 if str(x).upper() == "NON_SURVIVOR")
-    return survivor, non_survivor
-
-
 def _is_high(inp: ConvictionInputs) -> tuple[bool, list[str]]:
     """HIGH gate per Section 4.6 (Phase 4 Q2).
 
-    DECISION LOCK (Section 4.6 Phase 4 Q2): HIGH requires ``survivor >= 2``;
-    a NON_SURVIVOR appearing alongside ≥2 SURVIVORs does NOT block HIGH.
-
-    Rationale (monotonic interpretation): more SURVIVOR evidence is
-    strictly better, so adding a NON_SURVIVOR to the top-3 cannot
-    *remove* HIGH conviction once the SURVIVOR count is satisfied. The
-    "mixed counterfactual" MEDIUM trigger fires only when SURVIVOR
-    count is 1 (i.e., HIGH gate failed for an independent reason).
-
-    Alternative considered + rejected: ``survivor >= 2 and non_survivor == 0``
-    would make HIGH a stricter gate; this is the operator's standing
-    spec lock, NOT the implementation default. If the operator wants
-    that interpretation, change ``cf_ok`` below to that expression and
-    update the corresponding regression test in
-    ``tests/test_p7_recommendation_emitter.py``.
+    HIGH = debate_add_count >= 4 AND kills_fired == 0 AND
+           anchor_drift_channels_triggered <= 1.
     """
-    survivor, _ = _count_survivor(inp.counterfactual_top_3)
     debate_ok = inp.debate_add_count >= 4
     kills_ok = inp.kills_fired == 0
-    cf_ok = survivor >= 2
     drift_ok = inp.anchor_drift_channels_triggered <= 1
-    if debate_ok and kills_ok and cf_ok and drift_ok:
+    if debate_ok and kills_ok and drift_ok:
         return True, [
             f"debate_add_count={inp.debate_add_count} >= 4",
             "kills_fired == 0",
-            f"counterfactual SURVIVOR matches={survivor} >= 2",
             f"anchor_drift_channels_triggered={inp.anchor_drift_channels_triggered} <= 1",
         ]
     return False, []
 
 
 def _is_low(inp: ConvictionInputs) -> tuple[bool, list[str]]:
-    """LOW: ANY ONE of {<3/5 debate, ≥2 kills, ≥2 NON-SURVIVOR matches}."""
-    _, non_survivor = _count_survivor(inp.counterfactual_top_3)
+    """LOW: ANY ONE of {<3/5 debate, ≥2 kills}."""
     triggered: list[str] = []
     if inp.debate_add_count < 3:
         triggered.append(f"debate_add_count={inp.debate_add_count} < 3")
     if inp.kills_fired >= 2:
         triggered.append(f"kills_fired={inp.kills_fired} >= 2")
-    if non_survivor >= 2:
-        triggered.append(
-            f"counterfactual NON_SURVIVOR matches={non_survivor} >= 2"
-        )
     return (bool(triggered), triggered)
 
 
 def _is_medium(inp: ConvictionInputs) -> tuple[bool, list[str]]:
-    """MEDIUM: ANY ONE of {3/5 debate, 1 kill fired, mixed counterfactual,
+    """MEDIUM: ANY ONE of {3/5 debate, 1 kill fired,
     >=2 anchor-drift channels}.
-
-    Note: mixed counterfactual = 1-2 SURVIVOR + 1-2 NON_SURVIVOR (per spec).
     """
-    survivor, non_survivor = _count_survivor(inp.counterfactual_top_3)
     triggered: list[str] = []
     if inp.debate_add_count == 3:
         triggered.append("debate_add_count == 3")
     if inp.kills_fired == 1:
         triggered.append("kills_fired == 1")
-    if 1 <= survivor <= 2 and 1 <= non_survivor <= 2:
-        triggered.append(
-            f"mixed counterfactual ({survivor} SURVIVOR + "
-            f"{non_survivor} NON_SURVIVOR)"
-        )
     if inp.anchor_drift_channels_triggered >= 2:
         triggered.append(
             f"anchor_drift_channels_triggered="
@@ -189,29 +143,12 @@ def roll_up_conviction(inp: ConvictionInputs) -> ConvictionRollup:
         raise ValueError(
             "anchor_drift_channels_triggered must be in [0, 3]"
         )
-    # Per Section 4.6 Phase 4 Q2: HIGH gate is "≥2 SURVIVOR matches in
-    # top-3" — so the input list must contain at most 3 cases. If a
-    # caller passes 5 SURVIVOR matches, the HIGH gate would still fire
-    # but the rule is no longer "in top-3"; reject explicitly so the
-    # caller fixes the upstream selection rather than silently
-    # broadening the gate.
-    if len(inp.counterfactual_top_3) > 3:
-        raise ValueError(
-            f"counterfactual_top_3 must contain at most 3 cases "
-            f"(got {len(inp.counterfactual_top_3)}); the HIGH gate is "
-            "defined as '≥2 SURVIVOR matches in top-3' per Section 4.6 "
-            "Phase 4 Q2 — fix the upstream selection step before retry"
-        )
 
-    survivor, non_survivor = _count_survivor(inp.counterfactual_top_3)
     breakdown_base = {
         "debate_consensus": (
             f"{inp.debate_add_count}/{inp.debate_total} ADD"
         ),
         "kills_fired": f"{inp.kills_fired}",
-        "counterfactual_top_3": list(inp.counterfactual_top_3),
-        "counterfactual_survivor_count": survivor,
-        "counterfactual_non_survivor_count": non_survivor,
         "drift_channels": (
             f"{inp.anchor_drift_channels_triggered} of 3 triggered"
         ),
@@ -229,7 +166,7 @@ def roll_up_conviction(inp: ConvictionInputs) -> ConvictionRollup:
     if high_hit:
         return ConvictionRollup(
             bucket=CONVICTION_HIGH,
-            breakdown={**breakdown_base, "rolled_up_via": "HIGH gate (all 4 conditions)"},
+            breakdown={**breakdown_base, "rolled_up_via": "HIGH gate (all 3 conditions)"},
             triggered_rules=high_rules,
         )
 
@@ -285,7 +222,6 @@ _ADMISSIBLE_OVERRIDE_REASONS: frozenset[str] = frozenset({
     "price_discipline_overlay",
     "sleeve_cap_violation",
     "brief_quality_floor_breach",
-    "counterfactual_veto",
     "stress_test_catastrophic",
 })
 
@@ -357,7 +293,6 @@ def derive_summary_code(
     conviction: str,
     structural_theory_bullish: bool,
     sleeve_cap_status: str,
-    counterfactual_veto_fired: bool,
     held_position: bool,
 ) -> tuple[str, str]:
     """Mechanical summary_code derivation per pm-supervisor.md §8.
@@ -372,7 +307,6 @@ def derive_summary_code(
             bullish (base-case fair > spot AND Helmer gate cleared AND
             reinvestment_moat label ∈ {A, B} AND quality gate PASS).
         sleeve_cap_status: ``PASS`` / ``PASS_SOFT_WARNING`` / ``VIOLATION``.
-        counterfactual_veto_fired: True if ≥2 NON-SURVIVOR matches in top-3.
         held_position: True if ticker is currently HELD per watchlist.
 
     Returns:
@@ -391,12 +325,6 @@ def derive_summary_code(
             "must be PASS / PASS_SOFT_WARNING / VIOLATION"
         )
 
-    # Counterfactual veto dominates everything (§4 in pm-supervisor.md).
-    if counterfactual_veto_fired:
-        if held_position:
-            return SUMMARY_SELL, "counterfactual veto fired (≥2 NON-SURVIVOR) AND held → SELL"
-        return SUMMARY_HOLD, "counterfactual veto fired (≥2 NON-SURVIVOR) AND not-held → HOLD"
-
     # Sleeve cap violation blocks BUY (§3 hard gate).
     if sleeve_cap_status == "VIOLATION":
         return SUMMARY_HOLD, "sleeve_cap VIOLATION → forced HOLD (would-be BUY cap-blocked)"
@@ -411,9 +339,9 @@ def derive_summary_code(
     if conviction == CONVICTION_MEDIUM and structural_theory_bullish and cap_pass:
         return SUMMARY_BUY, "§5 MEDIUM conviction AND Structural Theory bullish AND sleeve_cap_check.status = PASS → BUY"
 
-    # LOW conviction with no veto → HOLD (defer to operator)
+    # LOW conviction → HOLD (defer to operator)
     if conviction == CONVICTION_LOW:
-        return SUMMARY_HOLD, "§5 LOW conviction (no NON-SURVIVOR veto) → HOLD pending operator review"
+        return SUMMARY_HOLD, "§5 LOW conviction → HOLD pending operator review"
 
     # Bearish structural theory at HIGH/MEDIUM → TRIM if held, else HOLD
     if not structural_theory_bullish:
@@ -524,15 +452,6 @@ def _validate_override_predicate(reason: str, fields: dict) -> tuple[bool, str]:
             )
         return True, "brief_quality_floor_breach predicate ok"
 
-    if reason == "counterfactual_veto":
-        non_survivor = fields.get("non_survivor_count")
-        if not isinstance(non_survivor, int) or non_survivor < 2:
-            return False, (
-                f"counterfactual_veto predicate: non_survivor_count "
-                f"({non_survivor}) must be int >= 2"
-            )
-        return True, "counterfactual_veto predicate ok"
-
     if reason == "stress_test_catastrophic":
         catastrophic = fields.get("catastrophic_failures")
         if not isinstance(catastrophic, int) or catastrophic < 1:
@@ -565,7 +484,6 @@ def _check_upstream_channel(
         "brief_quality_floor_breach": {
             "brief_below_quality_floor_at_§2_7", "essentials_unverified",
         },
-        "counterfactual_veto": {"counterfactual_top3_≥2_non_survivor"},
         "stress_test_catastrophic": {"stress_failed_catastrophic_at_§2_6"},
     }
     candidates = expected.get(reason, set())
@@ -606,7 +524,6 @@ def _cli(argv: list[str] | None = None) -> int:
       python -m src.p7_recommendation_emitter.conviction_rollup \\
         --debate-add-count 4 \\
         --kills-fired 0 \\
-        --counterfactual SURVIVOR SURVIVOR SURVIVOR \\
         --anchor-drift 0
     """
     import argparse
@@ -619,13 +536,6 @@ def _cli(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--debate-add-count", type=int, required=True)
     parser.add_argument("--kills-fired", type=int, required=True)
-    parser.add_argument(
-        "--counterfactual",
-        nargs="+",
-        required=True,
-        choices=("SURVIVOR", "NON_SURVIVOR", "DILUTED_SURVIVOR"),
-        help="top-3 archetype tags (max 3)",
-    )
     parser.add_argument("--anchor-drift", type=int, required=True)
     parser.add_argument("--debate-total", type=int, default=5)
     args = parser.parse_args(argv)
@@ -633,7 +543,6 @@ def _cli(argv: list[str] | None = None) -> int:
     inp = ConvictionInputs(
         debate_add_count=args.debate_add_count,
         kills_fired=args.kills_fired,
-        counterfactual_top_3=args.counterfactual,
         anchor_drift_channels_triggered=args.anchor_drift,
         debate_total=args.debate_total,
     )

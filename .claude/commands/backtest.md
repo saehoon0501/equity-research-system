@@ -23,7 +23,7 @@ Per v2-final §2.6 and `.claude/references/contamination-check.md`:
 
 ### 1. Pre-flight checks
 
-- BacktestingFramework deployed (v0.1 week 10-11 onward)
+- BacktestingFramework deployed (per the Backtesting + Sample Memo Generation step in BUILD_LOG.md)
 - `mcp__postgres` connected for memo + Evidence Index access
 - Sharadar fundamentals subscription active (`mcp__fundamentals`)
 - `mcp__market_data` for price history
@@ -169,7 +169,7 @@ These feed Checkpoint 3 evaluation and the v0.1 → v0.5 advancement decision.
 
 ### 11. Anti-patterns to avoid
 
-Per implementation-sequencing.md week 11 anti-pattern:
+Per `docs/implementation-sequencing.md` week-11 anti-pattern (substance retained from the spec doc; the dated label refers to the original plan, the substance is timeless):
 
 > Anti-pattern to avoid: Optimizing parameters this week to "improve the backtest output." Multiple-trials correction is in DSR for a reason; optimizing now and reporting the post-hoc DSR is the gameable version of the metric. Backtest with the parameters chosen in advance.
 

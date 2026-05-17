@@ -1,0 +1,182 @@
+[
+  {
+    "event_id": "992d37ca-a22e-4a91-b6df-24bd0fabc922",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.93
+  },
+  {
+    "event_id": "90b91082-857b-4a05-83a2-d83d5e567765",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.93
+  },
+  {
+    "event_id": "af83cd19-cae7-4d17-8f10-40bff921b8eb",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.92
+  },
+  {
+    "event_id": "a3deb2d0-60e3-4d92-85eb-a247fc4ab912",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.7
+  },
+  {
+    "event_id": "765a6598-1d2c-4a81-8a39-9fcda5740b6f",
+    "operator_classification": 2,
+    "system_classification": 2,
+    "system_confidence": 0.62
+  },
+  {
+    "event_id": "29974a53-73d9-4395-80b0-537a5f8e0c44",
+    "operator_classification": 1,
+    "system_classification": 2,
+    "system_confidence": 0.58
+  },
+  {
+    "event_id": "0a69b93b-4dfa-4715-8a2d-5526cdb830ba",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.92
+  },
+  {
+    "event_id": "ced9c1a9-653b-401f-a8c5-6257a148553b",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.9
+  },
+  {
+    "event_id": "51c2fcc4-01fc-47f5-9f77-caed6ed2dc4f",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.88
+  },
+  {
+    "event_id": "22602f0f-4f5e-478f-b912-a012b03cdfe7",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.93
+  },
+  {
+    "event_id": "5da2a207-00ae-42f8-9768-ee04d5814836",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.82
+  },
+  {
+    "event_id": "7abbbfe6-091f-439a-8c22-85b7c8e9d8af",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.78
+  },
+  {
+    "event_id": "ea7b5bce-77cc-4ba0-b8fb-a8a94adadab2",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.88
+  },
+  {
+    "event_id": "8344c423-e892-4659-9f3c-a90b2fc08249",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.92
+  },
+  {
+    "event_id": "9e62b79f-a5ac-4feb-93ad-3889f7a906b2",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.95
+  },
+  {
+    "event_id": "d8084b3b-9217-4962-9e39-f7666c7ee2ab",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.88
+  },
+  {
+    "event_id": "6c34cb13-2609-48c7-9184-058653528d6f",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.78
+  },
+  {
+    "event_id": "290f1bef-b051-4580-a6ee-0d064c08705e",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.85
+  },
+  {
+    "event_id": "a2e44b83-e486-4c2f-92d5-427fa26a1a4c",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.92
+  },
+  {
+    "event_id": "d9fb516e-8a5c-47d1-ba57-f7fc705bddac",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.85
+  },
+  {
+    "event_id": "f50eb90f-b571-431b-a11e-1d105423b254",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.78
+  },
+  {
+    "event_id": "18525b11-f02e-42f3-aeaa-56990f0e7633",
+    "operator_classification": 1,
+    "system_classification": 2,
+    "system_confidence": 0.55
+  },
+  {
+    "event_id": "f5527eb5-2c65-48d0-b313-dc430b67bf0f",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.85
+  },
+  {
+    "event_id": "9f1b6d79-d59d-4538-911a-aa4e96d72c4e",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.7
+  },
+  {
+    "event_id": "802f68ec-f459-422a-9db9-cb33b866bb1e",
+    "operator_classification": 2,
+    "system_classification": 2,
+    "system_confidence": 0.78
+  },
+  {
+    "event_id": "86aa32f8-2990-445f-92b8-1da6fae67419",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.95
+  },
+  {
+    "event_id": "428bb03e-0170-4349-906d-c8a9b213f7f9",
+    "operator_classification": 2,
+    "system_classification": 2,
+    "system_confidence": 0.6
+  },
+  {
+    "event_id": "3d4583cd-328d-4505-a8a5-469903a548ab",
+    "operator_classification": 2,
+    "system_classification": 2,
+    "system_confidence": 0.6
+  },
+  {
+    "event_id": "81da7306-762c-4549-913e-340de0396589",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.9
+  },
+  {
+    "event_id": "0a8b4951-16c3-44ca-a306-046f4b9dc7f9",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.85
+  }
+]

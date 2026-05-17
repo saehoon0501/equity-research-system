@@ -1,0 +1,18 @@
+[
+  {
+    "_comment": "Template for materiality kappa calibration gate (Gate 22). Operator authors 30 entries. Each event_id is a UUID (random); operator_classification is YOUR ground-truth label (1=M-1 / 2=M-2 / 3=M-3); system_classification is what the LLM judge produced (run l4_daily_monitor.materiality_classifier on the same raw_text to populate); system_confidence is the judge's reported confidence at the time. Replace this comment block with the first real event.",
+    "_spec": "src/l4_daily_monitor/drift_detector.py::GoldStandardEvent",
+    "_threshold": "Cohen's kappa >= 0.61 (Section 7.2 launch gate)",
+    "_run_command": "python -m src.l4_daily_monitor.cli drift-check --period 2026-Q2 --gold-standard-json .claude/references/gold_standard_template.json",
+    "_minimum_count": 30
+  },
+  {
+    "event_id": "00000000-0000-0000-0000-000000000001",
+    "ticker_for_context": "AAPL",
+    "event_date_for_context": "2024-01-25",
+    "raw_text_for_context": "Apple announces $110B share buyback authorization, biggest in history",
+    "operator_classification": 1,
+    "system_classification": 1,
+    "system_confidence": 0.85
+  }
+]

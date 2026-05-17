@@ -5,7 +5,7 @@ argument-hint: <ticker>
 
 # /entry-check
 
-**Status: v0.5+ scaffold.** This command becomes fully functional once the quant data layer (PriceFeatureService) is operational. v0.1 phase has limited data infrastructure; this command's full implementation lands in week 6+ of the build per implementation-sequencing.md.
+**Status: v0.5+ scaffold.** This command becomes fully functional once the quant data layer (PriceFeatureService) is operational — that lands in the Agent Harness step boundary of the v0.1 build per `BUILD_LOG.md`. v0.1 phase before that point has limited data infrastructure for this command.
 
 ## Argument
 
@@ -108,7 +108,7 @@ This command never overrides PMSupervisor approval. If PMSupervisor said REJECT 
 
 ## v0.1 limitation
 
-In v0.1, the watchlist is empty (no real positions held). This command can be run against historical date-anchored backtesting once PriceFeatureService is built (week 2+) but isn't used in critical path until v0.5.
+In v0.1, the watchlist is empty (no real positions held). This command can be run against historical date-anchored backtesting once PriceFeatureService is built (per the Data Layer step boundary in BUILD_LOG.md) but isn't used in critical path until v0.5.
 
 ## Cost estimate
 

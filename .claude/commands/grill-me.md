@@ -53,14 +53,16 @@ Tighter than a full summary. Surface only the **load-bearing claims** for this s
 
 Keep it dense. The operator already knows the topic exists; they need the structure surfaced.
 
-### Step 3 — 3-5 consensus questions
+### Step 3 — pose ONE consensus question
 
-Sharp, with multiple-choice or yes/no when possible. Every question must:
+Ask exactly one question per round. Sharp, with multiple-choice or yes/no when possible. The question must:
 
 - **Define every term it uses inline.** No assumed jargon. If the operator doesn't have a finance/CS/domain background, explain in plain language with engineering analogies. Example: "Brier score (a measure of how well-calibrated probability forecasts are — lower = better; like RMSE on probabilistic predictions)."
 - **State why this matters** (1 line above the question — what cascades from the answer).
 - **Offer specific options** when the choice space is bounded. Don't ask "what do you think about X?" — ask "(a) X with consequence Y / (b) Z with consequence W / (c) other (specify)."
-- **Bound to 3-5 questions per round**. More than 5 and the operator can't track them. Fewer than 3 and you're being shallow.
+- **Be self-contained.** Do not preview Q2, Q3, Q4. The operator handles one decision at a time; previewing creates cognitive load that defeats the protocol.
+
+After posing Q1, plan Q2 internally but do NOT show it. Wait for the operator's answer to Q1 first. After Step 5 synthesis and any Step 6 push-back is resolved on Q1, THEN pose Q2 in a new round.
 
 ### Step 4 — Open floor
 
@@ -176,9 +178,15 @@ If the operator coins a term, the system adopts it. If the operator corrects the
 
 Each round should be readable in 1-2 minutes. Long synthesis blocks lose the operator. If you must produce a long output (e.g., a refined design table), structure it so the operator can scan headers and skip details.
 
-### One question at a time, with exceptions
+### One question at a time — strict
 
-Default: one question at a time. When questions are tightly coupled (e.g., "Q2: what does success mean?" + "Q3: what would tell you the system is failing?"), it's OK to ask 2-3 in one round if the operator can answer them in batch. Never more than 5.
+Ask ONE consensus question per round. Wait for the operator's answer. Synthesize it (Step 5). Push back if warranted (Step 6). THEN pose the next question.
+
+The prior version of this rule allowed batching "tightly coupled" questions, which created drift toward 3-5-question rounds the operator couldn't track. Empirically (session 2026-05-06), batching produced operator pushback "one question at a time."
+
+The only legal multi-question exception: a single conceptual question with explicit (a)/(b)/(c) sub-options that can be answered as a single multiple-choice answer. Two distinct decisions stacked = two rounds, even if they feel related.
+
+If the operator volunteers answers to questions you haven't asked yet, accept those answers but DO NOT batch ahead — still pose the next question one at a time.
 
 ### No silent assumptions
 

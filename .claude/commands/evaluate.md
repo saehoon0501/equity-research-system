@@ -28,7 +28,7 @@ If Postgres ID: query Postgres for the output content.
 
 Determine output type from structure:
 - CompanyDeepDive memo: has thesis_pillars, recommended_action, etc.
-- BearCase: has bear_thesis, attacks_per_pillar, unrebutted_concerns
+- PMSupervisor envelope: has decision, conviction, sleeve_cap_check, adversarial_stress_test (the latter is the post-2026-05-12 replacement for the retired BearCase output)
 - DailyMonitor digest: has materiality_scores, escalations
 - MacroCycle: has cycle_score, regime_classification
 - Other: prompt operator for clarification
@@ -50,7 +50,7 @@ HARD GATES:
   HG-1 Mechanical contamination check: PASS / FAIL
     [If FAIL: list of evidence_id failures and their specific issues]
   HG-2 Falsifiable predictions (CompanyDeepDive only): PASS / FAIL / N/A
-  HG-3 Unrebutted concerns (BearCase only): PASS / FAIL / N/A
+  HG-3 Adversarial stress-test (PMSupervisor only; replaces former BearCase HG-3): PASS / FAIL / N/A
   HG-4 Every claim has Evidence Index reference: PASS / FAIL
   HG-5 Tax cost analysis (ExitSignal only): PASS / FAIL / N/A
   HG-6 Justifications (DailyMonitor only): PASS / FAIL / N/A
