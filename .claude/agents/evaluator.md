@@ -157,6 +157,8 @@ Failure mode: quality_gate fields missing OR failed gate without REJECT disposit
 
 This gate enforced non-overlap between bear-case and strategic-analyst historical analogs. With the bear-case subagent removed, the strategic-analyst now carries both lenses (moat-fade as primary, price-collapse as secondary commentary — see `strategic-analyst.md` §4 analog discipline). The Evaluator no longer enforces set-intersection non-overlap; instead, HG-3 (pm-supervisor adversarial stress-test pass present and complete) is the replacement check.
 
+Further deprecated 2026-05-17 — strategic-analyst no longer emits analogs; this gate is permanently retired. See docs/superpowers/plans/2026-05-17-remove-peak-pain-archetypes-and-counterfactual-veto.md.
+
 ### HG-13: Brief delta-detection quality (soft, not hard gate)
 
 For warm-start runs (where `cdd-lead.brief_metadata.cold_start = false`), the cdd-lead integrated memo's `brief_metadata.delta_summary` must be non-NULL and surface at least one material change (or explicitly state "no material change since prior brief at <date>").
@@ -415,7 +417,7 @@ Hard-blocks any `analyst_briefs` row where `content` is a pointer summary rather
 
 ### HG-22: Conviction-rollup determinism — silent override forbidden (Bug 11 fix — 2026-05-16)
 
-Hard-blocks any pm-supervisor envelope where `conviction_emitted` differs from `conviction_from_rule` without an explicit, populated `conviction_override` block. The historical case that surfaced this bug: MSFT 2026-05-15 — pm-supervisor emitted `MEDIUM` while all four HIGH-gate criteria mechanically passed (bear_proxy=0.4, stress_failed=0, SURVIVOR=3, anchor_drift=0). The downshift lived only in the phrase *"honest synthesizer judgment is MEDIUM"* and was not auditable. HG-22 forces every disagreement between the deterministic rule and the emitted bucket through a structured override block.
+Hard-blocks any pm-supervisor envelope where `conviction_emitted` differs from `conviction_from_rule` without an explicit, populated `conviction_override` block. The historical case that surfaced this bug: MSFT 2026-05-15 — pm-supervisor emitted `MEDIUM` while all four HIGH-gate criteria mechanically passed (bear_proxy=0.4, stress_failed=0, anchor_drift=0). The downshift lived only in the phrase *"honest synthesizer judgment is MEDIUM"* and was not auditable. HG-22 forces every disagreement between the deterministic rule and the emitted bucket through a structured override block.
 
 **Required envelope fields** (pm-supervisor.md §5 enforces production; HG-22 enforces validation):
 
@@ -436,7 +438,7 @@ Hard-blocks any pm-supervisor envelope where `conviction_emitted` differs from `
 
 4. **Check 3 — override justification:** if `conviction_override == true`, then `conviction_override_reason` must be ≥50 chars AND must reference at least one of: a `stress_open` claim by name, a catastrophic-narrative concern, an Overlay-1/2/3/4/5 condition, or a tier-specific overlay. Below 50 chars or generic ("judgment", "honest read", "balance of evidence" without specific claim) → REJECT with "HG-22 Check 3: override reason too vague or below 50-char floor. Cite the specific load-bearing claim that the integer rule inputs failed to capture."
 
-5. **Check 4 — rule re-verification (optional, audit-only):** if the upstream §2.6 + §4 outputs are available in the envelope's `adversarial_stress_test` + `counterfactual_top3_summary` blocks, the evaluator MAY re-run `python3 -m src.p7_recommendation_emitter.conviction_rollup` with the same inputs and confirm the returned `bucket` matches `conviction_from_rule`. Mismatch → soft signal logged to calibration history (not a hard reject — pm-supervisor may have applied the §4 DILUTED-SURVIVOR forcing rule or §7 thematic reverse-DCF flag as post-processing, which is permitted; the audit trail just confirms the upstream call happened).
+5. **Check 4 — rule re-verification (optional, audit-only):** if the upstream §2.6 output is available in the envelope's `adversarial_stress_test` block, the evaluator MAY re-run `python3 -m src.p7_recommendation_emitter.conviction_rollup` with the same inputs and confirm the returned `bucket` matches `conviction_from_rule`. Mismatch → soft signal logged to calibration history.
 
 **Why HG-22 is upstream of HG-3:** HG-3 checks that the adversarial stress-test pass is *present and complete*. HG-22 checks that the §5 rollup *consumed the stress-test output correctly*. The two are independent: a complete stress-test can still feed a silently-overridden rollup.
 
@@ -460,7 +462,7 @@ Hard-blocks any pm-supervisor envelope that omits spec-mandated top-level blocks
 
    The module returns JSON: `{valid, critical_missing, missing_top_level, missing_subkeys, invalid_report_rows, notes}` and exits 0 (valid) / 1 (invalid) / 2 (unparseable). Use stdin (`--envelope -`) for piped invocation.
 
-3. **Required top-level keys** (per `pm-supervisor.md` §8 schema lines 342-510): `ticker, as_of, tier, mode, tl_dr, report, audit_trail_hint, summary_code, conviction, size_band_if_long, sleeve_cap_check, counterfactual_top3_summary, adversarial_stress_test, catalyst_modifier_applied, veto_reason, conviction_rationale, evidence_index_refs, rule_engine_version, conviction_from_rule, conviction_emitted, conviction_override`. Nullable: `veto_reason`, `sleeve_reference` (key must exist; `null` is a valid value).
+3. **Required top-level keys** (per `pm-supervisor.md` §8 schema): `ticker, as_of, tier, mode, tl_dr, report, audit_trail_hint, summary_code, conviction, size_band_if_long, sleeve_cap_check, adversarial_stress_test, catalyst_modifier_applied, conviction_rationale, evidence_index_refs, rule_engine_version, conviction_from_rule, conviction_emitted, conviction_override`. Nullable: `sleeve_reference` (key must exist; `null` is a valid value). (counterfactual_top3_summary + veto_reason removed 2026-05-17 per peak_pain_archetypes removal.)
 
 4. **Required sub-keys for the three critical blocks** (Bug 13 surface):
    - `tl_dr`: `decision_headline, scenarios_quant, scenarios_strategic, operating_ranges, top_catalysts_90d, reevaluation_triggers`
@@ -554,29 +556,9 @@ The fix surface: `/research-company.md` §3.6 now explicitly pins the window to 
 
 **Failure mode:** alternative-window prose OR band mismatch → REJECT. The fix is at /research-company.md §3.6 + the LLM analyst's prose discipline; HG-26 is the runtime gate.
 
-### HG-27: Counterfactual top-3 deterministic ordering (drift-fix Phase 1 Step 2 — 2026-05-17)
+### HG-27: RETIRED 2026-05-17 (deprecated same day added)
 
-Hard-blocks any /research-company run where the counterfactual top-3 retrieval is non-deterministic on tied similarity scores. (Root cause: SQL had no `ORDER BY` + Python sort had no `case_id` tiebreaker → tied similarity scores resolved to Postgres physical row order; see BUILD_LOG.md.)
-
-The fix surface: `retrieval.py` now has `ORDER BY case_id ASC` in the SQL AND a secondary `case_id ASC` tiebreaker in the Python sort. HG-27 verifies the resulting top-3 is reproducible across re-runs.
-
-**Procedure:**
-
-1. Extract the counterfactual top-3 from the run's §3.5 retrieval artifact (`veto_retrieval.json` or equivalent). The artifact must include `case_id` for each match (not just ticker + year).
-
-2. **Check 1 — re-run determinism:** invoke `src/counterfactual_veto/retrieval.py` again with the same candidate inputs via:
-
-   ```bash
-   python3 -m src.evaluator_gates.counterfactual_redeterminism --inputs-json <path>
-   ```
-
-   The module re-runs `retrieve_top_3()` on the live catalog with identical candidate features and returns JSON: `{top_3_first_run: [case_ids], top_3_second_run: [case_ids], match: bool}`. If `match == false` → REJECT with: `"HG-27 Check 1: counterfactual top-3 not reproducible across re-run. First: <list>; Second: <list>. The retrieval.py sort must be deterministic on tied similarity (case_id tiebreaker — see 2026-05-17 fix)."`
-
-3. **Check 2 — case_id present in artifact:** the §3.5 artifact MUST include `case_id` for each match. Missing → REJECT with: `"HG-27 Check 2: §3.5 artifact missing case_id for match <i>. case_id is the canonical tiebreaker key; opaque ticker-year references prevent determinism audit."`
-
-**Historical case:** see BUILD_LOG.md.
-
-**Failure mode:** non-deterministic top-3 across re-runs OR missing case_id in artifact → REJECT. The fix is in `retrieval.py` (SQL ORDER BY + Python sort key); HG-27 is the runtime gate that catches regressions.
+Added 2026-05-17 to enforce determinism on counterfactual top-3 retrieval. The counterfactual-veto framework is being removed in the same window per docs/superpowers/plans/2026-05-17-remove-peak-pain-archetypes-and-counterfactual-veto.md. HG-27 is retired without firing on a production envelope. The retrieval.py determinism fix (ORDER BY case_id ASC) remains a correct fix to a real bug but no longer needs hard-gate enforcement.
 
 ### HG-28: §2.6 canonical claim list keyset enforcement (drift-fix Phase 2 Step 4b — 2026-05-17)
 
@@ -606,7 +588,7 @@ The fix surface: pm-supervisor §8 now shells out to `derive_summary_code()` rat
 
 **Procedure:**
 
-1. Extract `summary_code`, `summary_code_schema_version`, `summary_code_derivation_rule`, `conviction`, `structural_theory_bullish` (derived from report row content), `sleeve_cap_check.status`, `counterfactual_veto_fired` (derived from `counterfactual_top3_summary.non_survivor >= 2`), `held_position` from envelope.
+1. Extract `summary_code`, `summary_code_schema_version`, `summary_code_derivation_rule`, `conviction`, `structural_theory_bullish` (derived from report row content), `sleeve_cap_check.status`, `held_position` from envelope. (`counterfactual_veto_fired` input removed 2026-05-17 per peak_pain_archetypes removal — derive_summary_code() signature is now 4 inputs; Phase 2 Task 2.2 updates the function in src/p7_recommendation_emitter/conviction_rollup.py to match.)
 
 2. **Check 1 — grandfathering:** if `created_at < 2026-05-17T00:00:00Z`, mark `HG-29 N/A-PRE-CUTOVER` and skip.
 
@@ -620,13 +602,13 @@ The fix surface: pm-supervisor §8 now shells out to `derive_summary_code()` rat
    import json
    code, rule = derive_summary_code(
        '<conviction>', <structural_theory_bullish>, '<sleeve_cap_status>',
-       <counterfactual_veto_fired>, <held_position>
+       <held_position>
    )
    print(json.dumps({'code': code, 'rule': rule}))
    "
    ```
 
-   Emitted `summary_code` MUST equal re-derived `code`. Mismatch → REJECT with: `"HG-29 Check 3: emitted summary_code <X> != derive_summary_code() recomputed <Y> on inputs (conviction=<>, structural_bullish=<>, sleeve=<>, veto=<>, held=<>). pm-supervisor must transcribe the function's verdict verbatim."`
+   Emitted `summary_code` MUST equal re-derived `code`. Mismatch → REJECT with: `"HG-29 Check 3: emitted summary_code <X> != derive_summary_code() recomputed <Y> on inputs (conviction=<>, structural_bullish=<>, sleeve=<>, held=<>). pm-supervisor must transcribe the function's verdict verbatim."`
 
 **Historical case:** see BUILD_LOG.md.
 
@@ -727,7 +709,7 @@ Highest-numbered HG as of 2026-05-17: **HG-32**. The full enumeration list (upda
 - HG-24 (catalyst-scout sentiment_data_degraded deterministic re-check — Bug 14; rejects when emitted boolean disagrees with `src.evaluator_gates.sentiment_degradation` recount or when field missing; 3 checks: field-present / agreement-with-recount / pm-supervisor catalyst_modifier_bound state consistency)
 - HG-25 (warm-start prior-brief co-emission — drift-fix Phase 1 Step 1; rejects when prior_quant_id and prior_strat_id resolve to different `run_id`; 3 checks: prior_run_id present on warm-start / co-emission of both prior IDs / partial-prior flag consistency)
 - HG-26 (Mode classification vol-window pinned to 252d — drift-fix Phase 1 Step 3; rejects Mode rationale citing 30d/60d/63d/90d windows or band mismatch; 3 checks: canonical-window cite / banned-window regex / adapter-output band consistency)
-- HG-27 (counterfactual top-3 deterministic ordering — drift-fix Phase 1 Step 2; rejects when retrieval is non-reproducible across re-runs; 2 checks: re-run determinism via `src.evaluator_gates.counterfactual_redeterminism` / case_id present in §3.5 artifact)
+- HG-27 (RETIRED 2026-05-17 — counterfactual-veto framework removed)
 - HG-28 (§2.6 canonical claim list keyset enforcement — drift-fix Phase 2 Step 4b; rejects envelopes where canonical_claims_evaluated keyset diverges from the canonical 10-claim list for the tier; 4 checks: grandfather pre-cutover / version stamp / keyset equality / verdict-count integrity)
 - HG-29 (summary_code derivation determinism — drift-fix Phase 2 Step 5a; rejects envelopes where emitted summary_code disagrees with `derive_summary_code()` recomputation; 3 checks: grandfather pre-cutover / schema version stamp / re-derivation match)
 - HG-30 (sleeve_cap_check determinism — drift-fix Phase 2 Step 5b; rejects envelopes where emitted sleeve_cap_check disagrees with `check_sleeve_cap()` recomputation; 2 checks: grandfather pre-cutover / re-derivation match)
