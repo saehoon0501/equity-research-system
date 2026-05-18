@@ -35,19 +35,33 @@ The mig 035 spec installs a BEFORE INSERT trigger on every table carrying `param
 
 ## Verification queries
 
-After applying mig 035 to dev DB, run the VERIFY block at the bottom of the migration file. Expected counts:
+After applying mig 035 to dev DB, run the VERIFY block at the bottom of the migration file. Expected counts (applied to live DB 2026-05-18, matched):
 
-- 15 rows with `run_parameters_snapshot_id` column added
-- 15 `_pv_xor_rpsi` CHECK constraints
-- 15 BEFORE INSERT triggers
+- 14 rows with `run_parameters_snapshot_id` column added
+- 14 `_pv_xor_rpsi` CHECK constraints
+- 14 BEFORE INSERT triggers
 - 2 BEFORE UPDATE triggers (scenarios, watchlist)
-- 15+ COMMENT entries flagging legacy `parameters_version` deprecation
+- 14 COMMENT entries flagging legacy `parameters_version` deprecation
+
+## Backfill convention (per /review-me post-apply iteration 1, defect #9)
+
+The BEFORE INSERT trigger `enforce_run_parameters_snapshot_on_insert` raises when `row_ts >= apply_ts AND run_parameters_snapshot_id IS NULL AND parameters_version IS NULL`. Most of the 14 affected tables declare `created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()` (or `added_at` / `classified_at` analogously).
+
+**A legitimate backfill INSERT that omits the timestamp column will receive `NOW() ≥ apply_ts` and be rejected** — even though the writer intends a historical-row backfill. To grandfather a backfill INSERT, the writer MUST explicitly set the timestamp column to a value PRE-apply_ts (i.e., before 2026-05-18 unless a session GUC overrides). Example:
+
+```sql
+INSERT INTO regime_classification_history (..., parameters_version, created_at)
+VALUES (..., '<legacy-uuid>', '2025-12-01T00:00:00Z');
+-- trigger sees row_ts < apply_ts → grandfathered → INSERT proceeds
+```
+
+Bypassing the timestamp DEFAULT is the operator's responsibility on any backfill path.
 
 ## Sunset plan (mig 036+)
 
 After operator-declared backfill window (TBD; recommended ≥90 days post-mig-035), mig 036 will:
 
-1. DROP COLUMN `parameters_version` from all 15 tables.
+1. DROP COLUMN `parameters_version` from all 14 tables.
 2. DROP the three existing FK constraints to `parameters(version_id)` that mig 006 / 007 / 011 declared.
 3. DROP the per-table `_pv_xor_rpsi` CHECK constraints (no longer meaningful once legacy column is gone).
 4. DROP the BEFORE INSERT trigger's `OR parameters_version IS NULL` clause (legacy column no longer exists to be tested).

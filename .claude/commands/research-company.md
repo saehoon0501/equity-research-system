@@ -534,6 +534,19 @@ Dispatch `evaluator` via Task tool on the pm-supervisor output ONLY. The gate ru
 
 If evaluator rejects: pm-supervisor revises (up to 3 rounds). If contamination check flags an upstream memo (quant/strategic/catalyst), the gate fails the entire run and the operator must triage which upstream agent produced the contamination.
 
+**Terminal-REJECT snapshot UPDATE (run_parameters_snapshot symmetry — per /review-me post-apply iteration 2 defect #15):** if all 3 revision rounds exhaust without an evaluator PASS, OR if contamination check fails the entire run, OR if the evaluator dispatch itself fails (Task tool error, sidecar write failure, subagent crash), the orchestrator MUST close the snapshot row before halting:
+
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'rejected'                  -- or 'failed_evaluator_dispatch' for dispatch-failure mode
+WHERE run_id = $RUN_ID;
+```
+
+This matches the symmetric pattern of §1.5 INV-1/INV-3 HARD FAIL (which write `failed_INV-1` / `failed_INV-3`) and §6.5 happy-path (which writes `completed`). Without this UPDATE, evaluator-rejected runs leave `run_ended_at` NULL, indistinguishable from in-flight runs at the snapshot-table level. mig 034's state-guard explicitly permits this 2-column UPDATE.
+
+If this UPDATE itself fails (DB unreachable during the REJECT path), the orchestrator still halts and surfaces the audit trail to operator; the orphan `run_ended_at IS NULL` row is recoverable post-hoc by an operator-run reconciliation. Symmetric to §6.5's same fallback discipline.
+
 **Evaluator dispatch contract (per /review-me v7-final C13 + Q4 sidecar parity):**
 
 1. **Inject `run_id: <RUN_ID>` into the evaluator prompt body** — same pattern as pm-supervisor dispatch above. The evaluator's HG-25 reads this line and performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = $1`; absent or unresolved → REJECT or soft-warn per HG-25 rules.
@@ -569,6 +582,23 @@ Write to Postgres:
 - evidence_index rows (already populated in §2.5 step 5)
 - Predictions DB entries (from the memo)
 - Counterfactual Ledger entries (e.g., "if we had passed instead, SPY return from this date forward")
+
+### 6.5. Close the run_parameters_snapshot row (HAPPY-PATH RUN COMPLETION)
+
+After §4.5 evaluator passes AND §6 persistence completes, close out the snapshot row that was INSERTed in §1.5 Step 4:
+
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'completed'
+WHERE run_id = $RUN_ID;
+```
+
+This makes downstream queries like "which research runs are still in-flight vs. completed?" answerable via the snapshot table. mig 034's state-guard explicitly permits this 2-column UPDATE (every other column is immutable post-INSERT — see mig 034 `run_parameters_snapshot_guard`).
+
+**Failure-path symmetry:** the §1.5 invariant validator (INV-1 / INV-3 HARD FAIL paths) writes `run_ended_at + run_status = 'failed_INV-1' | 'failed_INV-3'` at termination; §4.5 evaluator REJECT path (above) writes `run_status = 'rejected'` analogously; this §6.5 happy-path UPDATE writes `run_status = 'completed'`. All three terminal paths now close the snapshot row, making in-flight vs. terminated distinguishable at the table level. Per /review-me post-apply iterations 1+2 defects #13 + #15.
+
+If this UPDATE itself fails (DB unreachable), the run still emits §7 output to operator but logs the failure to `system_errors`; the orphan `run_ended_at IS NULL` row is recoverable post-hoc by an operator-run reconciliation.
 
 ### 7. Output to operator
 

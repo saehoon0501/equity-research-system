@@ -74,7 +74,22 @@ CREATE TABLE IF NOT EXISTS run_parameters_snapshot (
     tag_issued_at_unix           BIGINT,
 
     -- Final disposition of the run. Set at termination.
-    run_status                   TEXT,                         -- mutable; e.g. 'completed' | 'failed' | 'rejected'
+    -- Canonical run_status values (source of truth for the symmetric terminal
+    -- UPDATEs across /research-company orchestrator paths — per /review-me
+    -- post-apply iteration 3 defect #5):
+    --   in-flight (transient — NULL until run terminates):
+    --     NULL                            — orchestrator §1.5 INSERT default
+    --   terminal (set by orchestrator at end-of-run):
+    --     'completed'                     — happy path, §6.5
+    --     'rejected'                      — evaluator HG fail OR contamination
+    --                                        check fail, §4.5
+    --     'failed_INV-1'                  — §1.5 invariant validator failure
+    --     'failed_INV-3'                  — §1.5 invariant validator failure
+    --     'failed_evaluator_dispatch'     — §4.5 dispatch infra failure
+    -- TEXT (not enum) so future status values can land via skill-markdown
+    -- edits alone without a column-type migration. If the list grows beyond
+    -- ~10 values, consider promoting to a CHECK constraint to prevent typos.
+    run_status                   TEXT,                         -- mutable; see canonical list above
 
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
