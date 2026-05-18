@@ -79,3 +79,37 @@ If load-bearing → promote INV-2 to hard fail. If tunable → drop INV-2 entire
 
 - Backfill any in-flight worktree-managed migrations that diverge in their parameters_version usage from this audit. The 9 active worktrees under `.claude/worktrees/` have their own `db/migrations/` copies; once main lands mig 035, any worktree-local additions to the affected tables must be reconciled before merge.
 - Update `/parameters-review` skill to accept the `sweep_tag` arg per Q1=D (testability path). This is downstream of /research-company refactor; tracked separately.
+- **Stop-hook architecture revisit (added /review-me v7 convergence 2026-05-18):** the orphan-rescue is currently operationally-finalized via `scripts/reconcile_orphan_snapshots.sh` (cron or manual). Threshold for revisiting Stop-hook architecture: orphan-finalization rate >5/week sustained over 4 consecutive weeks per the observability query below. Current expected rate <1/quarter; if reality diverges, the operator-runnable pattern becomes load-bearing and Stop hook (with verified `$CLAUDE_JOB_DIR` per-session uniqueness + DB credential injection contract) becomes worth the runtime machinery.
+
+## Canonical run_status values (per /review-me v7 convergence 2026-05-18 — supersedes prior 5-value list)
+
+Source of truth: `db/migrations/034_run_parameters_snapshot.sql` column comment lines 76-95 + table-level `COMMENT ON TABLE` waterfall paragraph. Mirrored here for audit cross-reference.
+
+| Status | Emitted by | Runtime semantics |
+|---|---|---|
+| `NULL` | §1.5 Step 4 INSERT (transient) | in-flight |
+| `'completed'` | §6.5 happy-path UPDATE | terminal — best-effort |
+| `'rejected'` | §4.5 site (b): evaluator HG fail post-revision-exhaustion ONLY (NO LONGER covers contamination — v7 split) | terminal — best-effort |
+| `'failed_contamination'` | §4.5 site (a): contamination check fail (v7 — split from `'rejected'`) | terminal — best-effort |
+| `'failed_INV-1'` | §1.5 Step 5 invariant validator | terminal — best-effort |
+| `'failed_INV-3'` | §1.5 Step 5 invariant validator | terminal — best-effort |
+| `'failed_evaluator_dispatch'` | §4.5 site (c): dispatch infra fail | terminal — best-effort |
+| `'failed_uncaught'` | `scripts/reconcile_orphan_snapshots.sh` | terminal — operationally finalized |
+
+**Waterfall semantics (mirrors mig 034 `COMMENT ON TABLE`):** every status except `'failed_uncaught'` is best-effort terminal, set inline by orchestrator prose. If that UPDATE itself fails (DB transient), the row stays NULL and is later finalized to `'failed_uncaught'` by the reconcile script. §1.5 Step 7 DB-unreachable HARD FAIL is pre-INSERT; no snapshot row → waterfall does not apply.
+
+## Observability query — weekly Stop-hook revisit signal
+
+```sql
+SELECT
+  COUNT(*) AS orphans_finalized_last_7d,
+  MIN((error_detail::jsonb->>'orphaned_at')::timestamptz) AS earliest_orphan,
+  MAX((error_detail::jsonb->>'orphaned_at')::timestamptz) AS latest_orphan
+FROM system_errors
+WHERE source = 'orphan_reconciler'
+  AND error_type = 'unfinalized_snapshot'
+  AND error_detail::jsonb ? 'orphaned_at'
+  AND (error_detail::jsonb->>'orphaned_at')::timestamptz >= NOW() - INTERVAL '7 days';
+```
+
+Grouped by `error_detail->>'orphaned_at'` (orphan-creation time, not reconciler-INSERT time — matters at sweep scale where reconciler cadence may lag orphan-creation by hours). Existence filter `error_detail::jsonb ? 'orphaned_at'` guards against malformed-row noise. Threshold trigger: >5/week sustained 4 weeks → escalate per Outstanding work item above. Currently a doc-only signpost (operator-run); alerting integration deferred.

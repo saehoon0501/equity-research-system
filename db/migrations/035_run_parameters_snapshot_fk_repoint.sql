@@ -457,10 +457,12 @@ FROM information_schema.columns
 WHERE column_name = 'run_parameters_snapshot_id'
 ORDER BY table_name;
 -- Expected: 14 rows (regime_classification_history, scenarios, watchlist,
--- audit_provenance, execution_recommendations, mode_classifications,
--- daily_refresh_log, materiality_events, anchor_drift_checks,
--- materiality_classifier_drift, counterfactual_retrievals, premortem,
--- operator_overrides, calibration_test_results, anchor_drift_review_decisions).
+-- execution_recommendations, mode_classifications, daily_refresh_log,
+-- materiality_events, anchor_drift_checks, materiality_classifier_drift,
+-- counterfactual_retrievals, premortem, operator_overrides,
+-- calibration_test_results, anchor_drift_review_decisions). audit_provenance
+-- was dropped from mig 035 scope at live-DB apply time (parameters_version
+-- is a JSONB key, not a column on that table — see audit checklist).
 
 -- VERIFY: all 14 tables have the XOR CHECK constraint.
 SELECT conrelid::regclass AS table_name, conname,

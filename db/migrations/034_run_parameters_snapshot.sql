@@ -76,16 +76,25 @@ CREATE TABLE IF NOT EXISTS run_parameters_snapshot (
     -- Final disposition of the run. Set at termination.
     -- Canonical run_status values (source of truth for the symmetric terminal
     -- UPDATEs across /research-company orchestrator paths — per /review-me
-    -- post-apply iteration 3 defect #5):
+    -- v7 convergence 2026-05-18 (post-apply iteration replaces v3 list)):
     --   in-flight (transient — NULL until run terminates):
     --     NULL                            — orchestrator §1.5 INSERT default
     --   terminal (set by orchestrator at end-of-run):
     --     'completed'                     — happy path, §6.5
-    --     'rejected'                      — evaluator HG fail OR contamination
-    --                                        check fail, §4.5
+    --     'rejected'                      — evaluator HG fail post-revision-
+    --                                        exhaustion ONLY (NO LONGER covers
+    --                                        contamination — see v7 split)
+    --     'failed_contamination'          — §4.5 contamination check fail
+    --                                        (split from 'rejected' in v7)
     --     'failed_INV-1'                  — §1.5 invariant validator failure
     --     'failed_INV-3'                  — §1.5 invariant validator failure
     --     'failed_evaluator_dispatch'     — §4.5 dispatch infra failure
+    --     'failed_uncaught'               — operationally finalized by
+    --                                        scripts/reconcile_orphan_snapshots.sh
+    --                                        when an inline terminal UPDATE
+    --                                        never fired (orchestrator halt
+    --                                        between §1.5 Step 4 INSERT and
+    --                                        any §1.5/§4.5/§6.5 UPDATE site)
     -- TEXT (not enum) so future status values can land via skill-markdown
     -- edits alone without a column-type migration. If the list grows beyond
     -- ~10 values, consider promoting to a CHECK constraint to prevent typos.
@@ -153,6 +162,21 @@ DROP TRIGGER IF EXISTS run_parameters_snapshot_state_guard ON run_parameters_sna
 CREATE TRIGGER run_parameters_snapshot_state_guard
 BEFORE UPDATE OR DELETE ON run_parameters_snapshot
 FOR EACH ROW EXECUTE FUNCTION run_parameters_snapshot_guard();
+
+-- -----------------------------------------------------------------------------
+-- Status emission waterfall (per /review-me v7 convergence 2026-05-18).
+-- Applies post-§1.5 Step 4 INSERT only.
+-- Every status except 'failed_uncaught' is best-effort terminal, set inline by
+-- /research-company orchestrator prose at its named decision point. If that
+-- UPDATE itself fails (DB transient), the row stays NULL and is later
+-- finalized to 'failed_uncaught' by scripts/reconcile_orphan_snapshots.sh.
+-- §1.5 Step 7 DB-unreachable HARD FAIL is pre-INSERT; no snapshot row exists
+-- so the waterfall does not apply (nothing to finalize).
+-- Operators triaging a 'failed_uncaught' row use Claude Code session-log
+-- lookup keyed on (run_id, run_started_at).
+-- -----------------------------------------------------------------------------
+COMMENT ON TABLE run_parameters_snapshot IS
+'Per-run parameter snapshot. Status emission waterfall: every run_status except ''failed_uncaught'' is best-effort terminal, set inline by orchestrator prose. If that UPDATE fails (DB transient), the row stays NULL and is later finalized to ''failed_uncaught'' by scripts/reconcile_orphan_snapshots.sh. Pre-INSERT failures (§1.5 Step 7 DB-unreachable) leave no row, so the waterfall does not apply. Operator triage for ''failed_uncaught'' = Claude Code session-log lookup on (run_id, run_started_at).';
 
 COMMIT;
 

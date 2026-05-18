@@ -106,10 +106,24 @@ where:
   spread_B = EFFECTIVE_MAP['reinvestment_moat.label_B.min_roic_spread_pp']
   spread_C = EFFECTIVE_MAP['reinvestment_moat.label_C.min_roic_spread_pp']
   (same for *.min_runway_years)
-On violation: HARD FAIL the run with named code INV-1. Update
-  run_parameters_snapshot row: SET run_ended_at = NOW(), run_status = 'failed_INV-1'.
-  Surface the violation to operator. Exit.
 ```
+On violation: HARD FAIL with named code INV-1. Execute the terminal UPDATE inline:
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'failed_INV-1'
+WHERE run_id = $RUN_ID;
+```
+If that UPDATE itself fails (DB transient), the orchestrator still halts and surfaces the violation; the orphan row is finalized post-hoc by `scripts/reconcile_orphan_snapshots.sh` to `'failed_uncaught'`. Log the UPDATE failure to `system_errors` for operator visibility:
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'failed_INV-1', 'stage', 'inv_1_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+Surface the violation to operator. Exit.
 
 INV-2 (WACC drift/sensitivity 2× ratio — SOFT WARN; promotes to HARD FAIL after operator answers):
 ```
@@ -130,8 +144,24 @@ INV-3 (austere DCF fade triple sanity — HARD FAIL):
 ```
 require: EFFECTIVE_MAP['dcf.austere_growth_fade_years'] <= EFFECTIVE_MAP['dcf.austere_roic_fade_years']
 require: 0 <= EFFECTIVE_MAP['dcf.austere_terminal_growth_dgs10_premium_pct'] <= 5
-On violation: HARD FAIL, code INV-3. Same termination + audit pattern as INV-1.
 ```
+On violation: HARD FAIL with named code INV-3. Execute the terminal UPDATE inline:
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'failed_INV-3'
+WHERE run_id = $RUN_ID;
+```
+If that UPDATE itself fails, log to `system_errors` and rely on the reconcile-script fallback (symmetric to INV-1):
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'failed_INV-3', 'stage', 'inv_3_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+Surface the violation to operator. Exit.
 
 **Step 6 — Compose per-subagent PARAMETERS_USED header blocks.** Filter `EFFECTIVE_MAP` per subagent namespace consumption:
 
@@ -534,18 +564,66 @@ Dispatch `evaluator` via Task tool on the pm-supervisor output ONLY. The gate ru
 
 If evaluator rejects: pm-supervisor revises (up to 3 rounds). If contamination check flags an upstream memo (quant/strategic/catalyst), the gate fails the entire run and the operator must triage which upstream agent produced the contamination.
 
-**Terminal-REJECT snapshot UPDATE (run_parameters_snapshot symmetry — per /review-me post-apply iteration 2 defect #15):** if all 3 revision rounds exhaust without an evaluator PASS, OR if contamination check fails the entire run, OR if the evaluator dispatch itself fails (Task tool error, sidecar write failure, subagent crash), the orchestrator MUST close the snapshot row before halting:
+**Terminal-status inventory (§4.5 has 3 distinct terminal-UPDATE sites — per /review-me v7 convergence 2026-05-18):** (a) contamination check fail → `failed_contamination`, (b) evaluator HG fail post-revision-exhaustion → `rejected`, (c) evaluator dispatch infra fail → `failed_evaluator_dispatch`. Any new terminal status added here MUST update this inventory + the mig 034 canonical list + the audit-checklist canonical list. Each UPDATE site mirrors the §1.5 INV / §6.5 happy-path fallback pattern (system_errors on UPDATE failure → reconcile script finalizes orphan to `failed_uncaught`).
+
+**Site (a) — contamination check fail:** if the contamination check fails the entire run (split from `'rejected'` per /review-me v7 — was previously conflated):
 
 ```sql
 UPDATE run_parameters_snapshot
 SET run_ended_at = NOW(),
-    run_status   = 'rejected'                  -- or 'failed_evaluator_dispatch' for dispatch-failure mode
+    run_status   = 'failed_contamination'
 WHERE run_id = $RUN_ID;
 ```
+On UPDATE failure:
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'failed_contamination', 'stage', 'contamination_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+Surface to operator; halt.
 
-This matches the symmetric pattern of §1.5 INV-1/INV-3 HARD FAIL (which write `failed_INV-1` / `failed_INV-3`) and §6.5 happy-path (which writes `completed`). Without this UPDATE, evaluator-rejected runs leave `run_ended_at` NULL, indistinguishable from in-flight runs at the snapshot-table level. mig 034's state-guard explicitly permits this 2-column UPDATE.
+**Site (b) — evaluator HG fail post-revision-exhaustion:** if all 3 revision rounds exhaust without an evaluator PASS:
 
-If this UPDATE itself fails (DB unreachable during the REJECT path), the orchestrator still halts and surfaces the audit trail to operator; the orphan `run_ended_at IS NULL` row is recoverable post-hoc by an operator-run reconciliation. Symmetric to §6.5's same fallback discipline.
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'rejected'
+WHERE run_id = $RUN_ID;
+```
+On UPDATE failure:
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'rejected', 'stage', 'hg_fail_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+Surface to operator; halt.
+
+**Site (c) — evaluator dispatch infra fail:** if the evaluator dispatch itself fails (Task tool error, sidecar write failure, subagent crash):
+
+```sql
+UPDATE run_parameters_snapshot
+SET run_ended_at = NOW(),
+    run_status   = 'failed_evaluator_dispatch'
+WHERE run_id = $RUN_ID;
+```
+On UPDATE failure:
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'failed_evaluator_dispatch', 'stage', 'dispatch_fail_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+Surface to operator; halt.
+
+This matches the symmetric pattern of §1.5 INV-1/INV-3 HARD FAIL and §6.5 happy-path. Without these inline UPDATEs, terminal-reject runs leave `run_ended_at` NULL, indistinguishable from in-flight runs at the snapshot-table level. mig 034's state-guard explicitly permits the 2-column UPDATE.
 
 **Evaluator dispatch contract (per /review-me v7-final C13 + Q4 sidecar parity):**
 
@@ -598,7 +676,18 @@ This makes downstream queries like "which research runs are still in-flight vs. 
 
 **Failure-path symmetry:** the §1.5 invariant validator (INV-1 / INV-3 HARD FAIL paths) writes `run_ended_at + run_status = 'failed_INV-1' | 'failed_INV-3'` at termination; §4.5 evaluator REJECT path (above) writes `run_status = 'rejected'` analogously; this §6.5 happy-path UPDATE writes `run_status = 'completed'`. All three terminal paths now close the snapshot row, making in-flight vs. terminated distinguishable at the table level. Per /review-me post-apply iterations 1+2 defects #13 + #15.
 
-If this UPDATE itself fails (DB unreachable), the run still emits §7 output to operator but logs the failure to `system_errors`; the orphan `run_ended_at IS NULL` row is recoverable post-hoc by an operator-run reconciliation.
+If this UPDATE itself fails (DB unreachable), the run still emits §7 output to operator. Log the failure to `system_errors` for visibility (symmetric to §1.5 INV / §4.5 sites):
+
+```sql
+INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) VALUES (
+  'research_company_orchestrator',
+  'snapshot_update_failed',
+  json_build_object('run_id', $RUN_ID, 'intended_status', 'completed', 'stage', 'happy_path_terminal_update')::text,
+  'research_company_' || $TICKER || '_' || to_char($RUN_STARTED_AT, 'YYYY-MM-DD"T"HH24:MI:SS')
+);
+```
+
+The orphan `run_ended_at IS NULL` row is finalized post-hoc by `scripts/reconcile_orphan_snapshots.sh` to `'failed_uncaught'`.
 
 ### 7. Output to operator
 
