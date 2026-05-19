@@ -53,6 +53,19 @@ If any required MCP or table is missing, halt and tell the operator which one. D
 
 **Architectural contract:** the PARAMETERS_USED header block injected into each subagent's dispatch prompt is **ground truth**. If a numeric appears in both the header block and the agent's prose instructions, the **block wins**. Agents must cite the block, not the prose.
 
+**Step 0 — Parse args (TICKER extraction).**
+
+The Claude Code slash-command harness substitutes `$1` in this spec body with the **entire args string** (e.g. `GOOGL --as-of-tag=722b... --as-of-tag-sig=c637... --as-of-tag-issued-at=1779114639`), not just the first positional token. The orchestrator MUST therefore parse the ticker out of the args string before issuing any ticker-keyed SQL.
+
+Set:
+```
+TICKER = uppercase(first_space_delimited_token_of("$1"))
+```
+
+Equivalent shell: `TICKER=$(echo "$1" | cut -d' ' -f1 | tr '[:lower:]' '[:upper:]')`. (Note: `cut` rather than `awk '{print $1}'` because awk's `$1` field reference would collide with the harness's `$1` substitution — both would be rewritten to the full args string, breaking the awk command.)
+
+`$TICKER` is the canonical ticker identifier for the remainder of this run. Every SQL in this spec that previously read `$1` as the ticker has been hardened to read `$TICKER` instead; do NOT use bare `$1` in orchestrator-executed SQL (it expands to the full args string and corrupts queries — see post-mortem in BUILD_LOG.md for the GOOGL-2026-05-18 sweep-run defect that motivated this guard). If a SQL example in this spec still contains `$1`, treat it as documentation of bind-parameter notation in OTHER agents' queries (e.g. evaluator's HG-25), not as something the orchestrator should execute verbatim.
+
 **Step 1 — Generate run_id.** Use `uuidgen` or any deterministic UUID source. Record as `RUN_ID`. This same `run_id` flows into every dispatch prompt body (per §0 hook contract) AND into the snapshot row INSERT (Step 4 below) AND into the evaluator dispatch (§4.5 — see "Evaluator parity injection" below).
 
 **Step 2 — Resolve `--as-of-tag` arg (sweep test runs only).**
@@ -89,7 +102,7 @@ INSERT INTO run_parameters_snapshot (
     effective_parameters_jsonb, effective_parameters_hash,
     tag, tag_signature, tag_issued_at_unix
 ) VALUES (
-    RUN_ID, '<ticker_upper>', PARAMETERS_VERSION_MAX,
+    RUN_ID, $TICKER, PARAMETERS_VERSION_MAX,
     EFFECTIVE_JSON::jsonb, EFFECTIVE_HASH,
     TAG, TAG_SIG, TAG_ISSUED_AT
 );
@@ -125,20 +138,7 @@ INSERT INTO system_errors (source, error_type, error_detail, blocked_decision) V
 ```
 Surface the violation to operator. Exit.
 
-INV-2 (WACC drift/sensitivity 2× ratio — SOFT WARN; promotes to HARD FAIL after operator answers):
-```
-ratio = EFFECTIVE_MAP['wacc.erp_sensitivity_band_bps'] / EFFECTIVE_MAP['wacc.erp_refresh_drift_bps']
-expected = 2.0
-if ratio != expected:
-    SOFT WARN: log to system_errors (or audit logs/inv_2_soft_warning.jsonl)
-    with payload {run_id, ratio, expected, parameter_values}
-    DO NOT block the run.
-    Note: this INV ships as soft until the operator confirms whether the
-    2× relationship is load-bearing (downstream sensitivity table assumes 2σ)
-    or independently tunable. See
-    docs/superpowers/audits/2026-05-18-parameter-externalization-phase3-audit-checklist.md
-    § INV-2 operator-disambiguation slot.
-```
+INV-2 (RETIRED per /review-me 2026-05-19): formerly checked `wacc.erp_sensitivity_band_bps / wacc.erp_refresh_drift_bps == 2.0` as a SOFT WARN. Adjudicated TUNABLE — the two parameters serve unrelated functions (cache-refresh trigger vs output sensitivity band) and the 2.0 ratio is coincidental, not methodologically required. ERP-DGS10 monthly coupling regression (slope ~0.3-0.5, R²<0.3) falsifies the load-bearing "50bps DGS10 = 50bps ERP staleness" interpretation. Validator now skips directly from INV-1 to INV-3. See `docs/superpowers/audits/2026-05-18-parameter-externalization-phase3-audit-checklist.md` § INV-2 disambiguation slot (RESOLVED 2026-05-19) for the full adjudication.
 
 INV-3 (austere DCF fade triple sanity — HARD FAIL):
 ```
@@ -190,7 +190,7 @@ If `mcp__postgres__query` fails at Step 3 (snapshot SELECT) → HARD FAIL the ru
 
 If `INSERT INTO run_parameters_snapshot` fails at Step 4 → same hard-fail discipline.
 
-**Evaluator parity injection (preview — §4.5 actually injects).** When you reach §4.5 evaluator dispatch, you MUST inject `run_id: <RUN_ID>` into the evaluator prompt body AND write a sidecar at `memos/envelopes/evaluator__<RUN_ID>.context.json` carrying `{run_id, run_parameters_snapshot_id, parameters_version_max, effective_parameters_hash}`. The evaluator's HG-25 (Phase 5 gate) performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = $1` to confirm the chain context. Without injected run_id, evaluator soft-warns (standalone /evaluate carve-out); with run_id present but no matching DB row, evaluator HARD REJECTs as spoofed.
+**Evaluator parity injection (preview — §4.5 actually injects).** When you reach §4.5 evaluator dispatch, you MUST inject `run_id: <RUN_ID>` into the evaluator prompt body AND write a sidecar at `memos/envelopes/evaluator__<RUN_ID>.context.json` carrying `{run_id, run_parameters_snapshot_id, parameters_version_max, effective_parameters_hash}`. The evaluator's HG-25 (Phase 5 gate) performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = :run_id` to confirm the chain context. Without injected run_id, evaluator soft-warns (standalone /evaluate carve-out); with run_id present but no matching DB row, evaluator HARD REJECTs as spoofed.
 
 ### 2. Stage 1 — main-session pre-dispatch + brief generation
 
@@ -224,7 +224,7 @@ Run inline in the main session (formerly cdd-lead Stage 1):
    SELECT brief_id, brief_type, content, sources_used, essentials_referenced,
           created_at, sector_identification, tier
    FROM analyst_briefs
-   WHERE ticker = $1 AND brief_type IN ('quantitative', 'strategic')
+   WHERE ticker = $TICKER AND brief_type IN ('quantitative', 'strategic')
    ORDER BY created_at DESC
    LIMIT 2
    ```
@@ -627,7 +627,7 @@ This matches the symmetric pattern of §1.5 INV-1/INV-3 HARD FAIL and §6.5 happ
 
 **Evaluator dispatch contract (per /review-me v7-final C13 + Q4 sidecar parity):**
 
-1. **Inject `run_id: <RUN_ID>` into the evaluator prompt body** — same pattern as pm-supervisor dispatch above. The evaluator's HG-25 reads this line and performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = $1`; absent or unresolved → REJECT or soft-warn per HG-25 rules.
+1. **Inject `run_id: <RUN_ID>` into the evaluator prompt body** — same pattern as pm-supervisor dispatch above. The evaluator's HG-25 reads this line and performs a DB roundtrip `SELECT 1 FROM run_parameters_snapshot WHERE run_id = :run_id`; absent or unresolved → REJECT or soft-warn per HG-25 rules.
 2. **Prefix the prompt with the PARAMETERS_USED header block** composed in §1.5 Step 6, filtered to evaluator namespace consumption (`evaluator.gate.*`, `quality_gate.*`, `falsifier.max_resolution_horizon_months`, `dcf.reconciliation_divergence_pct_floor`). Evaluator's HG-* mechanical gates that previously read hardcoded literals now read from this block (block wins over prose).
 3. **Write a context sidecar BEFORE dispatch** at `memos/envelopes/evaluator__<RUN_ID>.context.json`:
    ```json

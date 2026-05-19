@@ -28,7 +28,9 @@
 #   exit 0 + stderr  → not our concern (different skill, or different tool)
 #   exit 2 + stderr  → BLOCK with feedback message
 #
-# Idempotent / pure: reads only stdin + AUDIT_HMAC_KEY env. No state.
+# Idempotent / pure: reads only stdin + AUDIT_HMAC_KEY env (or, as a
+# fallback, the file path in AUDIT_HMAC_KEY_FILE — see the validate block
+# below). No state, no network, no DB.
 
 set -euo pipefail
 
@@ -86,12 +88,71 @@ EOF
 fi
 
 # Validate AUDIT_HMAC_KEY env var is set.
+# Fallback chain (highest priority first):
+#   1. AUDIT_HMAC_KEY env var directly
+#   2. AUDIT_HMAC_KEY_FILE env var → read AUDIT_HMAC_KEY= line from that file
+#   3. DEFAULT: <script_dir>/../.env → same pattern (self-resolving path)
+#
+# Path (3) makes the gate work without ANY env-block propagation from
+# Claude Code's settings.json — useful when settings.json env changes have
+# not yet been picked up by a session restart, or when running the gate
+# directly from CLI for testing. The default resolves to the project root's
+# .env (gitignored), which is the operator's canonical credential store.
+#
+# Why self-resolve vs hardcode an absolute path: script lives in scripts/
+# next to .env at the project root; relative resolution works for any
+# checkout location (main repo, worktrees, ad-hoc clones).
+if [ -z "${AUDIT_HMAC_KEY:-}" ]; then
+    # Resolve a candidate .env path via the first match of:
+    #   1. AUDIT_HMAC_KEY_FILE env var (explicit operator config)
+    #   2. Walk up from script dir looking for .env (handles main repo AND
+    #      worktrees; in a worktree at .claude/worktrees/<name>/scripts/, the
+    #      walk-up reaches the main repo root where the canonical .env lives)
+    KEY_FILE=""
+    if [ -n "${AUDIT_HMAC_KEY_FILE:-}" ] && [ -r "$AUDIT_HMAC_KEY_FILE" ]; then
+        KEY_FILE="$AUDIT_HMAC_KEY_FILE"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        CANDIDATE="$SCRIPT_DIR"
+        # Walk up at most 8 levels; stop at filesystem root.
+        for _ in 1 2 3 4 5 6 7 8; do
+            if [ -r "$CANDIDATE/.env" ]; then
+                KEY_FILE="$CANDIDATE/.env"
+                break
+            fi
+            PARENT="$(dirname "$CANDIDATE")"
+            [ "$PARENT" = "$CANDIDATE" ] && break
+            CANDIDATE="$PARENT"
+        done
+    fi
+    if [ -n "$KEY_FILE" ]; then
+        # Robust extraction: match line starting with literal var name,
+        # take everything after the first '=' (handles base64 with '=='),
+        # strip optional surrounding single or double quotes.
+        EXTRACTED="$(grep -E '^AUDIT_HMAC_KEY=' "$KEY_FILE" 2>/dev/null \
+            | head -1 \
+            | sed -E 's/^AUDIT_HMAC_KEY=//' \
+            | sed -E 's/^"(.*)"$/\1/' \
+            | sed -E "s/^'(.*)'\$/\\1/" || true)"
+        if [ -n "$EXTRACTED" ]; then
+            AUDIT_HMAC_KEY="$EXTRACTED"
+            export AUDIT_HMAC_KEY
+        fi
+    fi
+fi
+
 if [ -z "${AUDIT_HMAC_KEY:-}" ]; then
     cat >&2 <<EOF
 [research_company_as_of_tag_gate] BLOCK: --as-of-tag=${TAG} present but
-  AUDIT_HMAC_KEY env var is unset. Cannot verify the signature.
+  AUDIT_HMAC_KEY env var is unset (and AUDIT_HMAC_KEY_FILE fallback either
+  unset or did not yield a value). Cannot verify the signature.
 
-  Export AUDIT_HMAC_KEY before invoking. No silent downgrade to production.
+  Either export AUDIT_HMAC_KEY in your shell before launching Claude Code,
+  or set "env": { "AUDIT_HMAC_KEY_FILE": "/path/to/.env" } in
+  .claude/settings.json so the gate can read the secret from a gitignored
+  file at hook-invocation time.
+
+  No silent downgrade to production.
 EOF
     exit 2
 fi
