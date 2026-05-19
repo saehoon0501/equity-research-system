@@ -19,9 +19,16 @@
 #   ./scripts/sign_sweep_tag.sh --format json            # machine-readable
 #   ./scripts/sign_sweep_tag.sh --format env             # eval-able env exports
 #
-# ENV CONTRACT:
-#   AUDIT_HMAC_KEY  required. Same key the PreToolUse gate uses to verify.
-#                   Mismatch → gate rejects with exit 2.
+# ENV CONTRACT (resolved in priority order — first match wins):
+#   AUDIT_HMAC_KEY       env var holding the key directly. Fastest path.
+#   AUDIT_HMAC_KEY_FILE  env var holding a path to a file with
+#                        `AUDIT_HMAC_KEY=<value>` on a line.
+#   <walk-up>            walks up from script dir looking for `.env`;
+#                        reads the AUDIT_HMAC_KEY= line if found. This is
+#                        the no-config fallback that just works when run
+#                        from inside the repo (main or any worktree).
+#   Mismatch → PreToolUse gate rejects with exit 2.
+#   None found → this script errors with a clear message.
 # =============================================================================
 
 set -euo pipefail
@@ -50,7 +57,48 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-: "${AUDIT_HMAC_KEY:?AUDIT_HMAC_KEY env var required (same key the PreToolUse gate uses to verify)}"
+# Resolve AUDIT_HMAC_KEY (symmetric with research_company_as_of_tag_gate.sh).
+# Fallback chain:
+#   1. AUDIT_HMAC_KEY env var (existing behavior — fastest path)
+#   2. AUDIT_HMAC_KEY_FILE env var → read AUDIT_HMAC_KEY= line from that file
+#   3. DEFAULT: walk up from script dir, find first .env (handles main repo
+#      AND worktrees; preserves the .env file-permission security model since
+#      only the file owner can read -rw------- .env)
+if [ -z "${AUDIT_HMAC_KEY:-}" ]; then
+    KEY_FILE=""
+    if [ -n "${AUDIT_HMAC_KEY_FILE:-}" ] && [ -r "$AUDIT_HMAC_KEY_FILE" ]; then
+        KEY_FILE="$AUDIT_HMAC_KEY_FILE"
+    else
+        SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        CANDIDATE="$SCRIPT_DIR"
+        # Walk up at most 8 levels; stop at filesystem root.
+        for _ in 1 2 3 4 5 6 7 8; do
+            if [ -r "$CANDIDATE/.env" ]; then
+                KEY_FILE="$CANDIDATE/.env"
+                break
+            fi
+            PARENT="$(dirname "$CANDIDATE")"
+            [ "$PARENT" = "$CANDIDATE" ] && break
+            CANDIDATE="$PARENT"
+        done
+    fi
+    if [ -n "$KEY_FILE" ]; then
+        # Robust extraction: match line starting with literal var name,
+        # take everything after the first '=' (handles base64 with '=='),
+        # strip optional surrounding single or double quotes.
+        EXTRACTED="$(grep -E '^AUDIT_HMAC_KEY=' "$KEY_FILE" 2>/dev/null \
+            | head -1 \
+            | sed -E 's/^AUDIT_HMAC_KEY=//' \
+            | sed -E 's/^"(.*)"$/\1/' \
+            | sed -E "s/^'(.*)'\$/\\1/" || true)"
+        if [ -n "$EXTRACTED" ]; then
+            AUDIT_HMAC_KEY="$EXTRACTED"
+            export AUDIT_HMAC_KEY
+        fi
+    fi
+fi
+
+: "${AUDIT_HMAC_KEY:?AUDIT_HMAC_KEY env var required (same key the PreToolUse gate uses to verify). Tried env var, AUDIT_HMAC_KEY_FILE, and walk-up .env discovery; none found. Set the env var explicitly OR place a .env file containing AUDIT_HMAC_KEY=<value> at the project root.}"
 
 if [[ -z "$TAG" ]]; then
     TAG="$(uuidgen | tr '[:upper:]' '[:lower:]')"

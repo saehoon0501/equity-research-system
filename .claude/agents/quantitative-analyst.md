@@ -14,7 +14,7 @@ You do NOT do strategic analysis (moat, capital allocation) — that's strategic
 
 ## PARAMETERS_USED block is ground truth (per /research-company §1.5)
 
-Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying live numeric values for every threshold this agent consumes: quality gates (`quality_gate.piotroski_f_min`, `quality_gate.altman_z_double_prime_min`, `quality_gate.altman_z_x4_anomaly_cap`), DCF parameters (`dcf.reconciliation_divergence_pct_floor`, `dcf.sensitivity_band_pct`, `dcf.austere_terminal_growth_dgs10_premium_pct`, `dcf.austere_growth_fade_years`, `dcf.austere_margin_fade_years`, `dcf.austere_roic_fade_years`), outside-view (`outside_view.bayesian_shrinkage_r`, `outside_view.divergence_alert_pp`), WACC (`wacc.erp_refresh_drift_bps`, `wacc.erp_sensitivity_band_bps`), reinvestment-moat A/B/C/capital-light (`reinvestment_moat.label_{A,B,C}.min_{roic_spread_pp,runway_years}`, `reinvestment_moat.capital_light_skip_reinvestment_rate_pct`), falsifier (`falsifier.max_resolution_horizon_months`).
+Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version_max: ..., effective_parameters_hash: ..., tag: ...) ===` block carrying live numeric values for every threshold this agent consumes: quality gates (`quality_gate.piotroski_f_min`, `quality_gate.altman_z_double_prime_min`, `quality_gate.altman_z_x4_anomaly_cap`), DCF parameters (`dcf.reconciliation_divergence_pct_floor`, `dcf.sensitivity_band_pct`, `dcf.austere_terminal_growth_dgs10_premium_pct`, `dcf.austere_growth_fade_years`, `dcf.austere_margin_fade_years`, `dcf.austere_roic_fade_years`), outside-view (`outside_view.bayesian_shrinkage_r`, `outside_view.divergence_alert_pp`), WACC (`wacc.erp`, `wacc.erp_refresh_drift_bps`, `wacc.erp_sensitivity_band_bps`), reinvestment-moat A/B/C/capital-light (`reinvestment_moat.label_{A,B,C}.min_{roic_spread_pp,runway_years}`, `reinvestment_moat.capital_light_skip_reinvestment_rate_pct`), falsifier (`falsifier.max_resolution_horizon_months`).
 
 **Contract:** if a numeric value appears in BOTH the PARAMETERS_USED block AND the prose below, the **block wins**. The prose values (e.g., "F-Score ≥ 6", "r = 0.20", "≥ 10pp ROIC spread") are descriptive of the launch-default snapshot. Always read the block first; if it's missing, halt and report — that's an orchestrator bug.
 
@@ -93,14 +93,7 @@ Non-GAAP wedge and segment-recast flags are deferred to Phase 2 (require richer 
 
 ### 3.9. Regime-aware WACC inputs
 
-Read `.claude/references/damodaran_implied_erp_cache.json`. Then:
-
-1. Get current 10Y Treasury yield: `mcp__fred__get_series({series_id: 'DGS10'})` — latest observation.
-2. Compute `dgs10_drift_bps = (current_DGS10_pct − cached_dgs10_at_fetch_pct) × 100`.
-3. **If `abs(dgs10_drift_bps) > 50`:** `WebFetch` the `source_url` from the cache file, parse the latest implied-ERP value from Damodaran's monthly table (look for "Implied Premium (FCFE)" or "Implied ERP" current-month row), OVERWRITE the cache JSON with the new `implied_erp_pct` + new `cached_dgs10_at_fetch_pct` + new `as_of` date, then use the refreshed value. If `WebFetch` fails: use the cached value as-is and set `damodaran_erp_stale: true` in the `wacc_regime` output block.
-4. **If `abs(dgs10_drift_bps) <= 50`:** use cached `implied_erp_pct` as-is.
-
-Cite `damodaran_implied_erp` for the ERP value source.
+**ERP source (per /review-me 2026-05-19 consumer-wiring convergence — Design 1 ratified):** read `wacc.erp` from the `=== PARAMETERS_USED ===` block at the top of your dispatch prompt. That block is ground truth per §1.5 contract. Use the value verbatim — do NOT WebFetch Damodaran's site per run, do NOT read any cache file (the previously-documented `.claude/references/damodaran_implied_erp_cache.json` was a non-existent artifact retired by mig 037), do NOT improvise from training data. Cite `wacc.erp` parameter row (sourced from Damodaran monthly implied-ERP table at https://pages.stern.nyu.edu/~adamodar/) as the ERP source in your output. Cache-refresh policy now lives out-of-band in an operator-runbook script (cron or manual) that INSERTs a new `wacc.erp` parameter row with `supersedes_version` chain when DGS10 drift exceeds `wacc.erp_refresh_drift_bps`. Get current 10Y Treasury yield via `mcp__fred__get_series({series_id: 'DGS10'})` for `r_f` in the cost-of-equity formula below — that is a FRED pull, NOT a cached read.
 
 Build WACC for the DCF:
 - **Cost of equity:** `r_e = r_f + β × ERP` where `r_f` = current DGS10, `β` = yfinance trailing β (existing source), `ERP` = the value resolved above.
@@ -210,7 +203,7 @@ Emit both blocks in §5 output as `bull_case_narrative` and `bear_case_narrative
 
 **`austere_dcf` block contents (NEW per Bug 8 — mean-reversion reconstruction):**
 - Same FCF projection horizon as the inherited DCF (typically 10 years explicit + terminal)
-- **Growth fades to GDP-plus-inflation by year 5** — specifically, terminal growth = (current 10Y Treasury yield + 1.5%) as a proxy for nominal GDP growth. Cite `damodaran_implied_erp_cache.json` for the DGS10 input. Linear fade from year-1 growth (anchor to recent 3-5y realized CAGR, NOT the inherited narrative) to terminal by year 5; flat thereafter.
+- **Growth fades to GDP-plus-inflation by year 5** — specifically, terminal growth = (current 10Y Treasury yield + 1.5%) as a proxy for nominal GDP growth. Cite FRED `DGS10` series (`mcp__fred__get_series({series_id: 'DGS10'})`) for the DGS10 input — that is a FRED pull, not a Damodaran cache read (the previously-cited `damodaran_implied_erp_cache.json` was a non-existent artifact retired by mig 037; documentation drift fixed per /review-me 2026-05-19). The `+ 1.5%` premium comes from `dcf.austere_terminal_growth_dgs10_premium_pct` in the PARAMETERS_USED block. Linear fade from year-1 growth (anchor to recent 3-5y realized CAGR, NOT the inherited narrative) to terminal by year 5; flat thereafter.
 - **Margins revert to industry median** — pull industry median operating margin from Damodaran's industry pages (https://pages.stern.nyu.edu/~adamodar/) or a Bloomberg-style sector median if Damodaran is unavailable. Cite which source you used inline in the block (e.g., `austere_dcf.margin_source: "damodaran_industry_data_2025_software_systems_application"`). Linear fade from current margin to industry median by year 5.
 - **ROIC fades linearly to WACC over the explicit-period horizon** — i.e., over the 10-year explicit window, ROIC declines from current to WACC by year 10. This collapses competitive-advantage period to zero by terminal year (mean-reversion assumption: no business sustains excess returns indefinitely).
 - Terminal value uses the SAME WACC (from §3.9 `wacc_regime`) but the mean-reverted FCF — same discount rate, mean-reverted cash flow
@@ -414,7 +407,7 @@ frameworks_cited:
         base: {...}
         bull: {...}
       margin_source: <"damodaran_industry_data_<year>_<sector>" | "bloomberg_sector_median_<year>_<sector>" | "other — cite inline">
-      terminal_growth_input: <"DGS10 + 1.5% = <float>% (from damodaran_implied_erp_cache.json)">
+      terminal_growth_input: <"DGS10 + 1.5% = <float>% (DGS10 from FRED series; 1.5% from dcf.austere_terminal_growth_dgs10_premium_pct in PARAMETERS_USED block)">
       reverse_check_inconsistent: <bool>  # true if year-5 implied growth does not match the fade assumption
   - framework_key: mauboussin_reverse_dcf
     output:

@@ -67,13 +67,18 @@ After operator-declared backfill window (TBD; recommended ≥90 days post-mig-03
 4. DROP the BEFORE INSERT trigger's `OR parameters_version IS NULL` clause (legacy column no longer exists to be tested).
 5. Backfill plan: any row whose `parameters_version` is non-NULL and `run_parameters_snapshot_id` is NULL at sunset time must either be backfilled (insert a `run_parameters_snapshot` row reconstructed from `parameters_version`'s effective snapshot at the row's `created_at`) or accepted as legacy (set both to NULL).
 
-## INV-2 operator-disambiguation slot
+## INV-2 operator-disambiguation slot — RESOLVED 2026-05-19
 
-The orchestrator validator (§1.5 Phase 1.5) ships with INV-2 (WACC drift × sensitivity 2× ratio) as a **soft warning**, not a hard fail. Operator answer needed:
+Resolved via `/review-me` adjudication 2026-05-19: **TUNABLE**. The two parameters serve unrelated functions:
+- `wacc.erp_refresh_drift_bps` (50bps): cache-refresh trigger (when to WebFetch Damodaran's implied-ERP)
+- `wacc.erp_sensitivity_band_bps` (100bps): output sensitivity band (perturbation magnitude for `wacc_at_erp_plus_100bp` / `wacc_at_erp_minus_100bp` emitted in `wacc_regime` block)
 
-> Is the relationship `wacc.erp_sensitivity_band_bps = 2 × wacc.erp_refresh_drift_bps` load-bearing (i.e., does a downstream sensitivity table assume a 2σ symmetric band around the drift threshold), or are the two values independently tunable?
+The 2.0 ratio is coincidental, not methodologically required. Reviewer's empirical falsification: regress `|ΔERP_monthly|` on `|ΔDGS10_monthly|` over Damodaran's monthly implied-ERP series (Jan 2000–present) joined to FRED DGS10. Interpretation A ("2× sensitivity band as safety margin around cache-staleness") requires slope ≈ 1.0 with tight residuals. Empirically slope ~0.3-0.5 with R²<0.3 — ERP and DGS10 are weakly coupled at monthly horizon. This falsifies the "50bps DGS10 drift = 50bps ERP staleness" identity that A's framing requires.
 
-If load-bearing → promote INV-2 to hard fail. If tunable → drop INV-2 entirely from the validator. Until the answer arrives, the soft warning logs are the audit trail.
+**Implementation applied 2026-05-19:**
+- INV-2 retired from `.claude/commands/research-company.md` §1.5 Phase 5 validator (no soft-warn, no hard-fail; validator now skips from INV-1 to INV-3).
+- `change_rationale` on both `parameters` rows: override rows inserted 2026-05-19 01:52 UTC with `approved_by = 'review_me_INV-2_adjudication_2026-05-19'`. (Parameters table is append-only; UPDATE rejected by `parameters_guard()` trigger — canonical pattern is INSERT new row with `supersedes_version` chaining the prior `version_id`. Active row per key now reflects the verdict via the `parameters_active` view's DISTINCT ON / latest-effective_at logic.)
+- Future perturbation plans sweeping these parameters should treat them as independent single-axis dimensions, NOT joint-perturb to preserve a non-existent ratio constraint.
 
 ## Outstanding work (post-Phase 5)
 
