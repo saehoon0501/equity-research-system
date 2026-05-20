@@ -618,6 +618,33 @@ The fix surface: pm-supervisor §8 now shells out to `derive_summary_code()` rat
 
    Emitted `summary_code` MUST equal re-derived `code`. Mismatch → REJECT with: `"HG-29 Check 3: emitted summary_code <X> != derive_summary_code() recomputed <Y> on inputs (conviction=<>, structural_bullish=<>, sleeve=<>, held=<>). pm-supervisor must transcribe the function's verdict verbatim."`
 
+5. **Check 4 — kills_fired_evidence content-level validation (v3.1 lock per Phase 0 enum at `docs/superpowers/specs/v3.1-stress-subtest-enum.md`, attested at `v3.1-signoff-attestation.md`):**
+
+   **Grandfather:** if `created_at < 2026-06-15T00:00:00Z`, this check is SOFT (warn-only on missing/malformed `kills_fired_evidence`); after sunset, HARD FAIL.
+
+   **Apply iff `adversarial_stress_test.stress_failed > 0` OR `adversarial_stress_test.catastrophic_failures > 0` (i.e., `kills_fired >= 1`):**
+
+   a. **Field presence:** envelope must contain `adversarial_stress_test.kills_fired_evidence` (non-empty list). Missing → REJECT `"HG-29 Check 4a: kills_fired >= 1 but kills_fired_evidence absent."`
+
+   b. **Enum membership:** every entry's `sub_test_name` MUST be in {STRESS_HELMER_POWER_ABSENT, STRESS_HELMER_POWER_UNDER_EVIDENCED, STRESS_REINVESTMENT_QUALITY_D_CONTRADICTION, STRESS_CAPITAL_LIGHT_CHAIN_BROKEN, STRESS_GENERIC_CLAIM_INVERSION_FAILED}. Non-enum value → REJECT `"HG-29 Check 4b: sub_test_name <X> not in canonical enum — STRESS_UNENUMERATED. See v3.1-stress-subtest-enum.md."`
+
+   c. **Severity constraint:** STRESS_GENERIC_CLAIM_INVERSION_FAILED MUST have `severity: "non_catastrophic"` always (no LLM-judged escalation per v3.1 lock). Violation → REJECT.
+
+   d. **Path resolution (restricted grammar):** every `upstream_field_path` MUST parse against the locked grammar: dotted paths only; array access via explicit integer index OR canonical framework_id (named-key on `frameworks_cited`). No wildcards, no filters. Failed parse → REJECT.
+
+   e. **Observed-value derivation:** for each entry with `upstream_envelope_uuid != null`, open `memos/envelopes/<pre-pm-agent>__<upstream_envelope_uuid>.json` (or for fresh-pull entries, the `evidence_index.<cache_uuid>` row), resolve `upstream_field_path` per grammar, compute `resolved_value`. Assert `|resolved_value - observed_value|` within tolerance per `field_type`:
+      - currency: relative ±0.1%
+      - percentage: absolute ±0.05pp
+      - ratio: relative ±0.5%
+      - count: exact match
+      - string_categorical: exact match (case-sensitive, post-trim)
+
+      Mismatch → REJECT `"HG-29 Check 4e: observed_value <obs> derived from path <path> does not match upstream resolution <resolved> within <tolerance>."`
+
+   f. **Threshold-direction sanity:** for direction="above", observed_value MUST exceed threshold; for "below", less than; for "equals", equal. Violation → REJECT.
+
+   g. **STRESS_GENERIC provenance requirement:** if `sub_test_name == STRESS_GENERIC_CLAIM_INVERSION_FAILED`, the entry MUST include `searched_artifact_provenance` with non-empty `source_uri` + `retrieved_at`. Missing → REJECT (LLM cannot fire generic stress on "internal reasoning alone" per Phase 0 lock).
+
 **Historical case:** see BUILD_LOG.md.
 
 ### HG-30: sleeve_cap_check determinism (drift-fix Phase 2 Step 5b — 2026-05-17)
@@ -715,11 +742,42 @@ Hard-blocks any /research-company chain run where (a) the dispatch prompt's `run
 
 **Rationale:** without HG-33, the parameter-externalization audit chain has no end-to-end integrity check. An orchestrator that skipped §1.5 (or a tampered dispatch prompt) could silently produce a recommendation whose parameter lineage is unverifiable. HG-33 is the egress backstop matching §1.5's ingress hard-fail.
 
+### HG-37: STRESS_GENERIC fresh-pull cache validation (Bug 3 Phase B — 2026-05-20)
+
+Hard-blocks any pm-supervisor envelope where a `STRESS_GENERIC_CLAIM_INVERSION_FAILED` entry in `kills_fired_evidence[]` has `searched_artifact_provenance.source_type == "fresh_external_pull"` but the cited `evidence_index_cache_uuid` does NOT resolve to an actual `evidence_index` row with `source_quality_tier <= 2`. Per /review-me Phase 0 enum iter 2 finding S6, deferred to Phase B implementation.
+
+The fix surface: HG-29 Check 4 (added v3.1) validates the SCHEMA of `kills_fired_evidence[]` including provenance presence; HG-37 validates the CONTENT of fresh-pull cache references — that the pulled evidence was actually cached AND meets the source-quality bar.
+
+**Procedure:**
+
+1. **Grandfather:** if `created_at < 2026-06-15T00:00:00Z`, mark `HG-37 N/A-PRE-CUTOVER` and skip (sliding with HG-29 Check 4 sunset).
+
+2. **Check 1 — applicability:** scan `adversarial_stress_test.kills_fired_evidence[]` for entries where `sub_test_name == "STRESS_GENERIC_CLAIM_INVERSION_FAILED"` AND `searched_artifact_provenance.source_type == "fresh_external_pull"`. If none → mark `HG-37 N/A-NO-FRESH-PULL` and skip. If any → proceed per entry.
+
+3. **Check 2 — cache existence:** for each applicable entry, execute:
+   ```sql
+   SELECT row_uuid, source_quality_tier, retrieved_at, source_url
+   FROM evidence_index
+   WHERE row_uuid = $1;
+   ```
+   with `$1 = entry.searched_artifact_provenance.evidence_index_cache_uuid`.
+   - **0 rows:** REJECT `"HG-37 Check 2: STRESS_GENERIC fresh-pull cite references evidence_index cache_uuid <uuid> that does not exist. pm-supervisor must cache fresh-pull responses BEFORE citing them."`
+   - **DB unreachable:** REJECT per HG-1 precedent (no silent acceptance).
+   - **1 row returned:** proceed to Check 3.
+
+4. **Check 3 — source quality bar:** the retrieved row's `source_quality_tier` MUST be `<= 2`. Higher tier (lower quality) → REJECT `"HG-37 Check 3: STRESS_GENERIC fresh-pull cite has source_quality_tier <X> > 2. Fresh pulls must meet primary-source bar (tier <=2) to ground stress_failed."`
+
+5. **Check 4 — retrieval timestamp sanity:** the row's `retrieved_at` MUST be within 24h of the pm-supervisor envelope's `created_at` (allowing for chained-run reuse within the same operator session). Stale cache (>24h) → SOFT WARNING with note `"HG-37 Check 4: fresh-pull cache age <hours>h exceeds 24h freshness window. Consider re-pulling for high-stakes stress_failed claims."`. Soft only — does not reject.
+
+**Failure modes:** Check 2 or Check 3 failure → REJECT entire envelope. Check 4 → soft-warning only (audit-trail surface, not block).
+
+**Rationale:** without HG-37, an LLM that falsifies a STRESS_GENERIC by emitting an evidence_index_cache_uuid that doesn't exist (or references a low-quality source) can pass HG-29 Check 4's schema validation while still effectively LLM-fabricating the falsifier. HG-37 is the content-level backstop for fresh-pull provenance.
+
 ### Hard-gate enumeration (must be reported in every verdict)
 
 Every evaluator verdict MUST enumerate ALL hard-gates from HG-1 through the highest-numbered HG, each marked `PASS` / `FAIL` / `N/A-FOR-TIER` / `NOT-APPLICABLE-FOR-OUTPUT-TYPE` / `RETIRED`. Partial enumeration (silently skipping HGs that don't apply) is a process failure. If a gate doesn't apply, say so explicitly with the reason.
 
-Highest-numbered HG as of 2026-05-18: **HG-33**. The full enumeration list (update when adding new HGs):
+Highest-numbered HG as of 2026-05-20: **HG-37**. The full enumeration list (update when adding new HGs):
 
 - HG-1  (mechanical contamination check)
 - HG-2  (CompanyDeepDive predictions ≥3)
@@ -753,6 +811,7 @@ Highest-numbered HG as of 2026-05-18: **HG-33**. The full enumeration list (upda
 - HG-31 (conviction-override admissibility — drift-fix Phase 2 Step 5c; extends HG-22 with `validate_override()` 3-part check; 3 checks: grandfather pre-cutover / admissibility via canonical reason + predicate + upstream channel / no-override consistency)
 - HG-32 (evidence-graph determinism — drift-fix Phase 2 Step 6; rejects envelopes where emitted `evidence_index_refs[]` diverges from `retrieve_tier_evidence()` recomputation OR tier min-count + materiality-verification thresholds not met; 5 checks: grandfather pre-cutover / schema version stamp / set-equality with re-retrieval / tier minimum count / materiality verification on large numeric claims)
 - HG-33 (parameter snapshot lineage verification — parameter-externalization Phase 5 2026-05-18; rejects /research-company chain runs where dispatch-prompt run_id does not resolve to a run_parameters_snapshot row OR any upstream subagent envelope is missing PARAMETERS_USED header OR header hash mismatches snapshot; 4 checks: invocation-context branching (standalone /evaluate carved out) / DB-roundtrip resolution / per-envelope header presence + hash match / sidecar parity defense-in-depth)
+- HG-37 (STRESS_GENERIC fresh-pull cache validation — Bug 3 Phase B 2026-05-20; rejects pm-supervisor envelopes where STRESS_GENERIC_CLAIM_INVERSION_FAILED entries cite an evidence_index_cache_uuid that does not exist OR has source_quality_tier > 2; 4 checks: grandfather pre-2026-06-15 / applicability scan / cache existence via DB roundtrip / source quality bar; plus soft Check 4 for 24h freshness window). HG-29 Check 4 (added v3.1) validates the SCHEMA; HG-37 validates the CONTENT of fresh-pull provenance.
 
 Verdict format:
 
