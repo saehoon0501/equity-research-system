@@ -88,6 +88,26 @@ def test_find_framework_handles_wrong_type() -> None:
     assert find_framework({"frameworks_cited": 42}, "x") is None
 
 
+def test_find_framework_duplicate_key_in_legacy_list_returns_first() -> None:
+    """If a legacy list has duplicate framework_key entries, return the FIRST
+    match. Documents the dual-read shim's tie-breaking behavior (Q5 review)."""
+    memo = {
+        "frameworks_cited": [
+            {"framework_key": "damodaran_narrative_dcf", "output": {"base": 100}},
+            {"framework_key": "damodaran_narrative_dcf", "output": {"base": 200}},
+        ]
+    }
+    entry = find_framework(memo, "damodaran_narrative_dcf")
+    assert entry is not None
+    assert entry["output"]["base"] == 100, "First-match semantics expected"
+
+
+def test_find_framework_handles_empty_collections() -> None:
+    """Empty list / empty dict / empty None should all return None."""
+    assert find_framework({"frameworks_cited": []}, "any") is None
+    assert find_framework({"frameworks_cited": {}}, "any") is None
+
+
 # ---------- iter_frameworks ----------
 
 

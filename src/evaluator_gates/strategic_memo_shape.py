@@ -25,6 +25,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.evaluator_gates._frameworks_cited_shim import (
+    find_framework as _shim_find_framework,
+)
+
 CANONICAL_HELMER_POWERS: frozenset[str] = frozenset({
     "scale_economies",
     "network_economies",
@@ -121,8 +125,7 @@ def _find_framework(memo: dict, framework_key: str) -> dict | None:
     """Thin wrapper preserving the historical signature; delegates to the
     shared dual-read shim so this module supports BOTH the legacy list form
     and the v3.1+ keyed-object form transparently per CAF-2."""
-    from src.evaluator_gates._frameworks_cited_shim import find_framework
-    return find_framework(memo, framework_key)
+    return _shim_find_framework(memo, framework_key)
 
 
 def _validate_helmer_powers(memo: dict, result: StrategicMemoShapeResult) -> None:
