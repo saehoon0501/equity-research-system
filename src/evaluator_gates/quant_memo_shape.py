@@ -145,13 +145,11 @@ def _is_skip_sentinel(value: object) -> bool:
 
 
 def _find_framework(memo: dict, framework_key: str) -> dict | None:
-    fc = memo.get("frameworks_cited") or []
-    if not isinstance(fc, list):
-        return None
-    for entry in fc:
-        if isinstance(entry, dict) and entry.get("framework_key") == framework_key:
-            return entry
-    return None
+    """Thin wrapper preserving the historical signature; delegates to the
+    shared dual-read shim so this module supports BOTH the legacy list form
+    and the v3.1+ keyed-object form transparently per CAF-2."""
+    from src.evaluator_gates._frameworks_cited_shim import find_framework
+    return find_framework(memo, framework_key)
 
 
 def _validate_outside_view(memo: dict, result: QuantMemoShapeResult) -> None:
