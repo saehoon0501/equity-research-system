@@ -510,6 +510,158 @@ const getRunDetail = (runId: string): RunDetail => {
   };
 };
 
+// Gate scorecard — aggregates validation_attempts.jsonl by check name +
+// HG-code. Designed to answer "which gate fails most, is its retry rate
+// trending up, and how much does it cost per attempt?"  Pure aggregation
+// over the JSONL log; no DB, no caching — file is small (≤thousands of rows).
+
+type GateAggRow = {
+  // Stable name from validation_summary keys (envelope_shape, quant_memo_shape, …)
+  // OR HG-code from failed_gate_ids (HG-29, HG-31, …) — recordKind disambiguates.
+  name: string;
+  kind: "check" | "hg_code";
+  agents: string[];            // distinct agent_types that exercise this gate
+  attempts_total: number;
+  attempts_pass: number;
+  attempts_fail: number;
+  attempts_escalate: number;
+  pass_rate: number;           // attempts_pass / attempts_total, [0..1]
+  cost_when_fail_usd: number;  // sum of attempt_cost_usd for failing attempts
+  cost_avg_per_attempt_usd: number;
+  recent_decisions: string[];  // up to last N decisions chronologically (oldest→newest)
+  last_failed_run_id: string | null;
+  last_failed_at: number | null; // unix ms (file order proxy — JSONL is append-only)
+};
+
+type GateScorecard = {
+  generated_at: number;
+  total_attempts: number;
+  total_runs: number;
+  decision_breakdown: Record<string, number>;
+  checks: GateAggRow[];        // sorted by attempts_total DESC
+  hg_codes: GateAggRow[];      // sorted by attempts_fail DESC (HG codes only matter when failing)
+  insights: string[];          // human-readable trend flags
+};
+
+const SPARK_WINDOW = 14;
+
+const buildGateScorecard = (): GateScorecard => {
+  const attempts = readValidationAttempts();
+  // The JSONL is append-only — its file order is the chronological order.
+  // No timestamps live on individual rows yet (a known gap from the obs review),
+  // so order-index is the best proxy for "recent."
+  const checkAcc = new Map<string, GateAggRow>();
+  const hgAcc = new Map<string, GateAggRow>();
+  const decisionBreakdown: Record<string, number> = {};
+  const runIds = new Set<string>();
+
+  const newRow = (name: string, kind: GateAggRow["kind"]): GateAggRow => ({
+    name, kind,
+    agents: [],
+    attempts_total: 0, attempts_pass: 0, attempts_fail: 0, attempts_escalate: 0,
+    pass_rate: 0,
+    cost_when_fail_usd: 0, cost_avg_per_attempt_usd: 0,
+    recent_decisions: [],
+    last_failed_run_id: null,
+    last_failed_at: null,
+  });
+
+  for (let i = 0; i < attempts.length; i++) {
+    const a = attempts[i];
+    decisionBreakdown[a.decision] = (decisionBreakdown[a.decision] ?? 0) + 1;
+    runIds.add(a.run_id);
+
+    // validation_summary: keys are the named checks; values "pass" | "fail" (occasionally other)
+    for (const [check, verdict] of Object.entries(a.validation_summary ?? {})) {
+      const row = checkAcc.get(check) ?? newRow(check, "check");
+      row.attempts_total += 1;
+      const v = String(verdict).toLowerCase();
+      if (v === "pass") row.attempts_pass += 1;
+      else if (v === "fail") row.attempts_fail += 1;
+      // any other verdict left uncategorized; counted in total but not pass/fail
+      if (!row.agents.includes(a.agent_type)) row.agents.push(a.agent_type);
+      const cost = typeof a.attempt_cost_usd === "number" ? a.attempt_cost_usd : 0;
+      if (v === "fail") {
+        row.cost_when_fail_usd += cost;
+        row.last_failed_run_id = a.run_id;
+        row.last_failed_at = i; // ordinal proxy
+      }
+      row.recent_decisions.push(v === "pass" ? "P" : v === "fail" ? "F" : "?");
+      if (row.recent_decisions.length > SPARK_WINDOW) row.recent_decisions.shift();
+      checkAcc.set(check, row);
+    }
+
+    // failed_gate_ids: HG-codes that fired during this attempt
+    for (const hg of a.failed_gate_ids ?? []) {
+      const row = hgAcc.get(hg) ?? newRow(hg, "hg_code");
+      row.attempts_total += 1;
+      row.attempts_fail += 1; // HG codes only appear in failed_gate_ids
+      if (!row.agents.includes(a.agent_type)) row.agents.push(a.agent_type);
+      row.cost_when_fail_usd += typeof a.attempt_cost_usd === "number" ? a.attempt_cost_usd : 0;
+      row.last_failed_run_id = a.run_id;
+      row.last_failed_at = i;
+      row.recent_decisions.push("F");
+      if (row.recent_decisions.length > SPARK_WINDOW) row.recent_decisions.shift();
+      // Also count ESCALATE separately on the HG row that triggered the escalate.
+      if (a.decision === "ESCALATE") row.attempts_escalate += 1;
+      hgAcc.set(hg, row);
+    }
+  }
+
+  const finalize = (rows: GateAggRow[]): GateAggRow[] => {
+    for (const r of rows) {
+      r.pass_rate = r.attempts_total > 0 ? r.attempts_pass / r.attempts_total : 0;
+      r.cost_avg_per_attempt_usd = r.attempts_total > 0
+        ? Number((r.cost_when_fail_usd / r.attempts_total).toFixed(2))
+        : 0;
+      r.cost_when_fail_usd = Number(r.cost_when_fail_usd.toFixed(2));
+      r.agents.sort();
+    }
+    return rows;
+  };
+
+  // Insights: trend flags from the trailing-half vs leading-half failure rate.
+  // Crude but cheap — operator can drill if a flag fires.
+  const insights: string[] = [];
+  for (const row of checkAcc.values()) {
+    const recent = row.recent_decisions;
+    if (recent.length < 6) continue;
+    const half = Math.floor(recent.length / 2);
+    const leading = recent.slice(0, half);
+    const trailing = recent.slice(half);
+    const leadFail = leading.filter((d) => d === "F").length / leading.length;
+    const trailFail = trailing.filter((d) => d === "F").length / trailing.length;
+    if (trailFail > leadFail + 0.2) {
+      insights.push(`${row.name} fail rate rose ${(leadFail * 100).toFixed(0)}% → ${(trailFail * 100).toFixed(0)}% across last ${recent.length} attempts (agents: ${row.agents.join(", ")})`);
+    }
+  }
+  // Cost hotspot: any check with avg failure cost > $5 and attempts_fail > 2
+  for (const row of checkAcc.values()) {
+    if (row.attempts_fail >= 3 && row.cost_avg_per_attempt_usd > 5) {
+      insights.push(`${row.name} is a cost hotspot — ${row.attempts_fail} fails contributed $${row.cost_when_fail_usd} (${row.cost_avg_per_attempt_usd}/attempt avg)`);
+    }
+  }
+  // Any escalation at all is noteworthy
+  for (const row of hgAcc.values()) {
+    if (row.attempts_escalate > 0) {
+      insights.push(`${row.name} reached ESCALATE ${row.attempts_escalate}× — stuck-loop fingerprint or 3-attempt cap exhaustion`);
+    }
+  }
+
+  const checks = finalize(Array.from(checkAcc.values())).sort((a, b) => b.attempts_total - a.attempts_total);
+  const hg_codes = finalize(Array.from(hgAcc.values())).sort((a, b) => b.attempts_fail - a.attempts_fail);
+
+  return {
+    generated_at: Date.now(),
+    total_attempts: attempts.length,
+    total_runs: runIds.size,
+    decision_breakdown: decisionBreakdown,
+    checks,
+    hg_codes,
+    insights,
+  };
+};
+
 let lastBuiltAt = 0;
 
 const buildIndex = () => {
@@ -680,6 +832,17 @@ const memosPlugin = (): Plugin => ({
         const rows = listRuns();
         res.statusCode = 200;
         res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e).split("\n")[0] }));
+      }
+    });
+
+    server.middlewares.use("/__api/gates", (_req, res) => {
+      res.setHeader("content-type", "application/json");
+      try {
+        res.statusCode = 200;
+        res.end(JSON.stringify(buildGateScorecard()));
       } catch (e) {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: String(e).split("\n")[0] }));

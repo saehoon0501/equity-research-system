@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/livepanel.tsx","./src/runsview.tsx","./src/main.tsx","./src/memos.ts","./src/runs.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/gatesview.tsx","./src/livepanel.tsx","./src/runsview.tsx","./src/gates.ts","./src/main.tsx","./src/memos.ts","./src/runs.ts","./src/vite-env.d.ts"],"version":"5.9.3"}
