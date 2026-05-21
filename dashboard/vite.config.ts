@@ -1,13 +1,17 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const memosDir = join(repoRoot, "memos");
+const envelopesDir = join(memosDir, "envelopes");
 const agentsDir = join(repoRoot, ".claude", "agents");
+const validationLogPath = join(repoRoot, "logs", "validation_attempts.jsonl");
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const walk = (dir: string, exts: string[]): string[] => {
   const out: string[] = [];
@@ -290,6 +294,222 @@ const dbEntries = (fileMemos: { data: Record<string, unknown> }[]) => {
   ];
 };
 
+// Runs view helpers — sourced from run_parameters_snapshot joined with
+// execution_recommendations (via trigger_metadata->>'run_id') plus a streaming
+// scan of logs/validation_attempts.jsonl for per-attempt cost + decisions.
+
+type ValidationAttempt = {
+  run_id: string;
+  agent_type: string;
+  attempt_n: number;
+  fingerprint: string;
+  validation_passed: boolean;
+  validation_summary?: Record<string, string>;
+  failed_gate_ids?: string[];
+  attempt_cost_usd?: number;
+  cumulative_cost_usd?: number;
+  envelope_path?: string;
+  decision: "PASS" | "RETRY" | "ESCALATE" | string;
+};
+
+const readValidationAttempts = (filterRunId?: string): ValidationAttempt[] => {
+  if (!existsSync(validationLogPath)) return [];
+  let text: string;
+  try {
+    text = readFileSync(validationLogPath, "utf-8");
+  } catch {
+    return [];
+  }
+  const out: ValidationAttempt[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const row = JSON.parse(line) as ValidationAttempt;
+      if (filterRunId && row.run_id !== filterRunId) continue;
+      out.push(row);
+    } catch {/* skip malformed */}
+  }
+  return out;
+};
+
+type RunListRow = {
+  run_id: string;
+  ticker: string;
+  run_started_at: string;
+  run_ended_at: string | null;
+  run_status: string | null;
+  parameters_hash_prefix: string;
+  tag: string | null;
+  recommendation_id: string | null;
+  summary_code: string | null;
+  conviction: string | null;
+  attempt_count: number;
+  total_cost_usd: number;
+  agents_completed: string[];
+};
+
+const listRuns = (): RunListRow[] => {
+  const rows = pg(
+    `SELECT s.run_id::text             AS run_id,
+            s.ticker                   AS ticker,
+            s.run_started_at           AS run_started_at,
+            s.run_ended_at             AS run_ended_at,
+            s.run_status               AS run_status,
+            SUBSTRING(s.effective_parameters_hash, 1, 12) AS parameters_hash_prefix,
+            s.tag                      AS tag,
+            r.recommendation_id::text  AS recommendation_id,
+            r.recommendation           AS summary_code,
+            r.conviction               AS conviction
+       FROM run_parameters_snapshot s
+       LEFT JOIN execution_recommendations r
+         ON r.trigger_metadata->>'run_id' = s.run_id::text
+       ORDER BY s.run_started_at DESC NULLS LAST, s.created_at DESC`,
+  ) as Array<Record<string, string | null>>;
+
+  // Roll up validation_attempts.jsonl per run for cost + attempt count.
+  // O(N*M) in the worst case but N (runs) is tiny — fine for v0.1.
+  const attempts = readValidationAttempts();
+  const byRun = new Map<string, { count: number; cost: number; agents: Set<string> }>();
+  for (const a of attempts) {
+    const slot = byRun.get(a.run_id) ?? { count: 0, cost: 0, agents: new Set<string>() };
+    slot.count += 1;
+    slot.cost += typeof a.attempt_cost_usd === "number" ? a.attempt_cost_usd : 0;
+    if (a.decision === "PASS") slot.agents.add(a.agent_type);
+    byRun.set(a.run_id, slot);
+  }
+
+  return rows.map((r) => {
+    const rid = String(r.run_id);
+    const roll = byRun.get(rid);
+    return {
+      run_id: rid,
+      ticker: String(r.ticker ?? "UNKNOWN"),
+      run_started_at: String(r.run_started_at ?? ""),
+      run_ended_at: r.run_ended_at,
+      run_status: r.run_status,
+      parameters_hash_prefix: String(r.parameters_hash_prefix ?? ""),
+      tag: r.tag,
+      recommendation_id: r.recommendation_id,
+      summary_code: r.summary_code,
+      conviction: r.conviction,
+      attempt_count: roll?.count ?? 0,
+      total_cost_usd: roll ? Number(roll.cost.toFixed(2)) : 0,
+      agents_completed: roll ? Array.from(roll.agents).sort() : [],
+    };
+  });
+};
+
+type EnvelopeFile = {
+  agent: string;
+  filename: string;
+  kind: "envelope" | "context" | "degraded" | "backup";
+  size_bytes: number;
+  modified_at: number;
+  data: Record<string, unknown> | null;
+};
+
+const ENVELOPE_NAME_RE = /^([a-z][a-z0-9-]+)__([0-9a-f-]+?)(?:\.(json|degraded|context\.json))(\.bak(?:-[a-z0-9-]+)?)?$/i;
+
+const listEnvelopesForRun = (runId: string): EnvelopeFile[] => {
+  if (!existsSync(envelopesDir)) return [];
+  const out: EnvelopeFile[] = [];
+  for (const name of readdirSync(envelopesDir)) {
+    if (!name.includes(runId)) continue;
+    const m = name.match(ENVELOPE_NAME_RE);
+    if (!m) continue;
+    const [, agent, , ext, bakSuffix] = m;
+    const full = join(envelopesDir, name);
+    const st = statSync(full);
+    let kind: EnvelopeFile["kind"];
+    if (bakSuffix) kind = "backup";
+    else if (ext === "degraded") kind = "degraded";
+    else if (ext === "context.json") kind = "context";
+    else kind = "envelope";
+    let data: Record<string, unknown> | null = null;
+    if (kind !== "degraded") {
+      try {
+        const raw = readFileSync(full, "utf-8");
+        data = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : null;
+      } catch {/* leave null */}
+    }
+    out.push({
+      agent,
+      filename: name,
+      kind,
+      size_bytes: st.size,
+      modified_at: st.mtimeMs,
+      data,
+    });
+  }
+  // Sort: envelope first per agent, then context, then degraded, then backups; agents alpha.
+  const kindRank: Record<EnvelopeFile["kind"], number> = { envelope: 0, context: 1, degraded: 2, backup: 3 };
+  out.sort((a, b) => a.agent.localeCompare(b.agent) || kindRank[a.kind] - kindRank[b.kind] || a.filename.localeCompare(b.filename));
+  return out;
+};
+
+type RunDetail = {
+  snapshot: Record<string, unknown> | null;
+  recommendation: Record<string, unknown> | null;
+  attempts: ValidationAttempt[];
+  envelopes: EnvelopeFile[];
+  system_errors: Array<Record<string, unknown>>;
+};
+
+const getRunDetail = (runId: string): RunDetail => {
+  // Caller MUST have validated runId as a UUID before calling — SQL inlines
+  // the value because there is no parameterized helper, and the UUID gate
+  // makes injection impossible.
+  if (!UUID_RE.test(runId)) throw new Error("getRunDetail: runId must be a UUID");
+
+  const snapshotRows = pg(
+    `SELECT run_id::text                  AS run_id,
+            ticker, run_started_at, run_ended_at, run_status,
+            parameters_version_max::text  AS parameters_version_max,
+            effective_parameters_hash,
+            effective_parameters_jsonb,
+            tag, tag_signature, tag_issued_at_unix,
+            created_at
+       FROM run_parameters_snapshot
+      WHERE run_id = '${runId}'`,
+  ) as Array<Record<string, unknown>>;
+
+  const recRows = pg(
+    `SELECT recommendation_id::text  AS recommendation_id,
+            ticker, date, recommendation, conviction,
+            conviction_breakdown, mode, company_quality_flag, mode_certainty,
+            sizing_suggestion, execution_context, trigger_metadata,
+            rule_engine_version, debate_prompt_version,
+            model_id, model_version,
+            parameters_version::text  AS parameters_version,
+            created_at
+       FROM execution_recommendations
+      WHERE trigger_metadata->>'run_id' = '${runId}'
+      ORDER BY created_at DESC
+      LIMIT 1`,
+  ) as Array<Record<string, unknown>>;
+
+  // system_errors: blocked_decision is "research_company_TICKER_TIMESTAMP" —
+  // no direct run_id column, so we widen via substring match on error_detail
+  // (the orchestrator's terminal-update failure path JSON-embeds run_id).
+  const errRows = pg(
+    `SELECT error_id::text AS error_id, timestamp_at, source, error_type, error_detail,
+            retry_count, escalated_to_alert, blocked_decision, resolution, resolved_at
+       FROM system_errors
+      WHERE error_detail LIKE '%${runId}%'
+      ORDER BY timestamp_at DESC`,
+  ) as Array<Record<string, unknown>>;
+
+  return {
+    snapshot: snapshotRows[0] ?? null,
+    recommendation: recRows[0] ?? null,
+    attempts: readValidationAttempts(runId).sort(
+      (a, b) => a.agent_type.localeCompare(b.agent_type) || a.attempt_n - b.attempt_n,
+    ),
+    envelopes: listEnvelopesForRun(runId),
+    system_errors: errRows,
+  };
+};
+
 let lastBuiltAt = 0;
 
 const buildIndex = () => {
@@ -427,6 +647,43 @@ const memosPlugin = (): Plugin => ({
       res.setHeader("content-type", "application/json");
       res.statusCode = 200;
       res.end(JSON.stringify(buildStatus()));
+    });
+
+    server.middlewares.use("/__api/runs", (req, res) => {
+      res.setHeader("content-type", "application/json");
+      const url = new URL(req.url ?? "", "http://x");
+      // /__api/runs/<uuid>   → detail
+      // /__api/runs          → list
+      const trailing = url.pathname.replace(/^\/+|\/+$/g, "");
+      if (trailing && trailing !== "") {
+        if (!UUID_RE.test(trailing)) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "invalid run_id" }));
+          return;
+        }
+        try {
+          const detail = getRunDetail(trailing);
+          if (!detail.snapshot && !detail.recommendation && detail.attempts.length === 0 && detail.envelopes.length === 0) {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ error: "no such run" }));
+            return;
+          }
+          res.statusCode = 200;
+          res.end(JSON.stringify(detail));
+        } catch (e) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: String(e).split("\n")[0] }));
+        }
+        return;
+      }
+      try {
+        const rows = listRuns();
+        res.statusCode = 200;
+        res.end(JSON.stringify(rows));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e).split("\n")[0] }));
+      }
     });
 
     server.middlewares.use("/__api/refresh", (req, res) => {

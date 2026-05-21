@@ -12,6 +12,7 @@ import {
   type Memo,
 } from "./memos";
 import { LivePanel } from "./LivePanel";
+import { RunsView } from "./RunsView";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -330,6 +331,9 @@ const THEME_KEY = "dashboard-theme";
 const SORT_KEY = "dashboard-sort";
 const TABS_KEY = "dashboard-tabs";
 const ACTIVE_KEY = "dashboard-active";
+const VIEW_KEY = "dashboard-view";
+
+type View = "tickers" | "runs";
 
 type TabPaneProps = {
   ticker: string;
@@ -375,6 +379,14 @@ export const App = () => {
     const saved = localStorage.getItem(SORT_KEY) as SortKey | null;
     return saved && saved in SORTS ? saved : "newest";
   });
+  const [view, setView] = useState<View>(() => {
+    const saved = localStorage.getItem(VIEW_KEY);
+    return saved === "runs" ? "runs" : "tickers";
+  });
+
+  useEffect(() => {
+    localStorage.setItem(VIEW_KEY, view);
+  }, [view]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -516,7 +528,22 @@ export const App = () => {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-top">
-          <h1>Research</h1>
+          <div className="view-toggle" role="tablist" aria-label="view mode">
+            <button
+              role="tab"
+              aria-selected={view === "tickers"}
+              className={`view-toggle-btn ${view === "tickers" ? "view-active" : ""}`}
+              onClick={() => setView("tickers")}
+              title="ticker-grouped view"
+            >Tickers</button>
+            <button
+              role="tab"
+              aria-selected={view === "runs"}
+              className={`view-toggle-btn ${view === "runs" ? "view-active" : ""}`}
+              onClick={() => setView("runs")}
+              title="per-run observability view"
+            >Runs</button>
+          </div>
           <div className="sidebar-actions">
             <button
               className="theme-toggle"
@@ -543,6 +570,8 @@ export const App = () => {
             </button>
           </div>
         </div>
+        {view === "tickers" && (
+          <>
         <input
           className="search"
           placeholder="Filter tickers…"
@@ -591,9 +620,19 @@ export const App = () => {
         <footer className="sidebar-foot">
           {memos.length} memos · {tickers.length} tickers
         </footer>
+          </>
+        )}
+        {view === "runs" && (
+          <div className="sidebar-runs-hint rv-muted">
+            Run-centric observability — pick a run on the right to inspect its parameters snapshot, stage timeline, envelopes, recommendation, and any system errors.
+          </div>
+        )}
       </aside>
 
-      <main className="content">
+      <main className={`content ${view === "runs" ? "content-runs" : ""}`}>
+        {view === "runs" ? (
+          <RunsView />
+        ) : (<>
         {status.errors.length > 0 && !statusDismissed && (
           <div className="status-banner">
             <div className="status-icon">⚠</div>
@@ -675,6 +714,7 @@ export const App = () => {
         ) : (
           <p className="muted">No memos found in ../memos.</p>
         )}
+        </>)}
       </main>
       {matrixOpen && <DecisionMatrixModal onClose={() => setMatrixOpen(false)} />}
     </div>
