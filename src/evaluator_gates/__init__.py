@@ -71,6 +71,10 @@ from src.evaluator_gates.cdd_memo_shape import (
     CDDMemoShapeResult,
     validate_cdd_memo_shape,
 )
+from src.evaluator_gates.tactical_envelope_shape import (
+    TacticalEnvelopeShapeResult,
+    validate_tactical_envelope_shape,
+)
 
 
 # Stable rule IDs used in audit rows + delta-prompts. The convention
@@ -86,6 +90,7 @@ GATE_IDS: dict[str, str] = {
     "strategic_memo_shape":  "HG-30",
     "catalyst_memo_shape":   "HG-31",
     "cdd_memo_shape":        "HG-32",
+    "tactical_envelope_shape": "HG-33",
 }
 
 
@@ -97,6 +102,7 @@ VALID_ARTIFACT_TYPES = (
     "strategic_memo",
     "catalyst_memo",
     "cdd_memo",
+    "tactical_envelope",
 )
 
 
@@ -295,6 +301,34 @@ def _fingerprint_cdd_memo(r: CDDMemoShapeResult) -> str:
         parts.append(f"banned:{k}")
     if r.invalid_disposition is not None:
         parts.append(f"disp:{r.invalid_disposition}")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
+def _fingerprint_tactical_envelope(r: TacticalEnvelopeShapeResult) -> str:
+    """Deterministic stuck-loop signature for tactical envelope shape gate."""
+    parts: list[str] = []
+    for k in r.missing_top_level:
+        parts.append(f"top:{k}")
+    for v in r.invalid_enum_values:
+        parts.append(f"enum:{v}")
+    if r.missing_unavailable_reason:
+        parts.append("missing_unavailable_reason")
+    if r.invalid_unavailable_reason is not None:
+        parts.append(f"bad_unavail_reason:{r.invalid_unavailable_reason}")
+    if r.rf_degenerate_not_bool:
+        parts.append("rf_degenerate_not_bool")
+    if r.tactical_cell_not_dict:
+        parts.append("tactical_cell_not_dict")
+    for k in r.missing_cell_subkeys:
+        parts.append(f"cell:{k}")
+    if r.invalid_conviction is not None:
+        parts.append(f"bad_conviction:{r.invalid_conviction}")
+    if r.invalid_cell_disposition is not None:
+        # INV-2.1-A violation surface — distinctive fingerprint to catch
+        # canonical BUY/TRIM/SELL leakage at retry-loop boundaries.
+        parts.append(f"bad_disposition:{r.invalid_cell_disposition}")
+    if r.invalid_cell_size_type is not None:
+        parts.append(f"bad_size_type:{r.invalid_cell_size_type}")
     return "|".join(sorted(parts)) if parts else "ok"
 
 
@@ -498,6 +532,29 @@ def _validate_cdd_memo(env: dict[str, Any]) -> tuple[list[GateOutcome], dict[str
     return outcomes, summary
 
 
+def _validate_tactical_envelope(env: dict[str, Any]) -> tuple[list[GateOutcome], dict[str, str]]:
+    """Gate set for tactical-overlay envelopes: shape only (HG-33).
+
+    INV-2.1-A enforcement lives in the shape validator: canonical BUY/TRIM/SELL
+    in cell_disposition is rejected (must be one of BUY-HIGH/BUY-MED/HOLD/AVOID).
+    No UUID check (tactical-overlay does not own evidence_index rows; its
+    frameworks_cited list is a static label, not a UUID array).
+    """
+    outcomes: list[GateOutcome] = []
+    summary: dict[str, str] = {}
+
+    shape = validate_tactical_envelope_shape(env)
+    outcomes.append(_outcome(
+        "tactical_envelope_shape",
+        shape.valid,
+        _to_dict_safe(shape),
+        _fingerprint_tactical_envelope(shape),
+    ))
+    summary["tactical_envelope_shape"] = "pass" if shape.valid else "fail"
+
+    return outcomes, summary
+
+
 def validate_all(
     envelope: dict[str, Any] | str | Path,
     *,
@@ -570,6 +627,8 @@ def validate_all(
         )
     elif artifact_type == "cdd_memo":
         outcomes, summary = _validate_cdd_memo(env)
+    elif artifact_type == "tactical_envelope":
+        outcomes, summary = _validate_tactical_envelope(env)
     else:  # pragma: no cover — guarded above
         raise AssertionError("unreachable artifact_type branch")
 
