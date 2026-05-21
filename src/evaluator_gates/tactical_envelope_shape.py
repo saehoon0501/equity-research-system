@@ -107,10 +107,12 @@ def validate(env: dict) -> ValidationResult:
         errs.append(f"tactical_cell must be dict, got {type(cell).__name__}")
         return ValidationResult(passed=False, errors=errs)
 
+    missing_cell_subkey = False
     for key in REQUIRED_TACTICAL_CELL:
         if key not in cell:
             errs.append(f"missing tactical_cell.{key}")
-    if any(f"missing tactical_cell" in e for e in errs):
+            missing_cell_subkey = True
+    if missing_cell_subkey:
         return ValidationResult(passed=False, errors=errs)
 
     # conviction enum
