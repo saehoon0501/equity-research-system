@@ -104,6 +104,46 @@ Build WACC for the DCF:
 
 Emit in `wacc_regime` block (§5) with sensitivity: `wacc_at_erp_plus_100bp` and `wacc_at_erp_minus_100bp` (compute by holding all other inputs fixed and perturbing ERP by ±1pp).
 
+### 3.10. Intangibles Adjustment (Ewens-Peters-Wang 2024 industry-specific rates) — Overlay 7, SHADOW MODE pre-promotion
+
+**Tier-conditional applicability:** for `tier ∈ {core_fundamental, thematic_growth}`, emit the `intangibles_adjustment` block in §5. For `tier == speculative_optionality`, SKIP entirely and emit `intangibles_adjustment: "SKIPPED — speculative_optionality"` with envelope flag `intangibles_adjustment_skipped_tier_speculative_optionality: true`.
+
+**Status:** SHADOW MODE — both GAAP-baseline and intangibles-adjusted values are emitted; production label-calculus uses GAAP-baseline `incremental_roic` until Step 4 promotion gate clears. Set `roic_methodology_regime: 'gaap'` until promotion lands (operator-gated).
+
+**Methodology source:** Ewens, Peters, Wang (2024) "Measuring Intangible Capital with Market Prices," *Management Science* 71(1):407-427. Industry-specific rates derived from firm-exit market prices. Parameter file: https://github.com/michaelewens/Intangible-capital-stocks (publicly downloadable).
+
+**Why EPW 2024 rather than Hulten 2010 or Mauboussin SL 6/2/2yr:** see `/Users/sehoonbyun/.claude/jobs/4a47ad37/step1_verification_note.md` (Step 1 primary-source verification) + the useful-life /review-me cycle (iters 1-3 + external /research). Short version: EPW is the strongest current peer-reviewed source; industry-specific is empirically right per Iqbal-Rajgopal-Srivastava-Zhao 2025 (the very paper Mauboussin cites in his April 2025 deck argues against uniform rules-of-thumb); externally-maintained parameter file = minimal ongoing maintenance; resolves the Hulten/Mauboussin internal incoherence by being independent of both.
+
+**Industry classification:** map ticker to one of 5 Fama-French industry classes (High-tech / Health / Consumer / Manufacturing / Other) using SIC code from `mcp__edgar__get_company_facts`. EPW parameter file provides per-class rates.
+
+**Rates for High-tech (covers most software / internet / semis tickers in this system):**
+- δ_R&D: 42% (geometric declining-balance annual rate)
+- δ_organ: 20% (geometric, organizational-capital portion of SG&A)
+- γ_SGA: 37% (fraction of SG&A capitalized as organizational capital)
+- R&D capitalization fraction: 100% (implicit in EPW model)
+
+**For other industries:** pull per-class rates from the EPW parameter file at run-time; cite the specific row in the envelope's `epw_industry_rates` block.
+
+**Methodology procedure:**
+
+1. **Classify ticker into EPW industry** via SIC code → Fama-French 5-class mapping.
+2. **Compute initial intangibles balance via Hall steady-state seed** (canonical PIM workaround):
+   - K_0(R&D) = R&D_0 / (g_R&D + δ_R&D), where g_R&D = trailing 5y CAGR of R&D investment
+   - K_0(organ) = (γ_SGA × SG&A_0) / (g_SGA + δ_organ)
+3. **Roll forward to current year:** apply geometric depreciation per category to opening balance, add net new investment, repeat. The seed's contribution decays geometrically; for mature firms with >10y of SG&A history, the seed's effect on year-N balance is <5%.
+4. **Compute `capitalized_intangibles_balance_usd`** = K_R&D(current) + K_organ(current).
+5. **Compute `intangibles_adjusted_earnings_usd`** = GAAP NOPAT + (gross intangible capex − amortization) for current year. Sanity-check: MSFT FY2024 Mauboussin deck shows $97B → $108B (+11.3%); under EPW high-tech rates, expect comparable order-of-magnitude.
+6. **Compute `intangibles_adjusted_invested_capital_usd`** = traditional invested capital + capitalized_intangibles_balance.
+7. **Compute `intangibles_adjusted_roic_pct`** = adjusted_earnings / avg(adjusted_IC_current, adjusted_IC_prior).
+
+**Capitalization direction:** RETROACTIVE (Hall steady-state seed back-fills historical capitalization; geometric decay applies uniformly going forward).
+
+**Reverse-DCF interaction note (do NOT misinterpret):** switching ROIC denominator to intangibles-adjusted mechanically lowers reverse-DCF implied growth (larger invested-capital base) without any change to market price or fundamentals. Report this delta in `intangibles_adjustment.reverse_dcf_implied_growth_delta_pp` as informational; do NOT treat as a bullish signal.
+
+**Cross-agent consumer contracts (post-Step 4 promotion):**
+- strategic-analyst: under retroactive capitalization with steady-state seed, all 5y ROIC datapoints in a run are homogeneous; the `roic_methodology_regime` flag is informational only for filtering pre-promotion vs post-promotion runs.
+- evaluator: pre-promotion runs (`regime='gaap'`) and post-promotion runs (`regime='intangibles_adjusted'`) are separate cohorts; no cross-cohort historical conviction calibration.
+
 ### 4. Apply the 3 frameworks
 
 #### damodaran_narrative_dcf
@@ -443,6 +483,20 @@ wacc_regime:
   wacc_at_erp_plus_100bp: <float>
   wacc_at_erp_minus_100bp: <float>
   cost_of_debt_method: <"book_interest" | "market_yield_fallback">
+roic_methodology_regime: <"gaap" | "intangibles_adjusted">  # Overlay 7 — top-level flag indicating which methodology generated this run's ROIC values. Single value per run (retroactive capitalization homogenizes the trend series). Pre-promotion: "gaap". Post-Step-4 promotion: "intangibles_adjusted". Strategic-analyst + evaluator must filter pre/post-promotion cohorts on this flag.
+intangibles_adjustment:  # Overlay 7 — Ewens-Peters-Wang 2024 industry rates (§3.10). SHADOW MODE pre-promotion. Tier-gated.
+  fama_french_industry_class: <"HiTec" | "Hlth" | "Cnsmr" | "Manuf" | "Other" | "SKIPPED — speculative_optionality">  # EPW Fama-French 5-class assignment derived from SIC; load-bearing for rate lookup
+  epw_industry_rates:  # Industry-specific rates from EPW 2024 parameter file (https://github.com/michaelewens/Intangible-capital-stocks); HiTec defaults shown below
+    delta_rd: <float>  # geometric depreciation rate for R&D capital (HiTec: 0.42)
+    delta_organ: <float>  # geometric depreciation rate for organizational-capital portion of SG&A (HiTec: 0.20)
+    gamma_sga: <float>  # fraction of SG&A capitalized as organizational capital (HiTec: 0.37); R&D is capitalized at 100% (implicit)
+  hall_steady_state_seed_used: <bool>  # true when initial intangibles balance was seeded via K_0 = I_0/(g+δ) per category (canonical PIM workaround per Hall 2001 / EKP 2022)
+  capitalized_intangibles_balance_usd: <float | "SKIPPED — speculative_optionality">  # K_R&D + K_organ at current year, geometric-decay rolled forward from Hall seed
+  intangibles_adjusted_earnings_usd: <float | "SKIPPED — speculative_optionality">  # GAAP NOPAT + (gross intangible capex − amortization)
+  intangibles_adjusted_invested_capital_usd: <float | "SKIPPED — speculative_optionality">  # Traditional invested capital + capitalized_intangibles_balance
+  intangibles_adjusted_roic_pct: <float | "SKIPPED — speculative_optionality">  # intangibles_adjusted_earnings / avg(adjusted_IC_current, adjusted_IC_prior)
+  reverse_dcf_implied_growth_delta_pp: <float | "SKIPPED — speculative_optionality">  # Informational ONLY — mechanical effect of ROIC-denominator switch; do NOT treat as bullish signal
+  intangibles_adjustment_skipped_tier_speculative_optionality: <bool>  # true for speculative tier; numeric fields all "SKIPPED" when true
 dcf_divergence:  # Bug 8 — dual-DCF framework-engagement floor; MANDATORY for core_fundamental + thematic_growth tiers
   inherited_dcf_base: <float>           # mirror of frameworks_cited[damodaran_narrative_dcf].inherited_dcf_base for ease of evaluator HG-20 / §2.7 R4 marker-grep
   austere_dcf_base: <float>             # mirror of frameworks_cited[austere_dcf].austere_dcf_base
