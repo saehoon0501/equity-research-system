@@ -1251,3 +1251,175 @@ a:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .rv-more:hover { background: var(--accent-soft); }
+
+/* ============================================================ */
+/* Gate scorecard (gates view)                                  */
+/* ============================================================ */
+
+.gview {
+  padding: 24px 32px 80px;
+  background: var(--bg);
+  min-height: 100vh;
+  overflow-y: auto;
+}
+
+.gview-h {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.gview-h h2 { margin: 0 0 10px; font-size: 22px; }
+.gview-meta {
+  display: flex;
+  gap: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.gview-meta strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  margin-right: 3px;
+}
+.gview-meta .gs-warn strong { color: var(--danger); }
+
+.gs-insights {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 18px;
+}
+.gs-insights h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+}
+.gs-insights ul { margin: 0; padding-left: 20px; font-size: 13px; }
+.gs-insights li { padding: 2px 0; }
+
+.gs-section { margin-bottom: 24px; }
+.gs-section-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.gs-section-h h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.gs-toggle {
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.gs-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.gs-table th, .gs-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.gs-table thead th {
+  background: var(--bg);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.gs-table tbody tr:last-child td { border-bottom: none; }
+.gs-table tbody tr:hover { background: var(--bg); }
+
+.gs-name code {
+  background: var(--pill);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 600;
+}
+.gs-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right !important;
+}
+.gs-cost { color: var(--muted); }
+.gs-esc { color: var(--danger); font-weight: 700; }
+
+.gs-rate {
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+}
+.gs-rate-good { color: #16a34a; background: rgba(22, 163, 74, 0.08); }
+.gs-rate-mid  { color: #ca8a04; background: rgba(202, 138, 4, 0.10); }
+.gs-rate-bad  { color: #dc2626; background: rgba(220, 38, 38, 0.10); }
+:root[data-theme="dark"] .gs-rate-good { color: #4ade80; }
+:root[data-theme="dark"] .gs-rate-mid  { color: #fbbf24; }
+:root[data-theme="dark"] .gs-rate-bad  { color: #f87171; }
+
+.gs-trend {
+  margin-left: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: help;
+}
+.gs-trend-up   { color: #dc2626; }
+.gs-trend-down { color: #16a34a; }
+:root[data-theme="dark"] .gs-trend-up   { color: #f87171; }
+:root[data-theme="dark"] .gs-trend-down { color: #4ade80; }
+
+.gs-spark {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: -1px;
+  cursor: help;
+}
+.gs-spark-cell { display: inline-block; line-height: 1; }
+.gs-spark-pass { color: #16a34a; }
+.gs-spark-fail { color: #dc2626; }
+.gs-spark-na   { color: var(--muted); opacity: 0.4; }
+:root[data-theme="dark"] .gs-spark-pass { color: #4ade80; }
+:root[data-theme="dark"] .gs-spark-fail { color: #f87171; }
+.gs-empty { color: var(--muted); }
+
+.gs-agents {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.gs-agent-chip {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  background: var(--pill);
+  color: var(--muted);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.gs-foot {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.gs-foot code {
+  background: var(--pill);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+}

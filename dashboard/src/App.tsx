@@ -13,6 +13,7 @@ import {
 } from "./memos";
 import { LivePanel } from "./LivePanel";
 import { RunsView } from "./RunsView";
+import { GatesView } from "./GatesView";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -333,7 +334,7 @@ const TABS_KEY = "dashboard-tabs";
 const ACTIVE_KEY = "dashboard-active";
 const VIEW_KEY = "dashboard-view";
 
-type View = "tickers" | "runs";
+type View = "tickers" | "runs" | "gates";
 
 type TabPaneProps = {
   ticker: string;
@@ -381,7 +382,8 @@ export const App = () => {
   });
   const [view, setView] = useState<View>(() => {
     const saved = localStorage.getItem(VIEW_KEY);
-    return saved === "runs" ? "runs" : "tickers";
+    if (saved === "runs" || saved === "gates") return saved;
+    return "tickers";
   });
 
   useEffect(() => {
@@ -543,6 +545,13 @@ export const App = () => {
               onClick={() => setView("runs")}
               title="per-run observability view"
             >Runs</button>
+            <button
+              role="tab"
+              aria-selected={view === "gates"}
+              className={`view-toggle-btn ${view === "gates" ? "view-active" : ""}`}
+              onClick={() => setView("gates")}
+              title="gate-level scorecard across all runs"
+            >Gates</button>
           </div>
           <div className="sidebar-actions">
             <button
@@ -627,11 +636,18 @@ export const App = () => {
             Run-centric observability — pick a run on the right to inspect its parameters snapshot, stage timeline, envelopes, recommendation, and any system errors.
           </div>
         )}
+        {view === "gates" && (
+          <div className="sidebar-runs-hint rv-muted">
+            Gate scorecard — aggregate pass-rate, retry-cost, and trend per validation gate across all /research-company runs. Use to find the gate that's burning the most budget or trending worse.
+          </div>
+        )}
       </aside>
 
-      <main className={`content ${view === "runs" ? "content-runs" : ""}`}>
+      <main className={`content ${view !== "tickers" ? "content-runs" : ""}`}>
         {view === "runs" ? (
           <RunsView />
+        ) : view === "gates" ? (
+          <GatesView />
         ) : (<>
         {status.errors.length > 0 && !statusDismissed && (
           <div className="status-banner">
