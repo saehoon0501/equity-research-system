@@ -6,7 +6,7 @@
 **v2→v3 changes (composition-level only):**
 - Q1 ADDRESSED: field-name convention pin — `tactical_bin` is canonical across `TacticalSignal` dataclass + Plan B v6 emission + Plan C v5 consumption. Implementer applies the rename uniformly (one-line touch-up across the converged plans, not a re-open).
 - Q2 FIXED: `metadata.locked_status` storage mechanism deferred to Section 3 (Section 2 cites candidate approaches without locking storage shape).
-- Q3 FIXED: explicit Section 2.1 scope narrowing — label vocabulary only (BUY → BUY-strong/BUY-light); tier-dependent mapping (which would change matrix SHAPE) explicitly punted to Section 3.
+- Q3 FIXED: explicit Section 2.1 scope narrowing — label vocabulary only (BUY → BUY-HIGH/BUY-MED, RESOLVED at Section 2.1 v5-final; see `docs/superpowers/consensus/2026-05-21-section2.1-label-vocabulary.md`); tier-dependent mapping (which would change matrix SHAPE) explicitly punted to Section 3.
 - Q4 FIXED: 40% fire-rate threshold DROPPED at Phase 1; Phase 1 reports fire rates descriptively only; threshold-setting deferred to Phase 2 when cohort data exists.
 
 ## Composition provenance (unchanged from v2)
@@ -107,7 +107,7 @@ Steps 1-7 unchanged.
 
 **v3 explicit scope:** Section 2.1 follow-up is **LABEL VOCABULARY ONLY**. It does NOT change matrix SHAPE (3 conviction × 4 tactical_bin = 12 cells). Specifically:
 
-- **BUY-strong vs BUY-light label split** — refines the BUY label into two sub-labels distinguishing HIGH × Positive (BUY-strong) from MEDIUM × Positive (BUY-light). Same 12-cell matrix; relabel BUY cell contents. NO new cells. NO new axes. Section 2.1 scope.
+- **BUY-HIGH vs BUY-MED label split (RESOLVED at Section 2.1 v5-final)** — refines the BUY label into two sub-labels: HIGH × Positive → BUY-HIGH; MEDIUM × Positive → BUY-MED. Same 12-cell matrix; relabel BUY cell contents only. NO new cells. NO new axes. See `docs/superpowers/consensus/2026-05-21-section2.1-label-vocabulary.md` for the converged decision + INV-2.1-A disjointness invariant + Phase 2 4-quadrant decision matrix + Phase 3 18-month deadline with default re-merge.
 
 **Tier-dependent mapping is NOT Section 2.1.** v3 reclassifies it back to Section 3:
 
@@ -158,5 +158,5 @@ Steps 1-7 unchanged.
 If iteration-3 signals "no substantive issues," Section 2 is locked. Plan v3 is the converged design awaiting operator execution-gate.
 
 Upon final convergence:
-- Section 2 locked → Section 2.1 (BUY-strong/light label vocabulary) is the next operator-initiated follow-up
+- Section 2 locked → Section 2.1 (BUY-HIGH/BUY-MED label vocabulary) RESOLVED at v5-final per `docs/superpowers/consensus/2026-05-21-section2.1-label-vocabulary.md`
 - Section 3 (implementation plan + backtest harness + optional tier-dependent expansion) becomes operator-actionable
