@@ -25,11 +25,13 @@ _DISPOSITION_MAP: dict[tuple[str, str], str] = {
     ("MEDIUM", "neutral"): "HOLD",
     ("MEDIUM", "positive"): "BUY-MED",
     ("MEDIUM", "unavailable"): "HOLD",
-    # LOW row: AVOID on any signal; HOLD on unavailable (Section 2.1 v4 fix)
+    # LOW row: AVOID on affirmative signal; HOLD on unavailable so that
+    # data-insufficiency (e.g., recent IPO) defers rather than compounding the
+    # LOW-conviction veto into an AVOID without affirmative evidence.
     ("LOW", "negative"): "AVOID",
     ("LOW", "neutral"): "AVOID",
     ("LOW", "positive"): "AVOID",
-    ("LOW", "unavailable"): "HOLD",  # data-insufficiency defers, doesn't double-penalize
+    ("LOW", "unavailable"): "HOLD",
 }
 
 
@@ -56,7 +58,9 @@ def tactical_cell_size_pct(
     - positive    → band_max_pct
     - neutral     → midpoint = (band_min_pct + band_max_pct) / 2
     - negative    → band_min_pct
-    - unavailable → band_min_pct (v3 fix: closes IPO alpha leak vs midpoint)
+    - unavailable → band_min_pct  (conservative under data-insufficiency; symmetric
+                                  with absent-evidence treatment so that recent
+                                  IPOs are not silently sized at the midpoint)
     """
     if conviction == "LOW":
         return 0.0  # Plan A LOW row hard-zero discipline
@@ -68,7 +72,6 @@ def tactical_cell_size_pct(
         return float(band_max_pct)
     if tactical_bin == "neutral":
         return (float(band_min_pct) + float(band_max_pct)) / 2.0
-    # negative AND unavailable both → band.min (v3 fix)
     return float(band_min_pct)
 
 

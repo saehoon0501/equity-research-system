@@ -23,6 +23,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -85,7 +86,7 @@ def _band_lookup(conviction: str) -> tuple[float, float]:
 def run_phase1(
     envelope_dir: str,
     ticker: Optional[str] = None,
-    tactical_bin_injector: Optional[callable] = None,
+    tactical_bin_injector: Optional[Callable[[dict], str]] = None,
 ) -> Phase1Report:
     """Walk pm-supervisor envelopes; apply overlay; report Phase 1 correctness.
 

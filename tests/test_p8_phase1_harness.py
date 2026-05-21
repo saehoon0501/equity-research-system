@@ -54,17 +54,27 @@ def test_medium_conviction_positive_emits_buy_med_load_bearing_case():
 
 
 def test_inv_2_1_a_all_dispositions_valid_across_cohort():
-    """Phase 1 hard gate: all emitted dispositions must be in valid enum."""
+    """Phase 1 hard gate: all emitted dispositions must be in valid enum across
+    all 4 tactical_bin values exercised."""
     convictions = ["HIGH", "MEDIUM", "LOW", "HIGH", "MEDIUM"]
-    bins = ["positive", "neutral", "negative", "unavailable", "positive"]
+    bins_by_run_id = {
+        "run-0": "positive",
+        "run-1": "neutral",
+        "run-2": "negative",
+        "run-3": "unavailable",
+        "run-4": "positive",
+    }
     with tempfile.TemporaryDirectory() as tmpdir:
         for i, conv in enumerate(convictions):
             _make_envelope(tmpdir, f"run-{i}", "GOOGL", conv)
         report = run_phase1(
             tmpdir,
-            tactical_bin_injector=lambda env, _idx=[0]: bins[_idx[0]] if _idx[0] < len(bins) else "positive",
+            tactical_bin_injector=lambda env: bins_by_run_id[env["run_id"]],
         )
-    # Each disposition must be in the disjoint tactical_disposition enum
+    assert report.cohort_size == 5
+    # Confirm all 4 tactical_bin values were exercised (not just bins[0] coincidentally).
+    emitted_bins = {r.tactical_bin for r in report.results}
+    assert emitted_bins == {"positive", "neutral", "negative", "unavailable"}
     for r in report.results:
         assert r.cell_disposition in VALID_DISPOSITION_VALUES
     assert report.all_dispositions_valid is True
