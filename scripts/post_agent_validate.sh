@@ -86,6 +86,7 @@ case "$SUBAGENT_TYPE" in
     strategic-analyst)    ARTIFACT_TYPE="strategic_memo" ;;
     catalyst-scout)       ARTIFACT_TYPE="catalyst_memo" ;;
     pm-supervisor)        ARTIFACT_TYPE="pm_envelope" ;;
+    tactical-overlay)     ARTIFACT_TYPE="tactical_envelope" ;;
     *)                    exit 0 ;;
 esac
 
@@ -153,6 +154,7 @@ case "$SUBAGENT_TYPE" in
     strategic-analyst)    COST_ESTIMATE_USD="14.0" ;;
     catalyst-scout)       COST_ESTIMATE_USD="18.0" ;;
     pm-supervisor)        COST_ESTIMATE_USD="11.0" ;;
+    tactical-overlay)     COST_ESTIMATE_USD="1.0" ;;
     *)                    COST_ESTIMATE_USD="5.0" ;;
 esac
 
