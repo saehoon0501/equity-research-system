@@ -1,43 +1,52 @@
-"""G-CHECK-3 fixture: 5-surface renderer coverage gate.
+"""G-CHECK-3 fixture: tactical-overlay MAPPING coverage gate (v2 — scope corrected).
 
-Per docs/phase_1_acceptance_spec.md, Section 2.1 v5 requires the renderer to be able to
-produce 5 distinct surfaces:
+v1 → v2 changes (iteration-1 reviewer catches):
+- Scope claim corrected: this fixture tests the **overlay mapping function**, NOT the
+  pm-supervisor markdown renderer. The renderer is a markdown agent spec, not
+  executable code; verifying it requires a separate golden-file/output-snapshot test
+  not covered here. v1 over-claimed "renderer coverage."
+- INV-2.1-A direct assertion added (one cheap line): the matrix values must be a
+  subset of {BUY-HIGH, BUY-MED, HOLD, AVOID}, never containing canonical
+  {BUY, TRIM, SELL}.
+- Public accessor used (`overlay.disposition_map()` instead of `_DISPOSITION_MAP`)
+  to decouple the test from private-name internals.
+
+Per docs/phase_1_acceptance_spec.md, Section 2.1 v5 requires the renderer to be able
+to produce 5 distinct surfaces:
   1. BUY-HIGH         (HIGH × positive)
   2. BUY-MED          (MEDIUM × positive)
-  3. HOLD             (any of 9 matrix cells routing to HOLD without veto)
+  3. HOLD             (any of 8 matrix cells routing to HOLD without veto)
   4. AVOID            (LOW × {negative, neutral, positive})
   5. LOW-CONVICTION VETO (LOW × unavailable — renders as HOLD + veto flag)
 
-This fixture tests that each surface is reachable through the matrix function AND
-that the LOW-CONVICTION VETO surface is uniquely identifiable from the matrix output
-(i.e., the renderer can distinguish "plain HOLD" from "HOLD + veto").
-
-Iteration 3 catch: presence-only test ("renderer surfaces all 5 enum values") is
-insufficient — a renderer that emits BUY-HIGH for every input still passes presence.
-Tighten by asserting per-surface (conviction, tactical_bin) → cell_disposition mapping
-and verifying the veto-flag predicate is mechanically derivable from the inputs.
+This fixture verifies that each surface is reachable through the matrix mapping AND
+that the LOW-CONVICTION VETO predicate is mechanically identifiable from inputs.
+Mutation resistance: expected dispositions are HAND-WRITTEN LITERALS in the fixture
+(NOT derived from the matrix), so a swap of (HIGH, positive) ↔ (MEDIUM, positive) in
+the matrix would flip the function output and fail the per-cell assertion.
 """
 from __future__ import annotations
 
 import pytest
 
-from src.p8_tactical_overlay.overlay import _DISPOSITION_MAP, tactical_disposition
+from src.p8_tactical_overlay.overlay import disposition_map, tactical_disposition
 
-# Renderer flag derivation: LOW-CONVICTION VETO fires when conviction=LOW
-# AND the cell_disposition is HOLD (i.e., the LOW × unavailable cell).
-# Section 2.1 v5: "LOW-CONVICTION VETO cites per-conviction-tier mapping."
+
 def renderer_low_conviction_veto_flag(conviction: str, tactical_bin: str) -> bool:
     """Mechanical predicate for surface #5.
 
     The renderer surfaces the veto annotation when the (conviction, tactical_bin)
     input pair produces HOLD via the LOW row. Distinct from generic HOLD.
+
+    Note: this predicate reads the matrix at call time. The per-cell fixture rows
+    below include LITERAL expected_veto values, so a mutation of either the matrix
+    OR this predicate would be caught by the literal assertions.
     """
-    return conviction == "LOW" and _DISPOSITION_MAP[(conviction, tactical_bin)] == "HOLD"
+    return conviction == "LOW" and disposition_map()[(conviction, tactical_bin)] == "HOLD"
 
 
-# Fixture: each row produces ONE of the 5 surfaces. The renderer is correct iff
-# every input that should produce surface N actually does, AND no input produces
-# multiple surfaces simultaneously.
+# Fixture: each row encodes the expected (disposition, veto_flag) per cell as
+# hand-written literals. Mutation of either matrix or predicate fails an assertion.
 FIVE_SURFACE_FIXTURE = [
     # (conviction, tactical_bin, expected_cell_disposition, expected_veto_flag, surface_name)
     ("HIGH", "positive", "BUY-HIGH", False, "BUY-HIGH"),
@@ -62,7 +71,11 @@ FIVE_SURFACE_FIXTURE = [
 def test_fixture_each_cell_maps_to_expected_surface(
     conviction, tactical_bin, expected_disposition, expected_veto, surface
 ):
-    """Per-cell: matrix output AND veto flag both match the surface definition."""
+    """Per-cell: matrix output AND veto flag both match the surface definition.
+
+    Expected values are hand-written literals; matrix mutations break the
+    disposition assertion and predicate mutations break the veto assertion.
+    """
     actual_disposition = tactical_disposition(conviction, tactical_bin)
     actual_veto = renderer_low_conviction_veto_flag(conviction, tactical_bin)
     assert actual_disposition == expected_disposition, (
@@ -78,7 +91,7 @@ def test_fixture_each_cell_maps_to_expected_surface(
 def test_all_5_surfaces_reachable_via_matrix():
     """Phase 1 acceptance: every surface must have ≥1 reachable input pair."""
     produced_surfaces = set()
-    for conviction, tactical_bin, _, _, surface in FIVE_SURFACE_FIXTURE:
+    for _, _, _, _, surface in FIVE_SURFACE_FIXTURE:
         produced_surfaces.add(surface)
     expected_surfaces = {"BUY-HIGH", "BUY-MED", "HOLD", "AVOID", "LOW-CONVICTION VETO"}
     assert produced_surfaces == expected_surfaces, (
@@ -89,7 +102,7 @@ def test_all_5_surfaces_reachable_via_matrix():
 
 def test_buy_high_and_buy_med_are_disjoint_in_matrix():
     """INV-2.1-A consequence: BUY-HIGH only from HIGH conviction; BUY-MED only from MEDIUM."""
-    for (conviction, tactical_bin), disposition in _DISPOSITION_MAP.items():
+    for (conviction, _tactical_bin), disposition in disposition_map().items():
         if disposition == "BUY-HIGH":
             assert conviction == "HIGH", (
                 f"BUY-HIGH must require HIGH conviction; got {conviction}"
@@ -100,9 +113,26 @@ def test_buy_high_and_buy_med_are_disjoint_in_matrix():
             )
 
 
+def test_inv_2_1_a_matrix_values_disjoint_from_canonical_enum():
+    """v2 NEW (iteration-1 catch): direct assertion that matrix outputs never contain
+    canonical summary_code values {BUY, TRIM, SELL}. Cheap defense against future
+    typos that swap BUY-HIGH for BUY etc.
+    """
+    matrix_values = set(disposition_map().values())
+    tactical_enum = {"BUY-HIGH", "BUY-MED", "HOLD", "AVOID"}
+    canonical_enum = {"BUY", "TRIM", "SELL"}
+    assert matrix_values <= tactical_enum, (
+        f"Matrix contains non-tactical values: {matrix_values - tactical_enum}"
+    )
+    assert not (matrix_values & canonical_enum), (
+        f"INV-2.1-A violation — matrix contains canonical enum values: "
+        f"{matrix_values & canonical_enum}"
+    )
+
+
 def test_low_conviction_veto_uniquely_identifies_low_unavailable():
     """Surface #5 is mechanically derivable: veto_flag = True iff (LOW × unavailable)."""
-    for (conviction, tactical_bin) in _DISPOSITION_MAP.keys():
+    for (conviction, tactical_bin) in disposition_map().keys():
         veto = renderer_low_conviction_veto_flag(conviction, tactical_bin)
         if veto:
             assert (conviction, tactical_bin) == ("LOW", "unavailable"), (
@@ -113,8 +143,8 @@ def test_low_conviction_veto_uniquely_identifies_low_unavailable():
 
 def test_no_input_produces_two_surfaces_simultaneously():
     """Surfaces are mutually exclusive: each (conviction, tactical_bin) → exactly 1 surface."""
-    seen = {}
-    for conviction, tactical_bin, expected_disposition, expected_veto, surface in FIVE_SURFACE_FIXTURE:
+    seen: dict[tuple[str, str], str] = {}
+    for conviction, tactical_bin, _, _, surface in FIVE_SURFACE_FIXTURE:
         key = (conviction, tactical_bin)
         assert key not in seen, (
             f"({conviction}, {tactical_bin}) appears twice in fixture: "
@@ -125,10 +155,33 @@ def test_no_input_produces_two_surfaces_simultaneously():
 
 
 def test_fixture_covers_full_12cell_matrix():
-    """Completeness: every entry in _DISPOSITION_MAP must appear in the fixture."""
+    """Completeness: every entry in the matrix must appear in the fixture."""
     fixture_keys = {(c, b) for c, b, _, _, _ in FIVE_SURFACE_FIXTURE}
-    matrix_keys = set(_DISPOSITION_MAP.keys())
+    matrix_keys = set(disposition_map().keys())
     assert fixture_keys == matrix_keys, (
         f"Fixture/matrix coverage mismatch — fixture has {fixture_keys}, "
         f"matrix has {matrix_keys}"
+    )
+
+
+def test_matrix_cardinality_is_12():
+    """iter-2 nit fold: catches accidental row deletion/duplication in matrix."""
+    assert len(disposition_map()) == 12, (
+        f"Matrix must have exactly 12 cells (3 conviction × 4 tactical_bin); "
+        f"got {len(disposition_map())}"
+    )
+
+
+def test_matrix_keys_are_exact_cartesian_product():
+    """iter-2 nit fold: catches typos in conviction/tactical_bin tokens that would
+    silently shift behavior (e.g., 'MED' instead of 'MEDIUM', 'pos' instead of
+    'positive')."""
+    expected_convictions = {"HIGH", "MEDIUM", "LOW"}
+    expected_bins = {"positive", "neutral", "negative", "unavailable"}
+    expected_keys = {(c, b) for c in expected_convictions for b in expected_bins}
+    assert set(disposition_map().keys()) == expected_keys, (
+        f"Matrix keys must be exactly Cartesian product of "
+        f"{expected_convictions} × {expected_bins}; "
+        f"unexpected: {set(disposition_map().keys()) - expected_keys}, "
+        f"missing: {expected_keys - set(disposition_map().keys())}"
     )
