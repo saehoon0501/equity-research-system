@@ -84,3 +84,12 @@ def tactical_disposition(conviction: str, tactical_bin: str) -> str:
     if key not in _DISPOSITION_MAP:
         raise ValueError(f"INV-C1 violation: no mapping for {key}")
     return _DISPOSITION_MAP[key]
+
+
+def disposition_map() -> dict[tuple[str, str], str]:
+    """Public accessor for the 12-cell matrix; returns a shallow copy.
+
+    Public-API alternative to importing `_DISPOSITION_MAP` directly so that
+    callers (notably test fixtures) are decoupled from the private name.
+    """
+    return dict(_DISPOSITION_MAP)
