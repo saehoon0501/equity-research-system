@@ -29,6 +29,12 @@ def resolve_rf_at(
 ) -> Optional[float]:
     """Walk a FRED DGS1 window backward to find last valid print at/before target_date.
 
+    Thin adapter for Section 2 v3-final Plan B v6's (date, value) tuple-list
+    shape; delegates the walker logic to
+    ``src.regime_sidecar.fred_client.resolve_latest_value_in_window`` (single
+    source of truth for "latest valid value at-or-before date with staleness
+    guard"). Same utility powers regime_sidecar.latest_value.
+
     Args:
         fred_window: list of (date, value_or_None) from mcp__fred__get_series.
                      Window MUST span >= (max_staleness + WEEKEND_HOLIDAY_BUFFER_DAYS)
@@ -40,13 +46,18 @@ def resolve_rf_at(
         DGS1 yield percent (e.g., 4.61) if a valid value found within staleness;
         None if no valid value or only values beyond staleness.
     """
+    from src.regime_sidecar.fred_client import resolve_latest_value_in_window
+
     assert max_staleness_calendar_days >= 1, "INV-B4 violation"
-    valid = [(d, v) for d, v in fred_window if v is not None and d <= target_date]
-    if not valid:
-        return None
-    resolved_date, value = max(valid, key=lambda x: x[0])
-    if (target_date - resolved_date).days > max_staleness_calendar_days:
-        return None
+    observations = [
+        {"date": d.isoformat(), "value": v}
+        for d, v in sorted(fred_window, key=lambda x: x[0])
+    ]
+    _, value = resolve_latest_value_in_window(
+        observations,
+        target_date=target_date,
+        max_staleness_calendar_days=max_staleness_calendar_days,
+    )
     return value
 
 

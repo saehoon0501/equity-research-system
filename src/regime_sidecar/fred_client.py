@@ -87,14 +87,61 @@ def get_series(
     ]
 
 
+def resolve_latest_value_in_window(
+    observations: list[dict[str, Any]],
+    target_date: date | str | None = None,
+    max_staleness_calendar_days: int | None = None,
+) -> tuple[str | None, float | None]:
+    """Walk FRED observations to find the latest valid value at/before target_date.
+
+    Pure compute over an already-fetched observations list — no I/O. Single source
+    of truth for the "latest available value" pattern; used by ``latest_value``
+    (regime_sidecar) and by ``src.p8_tactical_overlay.bin_classifier.resolve_rf_at``
+    (tactical overlay).
+
+    Args:
+        observations: list of {"date": "YYYY-MM-DD", "value": float|None}.
+        target_date: cutoff date; observations after this are excluded. None
+            means no cutoff (returns the latest non-None across the full list).
+        max_staleness_calendar_days: if set, reject when the resolved observation
+            is more than this many calendar days before target_date. None means
+            no staleness gate.
+
+    Returns:
+        (date_str, value) of the resolved observation, or (None, None) if no
+        valid observation exists within constraints.
+    """
+    target_str: str | None
+    if target_date is None:
+        target_str = None
+        target_date_obj: date | None = None
+    elif isinstance(target_date, date):
+        target_str = target_date.isoformat()
+        target_date_obj = target_date
+    else:
+        target_str = str(target_date)
+        target_date_obj = date.fromisoformat(target_str)
+
+    for o in reversed(observations):
+        if o["value"] is None:
+            continue
+        if target_str is not None and o["date"] > target_str:
+            continue
+        if max_staleness_calendar_days is not None and target_date_obj is not None:
+            resolved = date.fromisoformat(o["date"])
+            if (target_date_obj - resolved).days > max_staleness_calendar_days:
+                return None, None
+        return o["date"], o["value"]
+    return None, None
+
+
 def latest_value(series_id: str, asof: date | str | None = None) -> tuple[str, float | None]:
     """Return the most recent (date, value) pair on or before `asof`.
 
     Skips missing observations (None values from FRED's '.'). Returns
-    ('', None) if no usable observation exists.
+    ('', None) if no usable observation exists (callers rely on the empty-string
+    sentinel; not None — backward compatibility).
     """
     obs = get_series(series_id, end=asof)
-    for o in reversed(obs):
-        if o["value"] is not None:
-            return o["date"], o["value"]
-    return "", None
+    resolved_date, value = resolve_latest_value_in_window(obs, target_date=asof)
+    return (resolved_date or ""), value
