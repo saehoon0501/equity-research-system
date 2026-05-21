@@ -249,6 +249,27 @@ def test_all_four_canonical_summary_codes_pass():
         assert result.invalid_summary_code is None
 
 
+def test_inv_2_1_a_tactical_disposition_uses_disjoint_enum():
+    """INV-2.1-A: tactical_disposition enum is disjoint from summary_code enum (modulo HOLD).
+
+    Per Section 2.1 v5-final consensus doc at
+    docs/superpowers/consensus/2026-05-21-section2.1-label-vocabulary.md.
+
+    BUY/TRIM/SELL must NOT appear in tactical_disposition (those are pm-supervisor's
+    summary_code domain). The tactical overlay uses BUY-HIGH/BUY-MED/AVOID instead;
+    HOLD is the sole intentional overlap (semantic identity preserved).
+    """
+    from src.p8_tactical_overlay.contracts import TacticalDisposition
+
+    tactical_values = set(TacticalDisposition.__args__)
+    canonical_summary = {"BUY", "TRIM", "SELL"}  # HOLD excluded (intentional overlap)
+    forbidden_overlap = tactical_values & canonical_summary
+    assert forbidden_overlap == set(), (
+        f"INV-2.1-A violation: tactical_disposition contains canonical summary_code "
+        f"values {forbidden_overlap} (must use BUY-HIGH/BUY-MED instead of BUY)"
+    )
+
+
 def test_no_forbidden_fields_no_invalid_summary_code_on_clean_envelope():
     env = _make_minimal_valid_envelope()
     result = validate_envelope_shape(env)
