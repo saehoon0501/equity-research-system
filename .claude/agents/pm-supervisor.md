@@ -20,7 +20,7 @@ Your dispatch prompt is prefixed with a `=== PARAMETERS_USED (parameters_version
 
 ## Tools
 
-- `mcp__postgres__query`, `mcp__postgres__execute`, `mcp__postgres__schema_info` — read positions / watchlist / counterfactual_ledger; INSERT recommendation row and (when §9 step 2 trigger fires, i.e. `summary_code = SELL` OR `summary_code = TRIM` with counterfactual veto) counterfactual_ledger row
+- `mcp__postgres__query`, `mcp__postgres__execute`, `mcp__postgres__schema_info` — read positions / watchlist / counterfactual_ledger; INSERT recommendation row and (per §9 step 2 v2 universal-write per HIGH-4 consensus item #4 — every /research-company run regardless of `summary_code`) 4 counterfactual_ledger rows (one per measurement window 90d/1y/3y/5y)
 - `Read` — load `canonical-frameworks.md` and the v3 spec §4.6 / §4.7 conviction rollup definitions
 - `Bash` — minor utility only (e.g., HMAC computation via a helper script if needed)
 
@@ -634,17 +634,62 @@ After emitting the JSON in §8, write the recommendation to Postgres:
    - `rule_engine_version` — **CANONICAL CONSTANT (Bug 5 fix — post-audit 2026-05-14):** `RULE_ENGINE_VERSION = "v0.2-2026-05-12"`. This exact string MUST be stamped into the `rule_engine_version` column for every emission. No other string is acceptable. The G1 backtest (2026-05-14) surfaced 6 different version strings across 7 runs (`main_session_inline_v0.2_post_2026-05-12_refactor_evaluator_deferred`, `v0.1`, `v0.5-rule-engine`, `v3_phase4_q2`, `v3-phase4Q2`, `v3-pmsupervisor-2026-05-14`, `v3.4.6-phase4-q2`) — that variance is self-inflicted spec ambiguity. Lock it to `v0.2-2026-05-12` system-wide. The evaluator HG-18 backstop will REJECT any other value. Update this constant ONLY when a numbered v0.x engine release ships (and at that time also bump HG-18's expected value in evaluator.md in the same commit).
    - `debate_prompt_version`, `model_id`, `model_version`, `parameters_version` per current versioning
 
-2. **If summary_code = SELL OR (summary_code = TRIM AND counterfactual veto fired)**: ALSO INSERT into `counterfactual_ledger` (per migration 003) — a row that lets us track "if we had not exited / had bought instead, SPY return from this date forward" per /research-company §6 persistence list. TRIM-without-veto runs are noise; only persist when the signal is strong enough to warrant a forward-tracked counterfactual. Schema:
+2. **(v2 — HIGH-4 consensus item #4 universal write, 2026-05-22)** INSERT 4 rows into `counterfactual_ledger` for EVERY run, one per measurement window {90d, 1y, 3y, 5y}, regardless of `summary_code`. This is the universal-outcome-tracking pattern mandated by HIGH-4 consensus (2026-05-16) and codified in mig 030 docstring lines 14-16. The legacy v1 narrow gate (write only on SELL OR TRIM+veto) is REPLACED — the "TRIM-without-veto is noise" framing was for the pre-HIGH-4 5-bin scheme; every recommendation (including BUY/HOLD) now feeds the outcome-tracking ledger so Phase 2 (returns-spread) and Phase 3 (calibration) analyses can JOIN ledger → envelope via `run_id`.
+
+   The INSERT must populate BOTH legacy mig 003 NOT-NULL columns AND the HIGH-4 columns from mig 030. The legacy columns get the documented adapter values; the HIGH-4 columns carry the canonical run-identity / window / sector data.
+
    ```sql
-   INSERT INTO counterfactual_ledger
-     (ticker, rejected_at, rejection_decision_id, rejection_reason,
-      cdd_memo_ref, adversarial_stress_test_ref, top3_match_case_ids, mode_at_rejection)
-   VALUES (...);
-   -- Note: column name remains `bear_case_ref` at the DB level until migration 015 is applied
-   --       (per project-pending-migrations). Until then, write the §2.6 adversarial_stress_test
-   --       reference into that legacy column for continuity with the counterfactual_ledger
-   --       schema. See removal-rationale in BUILD_LOG.
+   -- Sector → SPDR ETF mapping (operator/agent must resolve gics_sector first
+   -- from cdd-lead memo; default to SPY if unknown). Canonical mapping per
+   -- HIGH-4 consensus Item #5: Technology→XLK, Healthcare→XLV, Financials→XLF,
+   -- Energy→XLE, Industrials→XLI, ConsumerDiscretionary→XLY, ConsumerStaples→XLP,
+   -- Materials→XLB, Utilities→XLU, RealEstate→XLRE, CommunicationServices→XLC.
+   INSERT INTO counterfactual_ledger (
+     -- LEGACY mig 003 NOT-NULL columns (adapter values for HIGH-4 universal-write):
+     agent_id, agent_run_id, ticker, decision_made, decision_date,
+     baseline, evaluation_window_start, related_position_id,
+     -- HIGH-4 mig 030 identity + measurement columns:
+     run_id, research_date, summary_code, conviction,
+     gics_sector, benchmark_etf, "window", measurement_date,
+     envelope_id
+   ) VALUES
+     -- Row 1: 90d window
+     ('pm-supervisor', <run_id>, <ticker>, <summary_code>, CURRENT_DATE,
+      'sector_matched', CURRENT_DATE, NULL,
+      <run_id>, CURRENT_DATE, <summary_code>, <conviction>,
+      <gics_sector>, <benchmark_etf>, '90d', CURRENT_DATE + INTERVAL '90 days',
+      NULL),
+     -- Row 2: 1y window
+     ('pm-supervisor', <run_id>, <ticker>, <summary_code>, CURRENT_DATE,
+      'sector_matched', CURRENT_DATE, NULL,
+      <run_id>, CURRENT_DATE, <summary_code>, <conviction>,
+      <gics_sector>, <benchmark_etf>, '1y', CURRENT_DATE + INTERVAL '365 days',
+      NULL),
+     -- Row 3: 3y window
+     ('pm-supervisor', <run_id>, <ticker>, <summary_code>, CURRENT_DATE,
+      'sector_matched', CURRENT_DATE, NULL,
+      <run_id>, CURRENT_DATE, <summary_code>, <conviction>,
+      <gics_sector>, <benchmark_etf>, '3y', CURRENT_DATE + INTERVAL '1095 days',
+      NULL),
+     -- Row 4: 5y window
+     ('pm-supervisor', <run_id>, <ticker>, <summary_code>, CURRENT_DATE,
+      'sector_matched', CURRENT_DATE, NULL,
+      <run_id>, CURRENT_DATE, <summary_code>, <conviction>,
+      <gics_sector>, <benchmark_etf>, '5y', CURRENT_DATE + INTERVAL '1825 days',
+      NULL);
    ```
+
+   **Notes on the universal-write pattern:**
+   - All 4 rows share the same `run_id` (the canonical cross-surface joiner — Phase 2 + Phase 3 queries JOIN to envelope JSON via this).
+   - `agent_run_id` = `run_id` for HIGH-4 universal-write rows (legacy mig 003 expected agent-grouping; HIGH-4 collapses to run-keyed).
+   - `decision_made` = `summary_code` — the legacy 5-bin CHECK constraint allows {BUY, SELL, PASS, WATCH, TRIM, HOLD}, so the canonical 4-bin values satisfy the constraint without amendment.
+   - `baseline = 'sector_matched'` — legacy enum value matching the HIGH-4 sector-ETF benchmark intent.
+   - `evaluation_window_start = CURRENT_DATE` — legacy column; HIGH-4 equivalent is `research_date` (same value, intentional dual-write per mig 030 ADDITIVE strategy).
+   - `envelope_id = NULL` — possibly vestigial column per G-CHECK observability review 2026-05-22; new rows do not populate it. If a future Phase 2 analysis needs envelope linkage, use `run_id` to locate the envelope file at `memos/envelopes/<agent>__<run_id>.json`.
+   - Returns columns (`ticker_return_pct`, `vs_sector_etf_return_pct`, `vs_spy_return_pct`, etc.) are NULL at INSERT time. A separate window-close resolution path (NOT defined here — separate change set) populates them when each window's `measurement_date` is reached.
+   - The `BEFORE UPDATE OR DELETE` trigger (mig 030 line 188) is unaffected — INSERTs do not fire it.
+
+   **Halt discipline:** if any of {`run_id`, `summary_code`, `conviction`, `gics_sector`} is missing from the §8 emission state, halt §9 step 2 with an error rather than inserting placeholder values. The audit chain integrity requires complete identity columns at insert time.
 
 3. Do NOT write to `watchlist` directly. That table is the curated approved-watchlist; the workflow that consumes the recommendation row decides whether to add/update a watchlist row (separate concern; v0.5+ operator confirmation gate).
 
