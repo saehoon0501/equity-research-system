@@ -145,18 +145,59 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# Per-agent cost estimates (placeholder — cost ledger is a backstop, not the
-# primary safety mechanism; stuck-loop fingerprint detection is the real
-# guard). These can be replaced with sidecar-passed actuals later.
+# Cost computation — measured from tool_response.usage when available, with
+# per-agent constants as fallback. Pricing assumes Sonnet 4.6 for the
+# research pipeline (see research-company.md §"Cost estimate"). The
+# circuit-breaker ceiling and cumulative_cost_usd field downstream rely on
+# this value; flat per-agent constants meant identical recorded cost for
+# 3-tool-use retries vs 31-tool-use first attempts (e.g., quant attempt 1
+# at 160K tokens recorded the same $14 as the 83K-token passing retry).
 # ---------------------------------------------------------------------------
-case "$SUBAGENT_TYPE" in
-    quantitative-analyst) COST_ESTIMATE_USD="14.0" ;;
-    strategic-analyst)    COST_ESTIMATE_USD="14.0" ;;
-    catalyst-scout)       COST_ESTIMATE_USD="18.0" ;;
-    pm-supervisor)        COST_ESTIMATE_USD="11.0" ;;
-    tactical-overlay)     COST_ESTIMATE_USD="1.0" ;;
-    *)                    COST_ESTIMATE_USD="5.0" ;;
-esac
+USAGE_TOTAL="$(printf '%s' "$PAYLOAD" | jq -r '.tool_response.totalTokens // 0' 2>/dev/null || echo 0)"
+USAGE_INPUT="$(printf '%s' "$PAYLOAD" | jq -r '.tool_response.usage.input_tokens // 0' 2>/dev/null || echo 0)"
+USAGE_CACHE_CREATE="$(printf '%s' "$PAYLOAD" | jq -r '.tool_response.usage.cache_creation_input_tokens // 0' 2>/dev/null || echo 0)"
+USAGE_CACHE_READ="$(printf '%s' "$PAYLOAD" | jq -r '.tool_response.usage.cache_read_input_tokens // 0' 2>/dev/null || echo 0)"
+USAGE_OUTPUT="$(printf '%s' "$PAYLOAD" | jq -r '.tool_response.usage.output_tokens // 0' 2>/dev/null || echo 0)"
+
+if [ "${USAGE_TOTAL:-0}" -gt 0 ] 2>/dev/null && [ "${USAGE_OUTPUT:-0}" -gt 0 ] 2>/dev/null; then
+    # Anthropic Sonnet 4.6 pricing per million tokens (USD):
+    #   input            = $3.00
+    #   cache_create_5m  = $3.75  (1.25× base; 5-min ephemeral is the default)
+    #   cache_read       = $0.30
+    #   output           = $15.00
+    # Tactical-overlay may run on Haiku ($1 / $5) — overestimation is fine
+    # for a circuit-breaker tripwire, not for finance-grade accounting.
+    COST_ESTIMATE_USD="$(python3 -c "
+in_t=int(${USAGE_INPUT:-0})
+cc=int(${USAGE_CACHE_CREATE:-0})
+cr=int(${USAGE_CACHE_READ:-0})
+out=int(${USAGE_OUTPUT:-0})
+cost = (in_t * 3.0 + cc * 3.75 + cr * 0.30 + out * 15.0) / 1_000_000
+print(f'{cost:.4f}')
+" 2>/dev/null || echo "")"
+
+    if [ -z "$COST_ESTIMATE_USD" ]; then
+        # python3 failure or unexpected non-numeric input — fall through to constants.
+        USAGE_TOTAL=0
+    fi
+fi
+
+if [ "${USAGE_TOTAL:-0}" -le 0 ] 2>/dev/null || [ -z "${COST_ESTIMATE_USD:-}" ]; then
+    # Fallback: tool_response.usage not present or extraction failed.
+    case "$SUBAGENT_TYPE" in
+        quantitative-analyst) COST_ESTIMATE_USD="14.0" ;;
+        strategic-analyst)    COST_ESTIMATE_USD="14.0" ;;
+        catalyst-scout)       COST_ESTIMATE_USD="18.0" ;;
+        pm-supervisor)        COST_ESTIMATE_USD="11.0" ;;
+        tactical-overlay)     COST_ESTIMATE_USD="1.0" ;;
+        *)                    COST_ESTIMATE_USD="5.0" ;;
+    esac
+    COST_SOURCE="fallback_constant"
+else
+    COST_SOURCE="measured(tot=${USAGE_TOTAL},in=${USAGE_INPUT},cc=${USAGE_CACHE_CREATE},cr=${USAGE_CACHE_READ},out=${USAGE_OUTPUT})"
+fi
+
+echo "[post_agent_validate] cost source=${COST_SOURCE} cost_usd=${COST_ESTIMATE_USD} agent=${SUBAGENT_TYPE}" >&2
 
 # ---------------------------------------------------------------------------
 # Optional context sidecar:

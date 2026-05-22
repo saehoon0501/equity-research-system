@@ -290,15 +290,32 @@ def run_step(
 
     # ----- RETRY branch ------------------------------------------------
     state.save(state_path)
+    extra_context_lines = [
+        f"This is attempt {state.attempt_count + 1} of {max_attempts}. "
+        f"Cumulative cost so far: ${state.cumulative_cost_usd:.2f} "
+        f"(ceiling ${cost_ceiling_usd:.2f})."
+    ]
+    # Point the retrying agent at the on-disk history rather than
+    # duplicating it into prompt context. The agent has Read tool access
+    # and can pull exactly the depth it needs.
+    if state.attempt_count >= 2:
+        extra_context_lines.append("")
+        extra_context_lines.append(
+            f"Prior-attempt history for this (run_id, agent_type) is "
+            f"persisted on disk — read it before deciding your approach, "
+            f"especially to confirm your last patch actually changed the "
+            f"failure mode (vs. an identical-signature stuck loop):\n"
+            f"  - Compact state (fingerprints[] across attempts, "
+            f"cumulative cost, status): {state_path}\n"
+            f"  - Per-attempt audit rows (filter by run_id + agent_type for "
+            f"validation_summary, failed_gate_ids, decision per attempt): "
+            f"{audit_path}"
+        )
     delta_prompt = build_delta_prompt(
         validation,
         prior_artifact_path=str(envelope_path),
         agent_type=agent_type,
-        extra_context=(
-            f"This is attempt {state.attempt_count + 1} of {max_attempts}. "
-            f"Cumulative cost so far: ${state.cumulative_cost_usd:.2f} "
-            f"(ceiling ${cost_ceiling_usd:.2f})."
-        ),
+        extra_context="\n".join(extra_context_lines),
     )
     audit_row["decision"] = "RETRY"
     _append_audit_row(audit_path, audit_row)
