@@ -295,8 +295,13 @@ const dbEntries = (fileMemos: { data: Record<string, unknown> }[]) => {
 };
 
 // Runs view helpers — sourced from run_parameters_snapshot joined with
-// execution_recommendations (via trigger_metadata->>'run_id') plus a streaming
-// scan of logs/validation_attempts.jsonl for per-attempt cost + decisions.
+// execution_recommendations plus a streaming scan of logs/validation_attempts.jsonl
+// for per-attempt cost + decisions.
+//
+// Recommendation join key: pm-supervisor writes the run_id under
+// trigger_metadata.pm_supervisor_run_id (observed on row 35c9b1e3 / AAPL run
+// 98388108). Earlier runs may have used the bare key "run_id" — we COALESCE
+// both so older rows still resolve.
 
 type ValidationAttempt = {
   run_id: string;
@@ -362,7 +367,8 @@ const listRuns = (): RunListRow[] => {
             r.conviction               AS conviction
        FROM run_parameters_snapshot s
        LEFT JOIN execution_recommendations r
-         ON r.trigger_metadata->>'run_id' = s.run_id::text
+         ON COALESCE(r.trigger_metadata->>'pm_supervisor_run_id',
+                     r.trigger_metadata->>'run_id') = s.run_id::text
        ORDER BY s.run_started_at DESC NULLS LAST, s.created_at DESC`,
   ) as Array<Record<string, string | null>>;
 
@@ -483,7 +489,8 @@ const getRunDetail = (runId: string): RunDetail => {
             parameters_version::text  AS parameters_version,
             created_at
        FROM execution_recommendations
-      WHERE trigger_metadata->>'run_id' = '${runId}'
+      WHERE COALESCE(trigger_metadata->>'pm_supervisor_run_id',
+                     trigger_metadata->>'run_id') = '${runId}'
       ORDER BY created_at DESC
       LIMIT 1`,
   ) as Array<Record<string, unknown>>;
