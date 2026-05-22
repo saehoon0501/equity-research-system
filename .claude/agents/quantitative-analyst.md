@@ -108,7 +108,13 @@ Emit in `wacc_regime` block (§5) with sensitivity: `wacc_at_erp_plus_100bp` and
 
 **Tier-conditional applicability:** for `tier ∈ {core_fundamental, thematic_growth}`, emit the `intangibles_adjustment` block in §5. For `tier == speculative_optionality`, SKIP entirely and emit `intangibles_adjustment: "SKIPPED — speculative_optionality"` with envelope flag `intangibles_adjustment_skipped_tier_speculative_optionality: true`.
 
-**Status:** SHADOW MODE — both GAAP-baseline and intangibles-adjusted values are emitted; production label-calculus uses GAAP-baseline `incremental_roic` until Step 4 promotion gate clears. Set `roic_methodology_regime: 'gaap'` until promotion lands (operator-gated).
+**Status:** SHADOW MODE pre-promotion (operator-gated Step 4).
+
+**What SHADOW MODE means — HARD RULE (HG-38 enforced):**
+- You MUST compute all 5 numeric fields under `intangibles_adjustment` for tier ∈ {core_fundamental, thematic_growth}: `capitalized_intangibles_balance_usd`, `intangibles_adjusted_earnings_usd`, `intangibles_adjusted_invested_capital_usd`, `intangibles_adjusted_roic_pct`, `reverse_dcf_implied_growth_delta_pp`.
+- Set `roic_methodology_regime: 'gaap'` to signal that production label-calculus continues to use GAAP `incremental_roic` (not the new adjusted value).
+- The regime flag controls **which value is promoted to label classification**, NOT whether the new value gets computed. Both values are always emitted in non-speculative tiers.
+- Do NOT emit sentinel strings like `SHADOW_MODE_NOT_COMPUTED_THIS_RUN` in numeric fields — HG-38 PostToolUse hook rejects the envelope and forces re-emission via delta_prompt retry. The only valid string in these fields is the canonical speculative-tier skip sentinel `"SKIPPED — speculative_optionality"`, and only for that tier.
 
 **Methodology source:** Ewens, Peters, Wang (2024) "Measuring Intangible Capital with Market Prices," *Management Science* 71(1):407-427. Industry-specific rates derived from firm-exit market prices. Parameter file: https://github.com/michaelewens/Intangible-capital-stocks (publicly downloadable).
 

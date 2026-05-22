@@ -75,6 +75,10 @@ from src.evaluator_gates.tactical_envelope_shape import (
     TacticalEnvelopeShapeResult,
     validate_tactical_envelope_shape,
 )
+from src.evaluator_gates.intangibles_adjustment_shape import (
+    IntangiblesAdjustmentResult,
+    validate_intangibles_adjustment,
+)
 
 
 # Stable rule IDs used in audit rows + delta-prompts. The convention
@@ -91,6 +95,7 @@ GATE_IDS: dict[str, str] = {
     "catalyst_memo_shape":   "HG-31",
     "cdd_memo_shape":        "HG-32",
     "tactical_envelope_shape": "HG-33",
+    "intangibles_adjustment_shape": "HG-38",
 }
 
 
@@ -332,6 +337,25 @@ def _fingerprint_tactical_envelope(r: TacticalEnvelopeShapeResult) -> str:
     return "|".join(sorted(parts)) if parts else "ok"
 
 
+def _fingerprint_intangibles(r: IntangiblesAdjustmentResult) -> str:
+    parts: list[str] = []
+    if not r.block_present:
+        parts.append("block:missing")
+    for k in r.missing_numeric_fields:
+        parts.append(f"missing:{k}")
+    for k in sorted(r.forbidden_sentinels_in_numeric_fields.keys()):
+        parts.append(f"sentinel:{k}")
+    for k in r.missing_epw_rate_keys:
+        parts.append(f"epw:{k}")
+    if r.invalid_fama_french_class is not None:
+        parts.append(f"ff5:{r.invalid_fama_french_class}")
+    if r.invalid_regime is not None:
+        parts.append(f"regime:{r.invalid_regime}")
+    if r.skip_flag_inconsistency is not None:
+        parts.append("skip_flag_inconsistent")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
 def _fingerprint_counterfactual(r: CounterfactualCatalogResult) -> str:
     parts: list[str] = []
     if r.missing_buckets:
@@ -445,7 +469,8 @@ def _validate_pm_envelope(
 
 
 def _validate_quant_memo(env: dict[str, Any], *, resolve_evidence_db: bool, db_dsn: str | None) -> tuple[list[GateOutcome], dict[str, str]]:
-    """Gate set for quant memos: shape (HG-29) + evidence_index_refs UUIDs."""
+    """Gate set for quant memos: shape (HG-29) + evidence_index_refs UUIDs
+    + intangibles_adjustment block (HG-38, Overlay 7)."""
     outcomes: list[GateOutcome] = []
     summary: dict[str, str] = {}
 
@@ -468,6 +493,14 @@ def _validate_quant_memo(env: dict[str, Any], *, resolve_evidence_db: bool, db_d
     ov = validate_outside_view_blend(env.get("outside_view") or {})
     outcomes.append(_outcome("outside_view_blend", ov.valid, _to_dict_safe(ov), _fingerprint_outside_view(ov)))
     summary["outside_view_blend"] = "pass" if ov.valid else "fail"
+
+    # HG-38: intangibles_adjustment block strict-schema validator
+    # (Overlay 7, Mauboussin April 2025 / EPW 2024 industry rates).
+    # Catches "SHADOW_MODE_NOT_COMPUTED_THIS_RUN" sentinel pattern and
+    # other punted-computation cases observed in 2026-05-22 Step-3 sweep.
+    ia = validate_intangibles_adjustment(env)
+    outcomes.append(_outcome("intangibles_adjustment_shape", ia.valid, _to_dict_safe(ia), _fingerprint_intangibles(ia)))
+    summary["intangibles_adjustment_shape"] = "pass" if ia.valid else "fail"
 
     return outcomes, summary
 
