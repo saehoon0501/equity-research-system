@@ -117,6 +117,73 @@ This is a strict extension of decision 4 (skills-only operational interface). De
 
 *Reversibility:* if the agent-harness pattern produces unreliable enforcement of mechanical conventions, restore code-as-orchestrator per decision 4's reversibility note. The substantive commitments and goal are unchanged across the reversal; only the implementation pattern moves.
 
+**7. Scope anchor — retire all skills, modules, and migrations not on the `/research-company` critical path.**
+
+The system has accumulated operational machinery (daily-monitor, alerts, drift detection, premortem cadence, anchor drift, calibration capture, outcome resolution, sizing, disposition, wash-sale, audit-trail UI, governance ceremonies, /run orchestrator) anticipating v0.5 and v1.0 operational states that the substantive C3 gate has not earned the right to reach yet. Decision 7 collapses the surface area to the one workflow that produces value: `/research-company` — pick good stocks.
+
+This is a strict extension of the trigger that drove peak_pain_archetypes + counterfactual_veto retirement (commits `d5916e7` → `352b48c`, 2026-05-17 → 2026-05-20). The same reasoning generalizes to the whole operational stack: built for a future state the build has not earned the right to occupy.
+
+*Keep-set (the `/research-company` critical path):*
+
+- **Skills:** `.claude/commands/research-company.md`, `.claude/commands/evaluate.md`
+- **Subagents:** `catalyst-scout`, `pm-supervisor`, `evaluator`, `quantitative-analyst`, `strategic-analyst` (all 5 in `.claude/agents/`)
+- **MCP servers consumed by the pipeline:** `mcp__postgres`, `mcp__contamination_check`, `mcp__edgar`, `mcp__market_data`, `mcp__yfinance`, `mcp__polygon`, `mcp__macro_stack`, `mcp__fred`, `mcp__fundamentals` (stub)
+- **DB tables:** `evidence_index`, `predictions`, `parameters`, `execution_recommendations`, plus auxiliary tables the pipeline writes (e.g., `scenarios`) — exact set derived during execution by grep-tracing the skill body
+- **Python modules:** `evidence_index/`, `audit_trail/hmac_verify.py` (HMAC canonical-payload contract, single source of truth for execution_recommendations signing), `data_layer/`, `mcp/{postgres,contamination_check,edgar,market_data,yfinance,polygon,macro_stack,fred,fundamentals}/`, and any other modules surfaced as dependencies during the grep-trace pass
+
+*Retire-set (full sweep, `git rm`):*
+
+- **25 skills:** `ack`, `alerts`, `audit-trail`, `backtest`, `brief-delta-sweep`, `calibration-status`, `cdd-test`, `checkpoint`, `daily-monitor`, `disposition`, `entry-check`, `exit-check`, `grill-me`, `launch-confirm`, `macro-cycle`, `parameters-review`, `premortem`, `quarterly-reunderwrite`, `resolve-outcomes`, `review-me`, `run`, `size`, `spec-approve`, `system-health`, `wash-sale-harvest`, `weekly-buildlog` (already deprecated)
+- **Subagent tombstone:** `bear-case.md.removed-20260512` (already retired; cleanup completes)
+- **Python modules (full sweep):** `orchestrator/`, `l4_daily_monitor/`, `disposition_view/`, `alert_channels/`, `anchor_drift/`, `premortem_scheduler/`, `parameters_review/`, `spec_approve/`, `launch_confirm/`, `backtesting/`, `calibration/`, `outcomes/`, `sizing/`, `mcp/broker_mcp/`, `p3_mechanical_scorer/`, `p4_debate/`, `p5_watchlist/`, `p6_disposition/`, `p7_recommendation_emitter/` (if not on critical path), `regime_sidecar/` (if not on critical path), `watchlist/` (if not on critical path), plus any residual `peak_pain_catalog/` and `counterfactual_veto/` scaffolding not already removed
+- **DB migrations:** Down-migrations or direct `DROP TABLE` for `005_v3_regime`, `009_v3_daily_monitor`, `010_v3_drift_detection`, `012_v3_premortem`, `013_v3_calibration_capture`, `014_v3_system_health`, `015_v3_calibration_test_results`, plus residual references in `011_v3_counterfactual_retrieval` after peak_pain rename. Migrations 001-004, 006, 007 (watchlist portion only), 008, 016+ kept or selectively reduced based on critical-path trace.
+- **Tests:** Test files under `tests/test_*.py` covering retired modules drop alongside.
+
+*Rationale:*
+
+The reasoning is the same that drove peak_pain retirement: substantial sunk implementation cost in operational machinery that the substantive validation gate (C3) has not earned the right to use. Building more discipline-machinery on top of an unvalidated strategy core is the failure mode `docs/phasing-plan.md` §6 anti-patterns explicitly name.
+
+Anchoring on `/research-company` keeps the system honest: one workflow, repeatedly applied, with mechanical contamination defense intact. The output (cdd memo + briefs + pm report + execution_recommendation) is the unit of work that, accumulated over real-world runs, eventually answers the alpha question — without ceremony surrounding it.
+
+*What is preserved:*
+
+- The goal (pick good stocks under mechanical contamination discipline).
+- The pipeline (CDD → strategic + quantitative → catalyst-scout → pm-supervisor → evaluator).
+- The mechanical contamination defense and Evidence Index (decisions 1, 4).
+- The HMAC canonical-payload contract for execution_recommendations via `audit_trail/hmac_verify.py`.
+- Append-only persistence on `evidence_index` and `predictions`.
+- All design documents in `docs/` — canonical reference for what each retired component WAS designed to do; useful if reversal needed.
+
+*What is lost (and acknowledged):*
+
+- **Outcome tracking and calibration scoring.** Brier-driven sizing adjustment (v2-final §sizing) is unmeasurable. Quarter-Kelly with bounded floor/ceiling becomes a static parameter, not a calibration-tracked one.
+- **Counterfactual ledger as first-class object.** v2-final substantive commitment surrendered.
+- **Backtest framework (DSR, PBO, pre/post-cutoff Sharpe split).** The C3 substantive gate as written becomes unmeasurable. C3 itself needs re-specification or formal sunset.
+- **v0.5 and v1.0 phasing.** Both were defined in operational-machinery terms now retired. `docs/phasing-plan.md` is, in effect, suspended.
+- **Slow/fast layer separation.** Watchlist contract enforcement via `/p5_watchlist` is retired; no execution layer remains. The system becomes research-only — emits BUY/HOLD/TRIM/SELL recommendations as terminal artifacts and stops. v2-final §1 watchlist-contract substantive commitment is no longer mechanically enforced.
+- **Push-alert channel, daily heartbeat, anchor drift, premortem cadence** — the slow-layer-as-designed disciplines.
+- **Audit-trail CLI verification UI.** HMAC chain is still computed; no consumer-facing verifier ships.
+- **Tax-aware exit logic** (wash-sale, exit-check). Materially relevant for real-money operation, not for paper-only research output.
+- **Governance ceremonies** (parameters-review, spec-approve, launch-confirm).
+- **/run master orchestrator.** Operator types `/research-company TICKER` directly.
+
+*Reversibility:*
+
+The operator chose **delete outright (`git rm`)** in the scoping interview, NOT tombstone rename or move-to-retired/. Reversal requires git archaeology: `git revert` of the sweep commit(s), schema replay of dropped migrations against current data state (may not roll back cleanly if any retired-table data exists), and dependency-import audit. **Practically irreversible** without meaningful re-work — distinct from decisions 1-6 which all retained clean reversal paths. The operator accepts this asymmetry on the basis that the retired components have empirically failed to earn their keep within the build's economic budget; preserving them as tombstones would invite zombie-resurrection of unused machinery.
+
+*Trade-off acknowledged:*
+
+The slow-layer / fast-layer architecture that v2-final framed as core is gone with this decision. So is the calibration-driven sizing discipline and the counterfactual baseline measurement that justified the system's claim to a measurable alpha edge over passive baselines. After decision 7, the system makes no formal claim that its picks beat SPY — it only claims that the picks survive a mechanical contamination check and an adversarial pressure-test inside `pm-supervisor`. That is a meaningful retreat from the v2-final substantive commitments and should be recorded as such.
+
+The bet is that mechanical contamination defense + adversarial pressure-test + a small number of high-quality research runs will produce better-than-coinflip stock picks in real-world use, even without the formal alpha-measurement apparatus. If that bet fails, the failure mode is operator drift into discretionary stock-picking, with the system as decoration — which is the failure mode the operational machinery was designed to prevent. Decision 7 accepts that risk explicitly.
+
+*Implementation protocol:*
+
+1. Grep-trace `/research-company` skill body → subagent declarations → MCP tool calls → Python module imports → DB tables. Produce a derived sweep set as a separate review artifact (`docs/decision-7-sweep-set.md`).
+2. Operator reviews the derived sweep before any `git rm` runs.
+3. Sweep executes as a single atomic commit (skills + modules + migrations + tests together) so revert is one operation if needed.
+4. Post-sweep smoke: `/research-company` on a known-historical name (e.g., re-run AAPL-2024 from Tier 3) confirms the pipeline still completes end-to-end.
+
 ---
 
 ## Steps
