@@ -39,6 +39,7 @@ SPEC_REFS: dict[str, str] = {
     "HG-26": "pm-supervisor.md §8 (evidence_index_refs UUID array; must resolve in evidence_index table)",
     "HG-27": "quantitative-analyst.md Overlay 3+4 (Bayesian blend corrected = intuitive*(1-r) + reference*r)",
     "HG-28": "pm-supervisor.md §8 line 488 (counterfactual_top3_summary canonical buckets; §3.5 retrieval against peak_pain_archetypes)",
+    "HG-38": "quantitative-analyst.md §3.10 Overlay 7 (intangibles_adjustment block; Mauboussin Apr 2025 / EPW 2024 industry rates; compute always for non-speculative tiers — regime flag controls only label-calculus promotion, NOT computation)",
 }
 
 # Per-gate human-readable diagnostic templates. Each receives a
@@ -218,6 +219,69 @@ def _render_sentiment(rd: dict) -> tuple[str, list[str]]:
     return summary, bullets
 
 
+def _render_intangibles(rd: dict) -> tuple[str, list[str]]:
+    summary = (
+        "Intangibles adjustment block (HG-38) failed — Overlay 7 schema "
+        "fields contain non-numeric sentinels where numeric values are "
+        "required, or required sub-blocks are missing."
+    )
+    bullets: list[str] = []
+    if not rd.get("block_present"):
+        bullets.append(
+            "`intangibles_adjustment` block is missing — per §3.10, tier "
+            f"{rd.get('tier')!r} REQUIRES the block. Compute and emit "
+            "the 5 numeric fields (capitalized_intangibles_balance_usd, "
+            "intangibles_adjusted_earnings_usd, "
+            "intangibles_adjusted_invested_capital_usd, "
+            "intangibles_adjusted_roic_pct, "
+            "reverse_dcf_implied_growth_delta_pp) using EPW 2024 "
+            "industry rates + Hall steady-state seed."
+        )
+    for fname in rd.get("missing_numeric_fields") or []:
+        bullets.append(
+            f"`intangibles_adjustment.{fname}` is None — compute and "
+            "emit a numeric value (do NOT emit any sentinel string)"
+        )
+    forbidden = rd.get("forbidden_sentinels_in_numeric_fields") or {}
+    for fname, sentinel in forbidden.items():
+        bullets.append(
+            f"`intangibles_adjustment.{fname}` = {sentinel!r} — sentinel "
+            "strings are NOT valid for non-speculative tiers. SHADOW MODE "
+            "means the value is computed and emitted in shadow alongside "
+            "the GAAP baseline; it does NOT mean skip computation. "
+            "Compute and emit a numeric value using EPW HiTec rates "
+            "(δ_R&D=0.42, δ_organ=0.20, γ_SGA=0.37) for High-tech tickers, "
+            "Hall steady-state seed K_0 = I_0/(g+δ) per category, then "
+            "geometric roll-forward to current year. See §3.10 for the full "
+            "procedure."
+        )
+    for k in rd.get("missing_epw_rate_keys") or []:
+        bullets.append(
+            f"`intangibles_adjustment.epw_industry_rates.{k}` missing or "
+            "non-numeric — pull from EPW 2024 parameter file at "
+            "github.com/michaelewens/Intangible-capital-stocks; for HiTec "
+            "use δ_R&D=0.42, δ_organ=0.20, γ_SGA=0.37"
+        )
+    ff = rd.get("invalid_fama_french_class")
+    if ff is not None:
+        bullets.append(
+            f"`fama_french_industry_class` = {ff!r} not in canonical "
+            "5-class enum {HiTec, Hlth, Cnsmr, Manuf, Other}; map ticker's "
+            "SIC code to one of these"
+        )
+    regime = rd.get("invalid_regime")
+    if regime is not None:
+        bullets.append(
+            f"`roic_methodology_regime` = {regime!r} — must be 'gaap' or "
+            "'intangibles_adjusted'. Pre-promotion default is 'gaap'"
+        )
+    if rd.get("skip_flag_inconsistency"):
+        bullets.append(rd["skip_flag_inconsistency"])
+    for n in rd.get("notes") or []:
+        bullets.append(n)
+    return summary, bullets
+
+
 _RENDERERS = {
     "envelope_shape":        _render_envelope_shape,
     "evidence_uuid_check":   _render_evidence,
@@ -225,6 +289,7 @@ _RENDERERS = {
     "sizing_math":           _render_sizing,
     "counterfactual_catalog": _render_counterfactual,
     "sentiment_degradation": _render_sentiment,
+    "intangibles_adjustment_shape": _render_intangibles,
 }
 
 
