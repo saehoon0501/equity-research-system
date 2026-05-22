@@ -104,17 +104,24 @@ Build WACC for the DCF:
 
 Emit in `wacc_regime` block (§5) with sensitivity: `wacc_at_erp_plus_100bp` and `wacc_at_erp_minus_100bp` (compute by holding all other inputs fixed and perturbing ERP by ±1pp).
 
-### 3.10. Intangibles Adjustment (Ewens-Peters-Wang 2024 industry-specific rates) — Overlay 7, SHADOW MODE pre-promotion
+### 3.10. Intangibles Adjustment (Ewens-Peters-Wang 2024 industry-specific rates) — Overlay 7, PROVISIONAL PROMOTED 2026-05-22
 
 **Tier-conditional applicability:** for `tier ∈ {core_fundamental, thematic_growth}`, emit the `intangibles_adjustment` block in §5. For `tier == speculative_optionality`, SKIP entirely and emit `intangibles_adjustment: "SKIPPED — speculative_optionality"` with envelope flag `intangibles_adjustment_skipped_tier_speculative_optionality: true`.
 
-**Status:** SHADOW MODE pre-promotion (operator-gated Step 4).
+**Status:** PROVISIONAL PROMOTED 2026-05-22 — v7-final Step 3 adoption criterion PASSED on 4-ticker desk-calc (MSFT/GOOGL/AMD direction-correct + MSFT magnitude reproduces Mauboussin within 1.5pp + CLF control bound holds). See `docs/superpowers/research/2026-05-22-step3-adoption-criterion-passes-step4-provisional-promotion.md` for full verdict. Production label-calculus now uses **intangibles-adjusted** `incremental_roic` for Label A/B/C/D classification.
 
-**What SHADOW MODE means — HARD RULE (HG-38 enforced):**
+**What PROVISIONAL PROMOTED means — HARD RULE (HG-38 enforced):**
 - You MUST compute all 5 numeric fields under `intangibles_adjustment` for tier ∈ {core_fundamental, thematic_growth}: `capitalized_intangibles_balance_usd`, `intangibles_adjusted_earnings_usd`, `intangibles_adjusted_invested_capital_usd`, `intangibles_adjusted_roic_pct`, `reverse_dcf_implied_growth_delta_pp`.
-- Set `roic_methodology_regime: 'gaap'` to signal that production label-calculus continues to use GAAP `incremental_roic` (not the new adjusted value).
-- The regime flag controls **which value is promoted to label classification**, NOT whether the new value gets computed. Both values are always emitted in non-speculative tiers.
+- Set `roic_methodology_regime: 'intangibles_adjusted'` to signal production label-calculus uses adjusted ROIC (post-Step-4-promotion default).
+- Production reinvestment_moat label classification (§4 Overlay 2) now reads `intangibles_adjusted_roic_pct` instead of GAAP `incremental_roic_3y_trailing_pct`. The 10pp WACC threshold is held nominally identical (Step 4 spec: do NOT re-derive thresholds at promotion).
+- Both GAAP-baseline and intangibles-adjusted values continue to be emitted in shadow form for audit/replay; the regime flag identifies which is load-bearing for the current run.
 - Do NOT emit sentinel strings like `SHADOW_MODE_NOT_COMPUTED_THIS_RUN` in numeric fields — HG-38 PostToolUse hook rejects the envelope and forces re-emission via delta_prompt retry. The only valid string in these fields is the canonical speculative-tier skip sentinel `"SKIPPED — speculative_optionality"`, and only for that tier.
+
+**Step 4.5 hold-out monitoring gate (active 2026-05-22 onwards):**
+- Promotion is PROVISIONAL until the next 3 watchlist names dispatched via production /research-company pass Step 3 direction-only criterion as hold-out tests.
+- Diversity-confidence note: hold-out is opportunistic; if 3/3 hold-out are Label-A, extend window to 5 names with diversity flag.
+- Auto-revert trigger: ≥2/3 hold-out fail direction-correctness criterion → forward calculus reverts to GAAP regime only; promoted-period runs retain stamped version per audit-chain append-only immutability; surface to fresh /review-me.
+- Pass criterion: ≥2/3 hold-out pass → lock promotion; remove provisional flag.
 
 **Methodology source:** Ewens, Peters, Wang (2024) "Measuring Intangible Capital with Market Prices," *Management Science* 71(1):407-427. Industry-specific rates derived from firm-exit market prices. Parameter file: https://github.com/michaelewens/Intangible-capital-stocks (publicly downloadable).
 
@@ -301,10 +308,19 @@ Decompose reinvestment economics into incremental ROIC × deployable runway. A g
 Show all math inline (e.g., `incremental_roic_3y = ($30B − $14B) / $180B = 8.9%`).
 
 **Assign `quality_label`** (thresholds use `wacc_pct` from the `wacc_regime` block computed in §3.9):
-- **A** — `incremental_roic_3y_trailing_pct > wacc_pct + 10pp` AND `deployable_runway_years_est ≥ 5`
-- **B** — `incremental_roic_3y_trailing_pct > wacc_pct + 5pp` AND `deployable_runway_years_est ≥ 3`
-- **C** — `incremental_roic_3y_trailing_pct > wacc_pct` AND `deployable_runway_years_est ≥ 2`
-- **D** — `incremental_roic_3y_trailing_pct ≤ wacc_pct` OR `deployable_runway_years_est < 2`
+
+**Post-Step-4-promotion (2026-05-22 onwards) — use intangibles-adjusted ROIC for label classification when `roic_methodology_regime == 'intangibles_adjusted'`:**
+- The ROIC input to A/B/C/D thresholds becomes `intangibles_adjustment.intangibles_adjusted_roic_pct` (computed per §3.10 EPW + Hall seed methodology).
+- The 10pp / 5pp / 0pp WACC spread thresholds are held nominally identical (Step 4 spec: no threshold re-derivation at promotion; methodology-regime drift entry recorded in `run_parameters_snapshot`).
+- For `roic_methodology_regime == 'gaap'` (replay of pre-promotion runs, or speculative tier bypassed regime), continue to use `incremental_roic_3y_trailing_pct` (GAAP) as before.
+
+**Threshold mapping (load-bearing ROIC field varies with regime):**
+- **A** — `roic_for_label > wacc_pct + 10pp` AND `deployable_runway_years_est ≥ 5`
+- **B** — `roic_for_label > wacc_pct + 5pp` AND `deployable_runway_years_est ≥ 3`
+- **C** — `roic_for_label > wacc_pct` AND `deployable_runway_years_est ≥ 2`
+- **D** — `roic_for_label ≤ wacc_pct` OR `deployable_runway_years_est < 2`
+
+where `roic_for_label = intangibles_adjusted_roic_pct` (post-promotion regime) OR `incremental_roic_3y_trailing_pct` (gaap regime).
 
 **Capital-light skip rule:** if `current_reinvestment_rate_pct < 3%`, emit `quality_label: "N/A capital-light"` and skip incremental_roic computation. The framework applies only where reinvestment economics meaningfully drive value (capex-heavy + acquisitive compounders).
 
@@ -489,8 +505,8 @@ wacc_regime:
   wacc_at_erp_plus_100bp: <float>
   wacc_at_erp_minus_100bp: <float>
   cost_of_debt_method: <"book_interest" | "market_yield_fallback">
-roic_methodology_regime: <"gaap" | "intangibles_adjusted">  # Overlay 7 — top-level flag indicating which methodology generated this run's ROIC values. Single value per run (retroactive capitalization homogenizes the trend series). Pre-promotion: "gaap". Post-Step-4 promotion: "intangibles_adjusted". Strategic-analyst + evaluator must filter pre/post-promotion cohorts on this flag.
-intangibles_adjustment:  # Overlay 7 — Ewens-Peters-Wang 2024 industry rates (§3.10). SHADOW MODE pre-promotion. Tier-gated.
+roic_methodology_regime: <"gaap" | "intangibles_adjusted">  # Overlay 7 — top-level flag indicating which methodology generated this run's load-bearing ROIC value. POST-STEP-4-PROMOTION DEFAULT (2026-05-22): "intangibles_adjusted" for non-speculative tiers; reinvestment_moat label classification reads intangibles_adjusted_roic_pct. Pre-promotion runs (regime='gaap') are retained verbatim per audit-chain immutability; post-promotion runs are a separate cohort for historical conviction calibration (strategic-analyst + evaluator consumer contracts).
+intangibles_adjustment:  # Overlay 7 — Ewens-Peters-Wang 2024 industry rates (§3.10). PROVISIONAL PROMOTED 2026-05-22 (Step 4.5 hold-out gate ACTIVE — next 3 watchlist names monitor for auto-revert). Tier-gated.
   fama_french_industry_class: <"HiTec" | "Hlth" | "Cnsmr" | "Manuf" | "Other" | "SKIPPED — speculative_optionality">  # EPW Fama-French 5-class assignment derived from SIC; load-bearing for rate lookup
   epw_industry_rates:  # Industry-specific rates from EPW 2024 parameter file (https://github.com/michaelewens/Intangible-capital-stocks); HiTec defaults shown below
     delta_rd: <float>  # geometric depreciation rate for R&D capital (HiTec: 0.42)
