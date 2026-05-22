@@ -333,6 +333,7 @@ const SORT_KEY = "dashboard-sort";
 const TABS_KEY = "dashboard-tabs";
 const ACTIVE_KEY = "dashboard-active";
 const VIEW_KEY = "dashboard-view";
+const SIDEBAR_KEY = "dashboard-sidebar-collapsed";
 
 type View = "tickers" | "runs" | "gates";
 
@@ -385,10 +386,17 @@ export const App = () => {
     if (saved === "runs" || saved === "gates") return saved;
     return "tickers";
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem(SIDEBAR_KEY) === "1";
+  });
 
   useEffect(() => {
     localStorage.setItem(VIEW_KEY, view);
   }, [view]);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -527,9 +535,17 @@ export const App = () => {
   };
 
   return (
-    <div className="app">
+    <div className={`app ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-top">
+          <button
+            className="sidebar-collapse-btn"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            title={sidebarCollapsed ? "expand sidebar" : "collapse sidebar"}
+            aria-label={sidebarCollapsed ? "expand sidebar" : "collapse sidebar"}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
           <div className="view-toggle" role="tablist" aria-label="view mode">
             <button
               role="tab"
@@ -537,6 +553,7 @@ export const App = () => {
               className={`view-toggle-btn ${view === "tickers" ? "view-active" : ""}`}
               onClick={() => setView("tickers")}
               title="ticker-grouped view"
+              data-short="T"
             >Tickers</button>
             <button
               role="tab"
@@ -544,6 +561,7 @@ export const App = () => {
               className={`view-toggle-btn ${view === "runs" ? "view-active" : ""}`}
               onClick={() => setView("runs")}
               title="per-run observability view"
+              data-short="R"
             >Runs</button>
             <button
               role="tab"
@@ -551,6 +569,7 @@ export const App = () => {
               className={`view-toggle-btn ${view === "gates" ? "view-active" : ""}`}
               onClick={() => setView("gates")}
               title="gate-level scorecard across all runs"
+              data-short="G"
             >Gates</button>
           </div>
           <div className="sidebar-actions">
