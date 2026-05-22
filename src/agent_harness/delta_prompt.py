@@ -40,6 +40,7 @@ SPEC_REFS: dict[str, str] = {
     "HG-27": "quantitative-analyst.md Overlay 3+4 (Bayesian blend corrected = intuitive*(1-r) + reference*r)",
     "HG-28": "pm-supervisor.md §8 line 488 (counterfactual_top3_summary canonical buckets; §3.5 retrieval against peak_pain_archetypes)",
     "HG-38": "quantitative-analyst.md §3.10 Overlay 7 (intangibles_adjustment block; Mauboussin Apr 2025 / EPW 2024 industry rates; compute always for non-speculative tiers — regime flag controls only label-calculus promotion, NOT computation)",
+    "HG-ENV": "src/agent_harness/envelopes/<agent>.py (typed envelope schema + reasoning-path enum + cross-field predicates; per harness-v4-final v4 2026-05-22)",
 }
 
 # Per-gate human-readable diagnostic templates. Each receives a
@@ -282,6 +283,44 @@ def _render_intangibles(rd: dict) -> tuple[str, list[str]]:
     return summary, bullets
 
 
+def _render_envelope_validation(rd: dict) -> tuple[str, list[str]]:
+    """HG-ENV renderer — pydantic-style typed-envelope validation.
+
+    Failure surface is structural (path / expected / observed) so the
+    bullets are mechanical reformat — no narrative interpretation. This
+    is the ADDITIVE delta-prompt per harness-v4-final Step 3: appears
+    alongside any HG-2x semantic renderer in the same delta-prompt, not
+    in place of it.
+    """
+    summary = "Envelope (HG-ENV) failed — typed-schema or reasoning-path violation."
+    bullets: list[str] = []
+    for err in rd.get("field_errors") or []:
+        path = err.get("path", "$")
+        expected = err.get("expected", "")
+        observed = err.get("observed", "")
+        frag = err.get("schema_fragment")
+        line = f"`{path}`: expected {expected}; got {observed}"
+        if frag:
+            try:
+                line += f" — sub-schema: {json.dumps(frag, sort_keys=True)}"
+            except (TypeError, ValueError):
+                pass
+        bullets.append(line)
+    for step in rd.get("invalid_reasoning_steps") or []:
+        bullets.append(
+            f"`reasoning_path_taken` contains invented step {step!r} — "
+            "remove it OR replace with an allowed Literal from "
+            "#REASONING_PATH (any non-enumerated step = HG-ENV hard fail)"
+        )
+    for pred in rd.get("failed_predicates") or []:
+        bullets.append(
+            f"cross-field predicate `{pred}` failed — re-derive the "
+            "invariant from emitted fields; see the agent's envelope "
+            "module for the predicate definition"
+        )
+    return summary, bullets
+
+
 _RENDERERS = {
     "envelope_shape":        _render_envelope_shape,
     "evidence_uuid_check":   _render_evidence,
@@ -290,6 +329,7 @@ _RENDERERS = {
     "counterfactual_catalog": _render_counterfactual,
     "sentiment_degradation": _render_sentiment,
     "intangibles_adjustment_shape": _render_intangibles,
+    "envelope_validation":   _render_envelope_validation,
 }
 
 
