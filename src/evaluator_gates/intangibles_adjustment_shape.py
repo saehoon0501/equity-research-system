@@ -79,6 +79,19 @@ FORBIDDEN_SENTINELS: tuple[str, ...] = (
     "TBD",
 )
 
+# Recognized keys for the intangibles_adjustment block. Anything outside
+# this set is surfaced as an unrecognized agent-invented key (soft warn,
+# non-blocking — see CRWD 2026-05-22 case where the agent invented
+# `shadow_mode_for_warm_start_label_calculus_note` to justify a regime
+# fallback the spec did not authorize).
+RECOGNIZED_BLOCK_KEYS: frozenset[str] = frozenset({
+    *REQUIRED_NUMERIC_FIELDS,
+    "epw_industry_rates",
+    "fama_french_industry_class",
+    "hall_steady_state_seed_used",
+    "intangibles_adjustment_skipped_tier_speculative_optionality",
+})
+
 
 @dataclass
 class IntangiblesAdjustmentResult:
@@ -93,7 +106,9 @@ class IntangiblesAdjustmentResult:
     missing_epw_rate_keys: list[str] = field(default_factory=list)
     invalid_fama_french_class: str | None = None
     invalid_regime: str | None = None
+    tier_regime_mismatch: str | None = None  # Patch A — hard fail for non-spec tier + regime='gaap'
     skip_flag_inconsistency: str | None = None
+    unrecognized_block_keys: list[str] = field(default_factory=list)  # Patch C — soft warn
     notes: list[str] = field(default_factory=list)
 
 
@@ -159,6 +174,20 @@ def validate_intangibles_adjustment(memo: object) -> IntangiblesAdjustmentResult
     if regime is not None:
         if regime not in ("gaap", "intangibles_adjusted"):
             result.invalid_regime = str(regime)
+
+    # Patch A — tier-conditional regime enforcement (Step 4 PROVISIONAL
+    # PROMOTED default, post-commit 3b5b027). For tier ∈ {core_fundamental,
+    # thematic_growth}, regime MUST be 'intangibles_adjusted' per §3.10
+    # line 115 HARD RULE. Warm-start inheritance from pre-promotion briefs
+    # does NOT override this — the regime flag is recomputed on every
+    # dispatch, never inherited.
+    if result.tier in NON_SPECULATIVE_TIERS and regime == "gaap":
+        result.tier_regime_mismatch = (
+            f"tier={result.tier} requires roic_methodology_regime="
+            "'intangibles_adjusted' per §3.10 Step 4 PROVISIONAL PROMOTED "
+            "default (post-commit 3b5b027). Warm-start inheritance from "
+            "pre-promotion briefs is NOT a valid override."
+        )
 
     # Block-presence handling per tier.
     if block is None:
@@ -280,13 +309,24 @@ def validate_intangibles_adjustment(memo: object) -> IntangiblesAdjustmentResult
             "intangibles_adjustment_skipped_tier_speculative_optionality must be False"
         )
 
-    # Aggregate validity.
+    # Patch C — surface unrecognized block keys (soft warn, non-blocking).
+    # The §3.10 schema is a closed set; agent-invented keys like
+    # `shadow_mode_for_warm_start_label_calculus_note` (CRWD 2026-05-22)
+    # indicate the agent fabricated a rationale for a violation.
+    for k in block.keys():
+        if k not in RECOGNIZED_BLOCK_KEYS:
+            result.unrecognized_block_keys.append(k)
+
+    # Aggregate validity. tier_regime_mismatch is HARD (Patch A);
+    # unrecognized_block_keys is SOFT (Patch C — surfaces in result for
+    # audit but does NOT trip result.valid).
     if (
         result.missing_numeric_fields
         or result.forbidden_sentinels_in_numeric_fields
         or result.missing_epw_rate_keys
         or result.invalid_fama_french_class is not None
         or result.invalid_regime is not None
+        or result.tier_regime_mismatch is not None
         or result.skip_flag_inconsistency is not None
     ):
         result.valid = False
@@ -305,7 +345,9 @@ def _result_to_dict(r: IntangiblesAdjustmentResult) -> dict[str, Any]:
         "missing_epw_rate_keys": r.missing_epw_rate_keys,
         "invalid_fama_french_class": r.invalid_fama_french_class,
         "invalid_regime": r.invalid_regime,
+        "tier_regime_mismatch": r.tier_regime_mismatch,
         "skip_flag_inconsistency": r.skip_flag_inconsistency,
+        "unrecognized_block_keys": r.unrecognized_block_keys,
         "notes": r.notes,
     }
 
@@ -347,4 +389,5 @@ __all__ = [
     "REQUIRED_EPW_RATE_KEYS",
     "FORBIDDEN_SENTINELS",
     "NON_SPECULATIVE_TIERS",
+    "RECOGNIZED_BLOCK_KEYS",
 ]

@@ -276,8 +276,27 @@ def _render_intangibles(rd: dict) -> tuple[str, list[str]]:
             f"`roic_methodology_regime` = {regime!r} — must be 'gaap' or "
             "'intangibles_adjusted'. Pre-promotion default is 'gaap'"
         )
+    tier_regime = rd.get("tier_regime_mismatch")
+    if tier_regime:
+        bullets.append(
+            f"{tier_regime} Set `roic_methodology_regime: 'intangibles_adjusted'` "
+            "AND recompute the 5 numeric fields under the adjusted regime. "
+            "Do NOT add invented fields like `shadow_mode_for_warm_start_*` "
+            "to rationalize a gaap fallback — the spec does not authorize "
+            "warm-start regime inheritance."
+        )
     if rd.get("skip_flag_inconsistency"):
         bullets.append(rd["skip_flag_inconsistency"])
+    unrecognized = rd.get("unrecognized_block_keys") or []
+    if unrecognized:
+        bullets.append(
+            f"`intangibles_adjustment` contains unrecognized keys "
+            f"{unrecognized!r} that are not in the §3.10 schema. Soft "
+            "warn (non-blocking): if you are emitting a key the spec "
+            "does not enumerate, you are likely inventing a rationale "
+            "for a violation. Remove the keys and re-emit per the "
+            "canonical 9-key schema."
+        )
     for n in rd.get("notes") or []:
         bullets.append(n)
     return summary, bullets
