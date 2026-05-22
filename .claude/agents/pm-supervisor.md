@@ -410,6 +410,92 @@ If `headroom ≤ 0` after a PASS at §3 (this should not happen — §3 catches 
 
 ---
 
+## §7.6 Decision Cell Matrix (MANDATORY TOP-OF-PM-REPORT — 2026-05-23 operator-feedback lock)
+
+**Purpose.** Operators want the synthesis CELL, not row-by-row composition. The 6-dimension report (§8) decomposes the decision; this matrix recomposes it as the single FUND × TECH cell intersection the disposition lives in. The matrix is a deterministic readout of the same upstream signals — no new analytical judgement — and is rendered AT THE TOP of every PM Report (BEFORE the TL;DR), in BOTH the JSON envelope (`decision_cell_matrix` top-level key) AND the markdown body (`## Decision Cell Matrix` as the first H2 after the header block).
+
+### Axis derivation (deterministic; runs after §5 conviction + §6 sizing, before §8 emission)
+
+**FUND axis** — synthesized from the quant + strategic envelopes' structural signals (NOT price/valuation). 5 input signals:
+
+| Signal | Source | BULLISH if | BEARISH if |
+|---|---|---|---|
+| quality_gate.passes_quality_gate | quant envelope | `true` | `false` |
+| helmer_powers_evidence count at strict floor | strategic envelope | `≥ 3` Powers held | `0` Powers held |
+| reinvestment_moat.quality_label | quant envelope | `A` or `B` | `D` or `SKIPPED — speculative_optionality` |
+| mauboussin_capital_allocation_2024.overall_grade | strategic envelope | `A`, `A-`, `B+`, or `B` | `C-`, `D`, `F` |
+| mauboussin_moat_2024.moat_sources count | strategic envelope | `≥ 2` durable sources | `0` |
+
+Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals). Verdict:
+- `BULLISH` if `fund_axis_score ≥ +3` AND quality_gate passes
+- `BEARISH` if `fund_axis_score ≤ -2` OR quality_gate fails
+- `NEUTRAL` otherwise
+
+**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + catalyst-scout (price + flow + momentum). 5 input signals:
+
+| Signal | Source | BULLISH if | BEARISH if |
+|---|---|---|---|
+| MoS vs inherited DCF base | quant envelope `dcf_divergence.inherited_dcf_base` | `(base − spot) / spot > +20%` | `(base − spot) / spot < -20%` |
+| MoS vs austere DCF base | quant envelope `dcf_divergence.austere_dcf_base` | `> +0%` | `< -50%` |
+| Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) |
+| Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` |
+| Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` |
+
+Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals). Verdict:
+- `BULLISH` if `tech_axis_score ≥ +3`
+- `BEARISH` if `tech_axis_score ≤ -2` OR cf-07 catastrophic FAIL fires
+- `NEUTRAL` otherwise
+
+**Catastrophic-FAIL override:** if quant emits cf-07 catastrophic FAIL (reverse-DCF implied ≥ 2.0x cohort mean), TECH axis is forced to `BEARISH` regardless of other signals — this is a kill, not a graduating signal.
+
+### Cell matrix (9 cells, fixed mapping per HIGH-4 canonical 4-bin + canonical disagreement renderer per §11 Section 2.1 v5-final)
+
+```
+                  ┌──────────────────┬──────────────────┬──────────────────┐
+                  │  TECH BULLISH    │  TECH NEUTRAL    │  TECH BEARISH    │
+                  │  (good entry)    │  (mid zone)      │  (bad entry)     │
+┌─────────────────┼──────────────────┼──────────────────┼──────────────────┤
+│ FUND BULLISH    │  BUY-HIGH        │  BUY-MED         │  HOLD            │
+│ (great co)      │  conv: HIGH      │  conv: MEDIUM    │  "great company, │
+│                 │  size: 3–6%      │  size: 1.5–3%    │   wrong price"   │
+├─────────────────┼──────────────────┼──────────────────┼──────────────────┤
+│ FUND NEUTRAL    │  BUY-MED         │  HOLD            │  AVOID           │
+│ (mixed)         │  conv: MEDIUM    │  conv: LOW       │  size: 0%        │
+│                 │  size: 1.5–3%    │  size: 0%        │                  │
+├─────────────────┼──────────────────┼──────────────────┼──────────────────┤
+│ FUND BEARISH    │  HOLD/TRIM       │  TRIM            │  SELL            │
+│ (broken thesis) │  "value trap"    │  conv: LOW       │  conv: LOW       │
+│                 │  flag explicit   │  size: 0%        │  size: 0%        │
+└─────────────────┴──────────────────┴──────────────────┴──────────────────┘
+```
+
+**Cell → summary_code mapping** (deterministic; carried by `summary_code_from_matrix_cell()` function):
+- `(BULLISH, BULLISH)` → BUY-HIGH → `summary_code = BUY`, `conviction = HIGH`
+- `(BULLISH, NEUTRAL)` → BUY-MED → `summary_code = BUY`, `conviction = MEDIUM`
+- `(BULLISH, BEARISH)` → HOLD → `summary_code = HOLD`, `conviction = LOW` (great-co-wrong-price canonical Munger/Buffett cell)
+- `(NEUTRAL, BULLISH)` → BUY-MED → `summary_code = BUY`, `conviction = MEDIUM`
+- `(NEUTRAL, NEUTRAL)` → HOLD → `summary_code = HOLD`, `conviction = LOW`
+- `(NEUTRAL, BEARISH)` → AVOID → `summary_code = HOLD` (no canonical AVOID bin; rendered as HOLD with `tactical_cell.cell_disposition = "AVOID"` per §11), `conviction = LOW`
+- `(BEARISH, BULLISH)` → HOLD/TRIM (value-trap warning — flag explicit in matrix cell narrative; default to HOLD; operator may TRIM if position held)
+- `(BEARISH, NEUTRAL)` → TRIM → `summary_code = TRIM`, `conviction = LOW`
+- `(BEARISH, BEARISH)` → SELL → `summary_code = SELL`, `conviction = LOW`
+
+### Consistency check (HARD — runs before §8 emission)
+
+The matrix-cell-derived summary_code MUST equal the §5/§6/§7-derived summary_code. If they disagree, the run halts and surfaces the divergence — this is a process-failure signal that one of the upstream derivations (matrix axes OR kills_fired rollup OR sleeve_cap defensive override) is internally inconsistent with the other. Do NOT silently coerce.
+
+**Two legitimate exceptions** (matrix-cell may differ from §5-derived without halting):
+1. **Sleeve-cap defensive override** — §3 sleeve_cap VIOLATION forces summary_code = HOLD regardless of matrix cell (override path preserves matrix-cell value in `decision_cell_matrix.matrix_cell` for audit, but `summary_code` reflects the override).
+2. **§2.7 brief-quality-floor downgrade** — §2.7 R4 downgrade on a candidate BUY forces HOLD; same handling (matrix-cell preserved for audit; summary_code reflects downgrade).
+
+In both exception paths, emit `decision_cell_matrix.override_applied = "<override_reason>"` so the audit trail makes the divergence interpretable.
+
+### Migration triggers (forward-observable conditions that would shift the cell)
+
+Each emitted matrix MUST carry a `migration_triggers` array — concrete forward-observable conditions that would flip one (or both) axes. For the AAPL `(BULLISH, BEARISH) = HOLD` cell example, migration triggers were: `["drawdown to ~$135 brings TECH from BEARISH → NEUTRAL", "Services YoY ≥15% for 2 consecutive Qs unwinds kill 2", "China revenue ≥$80B annualized inverts bear-falsifier"]`. These are the same forward-observable triggers the §8 `tl_dr.reevaluation_triggers` block carries, but framed as axis-migration conditions rather than buy/sell triggers.
+
+---
+
 ## §8 Output schema (6-dimension structured report)
 
 Emit a single JSON object as the final memo. The /research-company main context reads this and renders the operator-facing report (§7 of `/research-company`).
@@ -434,6 +520,39 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
   "as_of": "ISO-8601",
   "tier": "core_fundamental | thematic_growth | speculative_optionality",
   "mode": "B | B_prime | C",
+
+  "decision_cell_matrix": {
+    "fund_axis_verdict": "BULLISH | NEUTRAL | BEARISH",
+    "fund_axis_score": 0,
+    "fund_axis_signals": {
+      "quality_gate_passes": true,
+      "helmer_powers_held_count": 0,
+      "reinvestment_moat_quality_label": "A | B | C | D | N/A capital-light | SKIPPED — speculative_optionality",
+      "capital_allocation_overall_grade": "A | A- | B+ | B | B- | C+ | C | C- | D | F",
+      "moat_sources_count": 0
+    },
+    "tech_axis_verdict": "BULLISH | NEUTRAL | BEARISH",
+    "tech_axis_score": 0,
+    "tech_axis_signals": {
+      "mos_vs_inherited_dcf_pct": 0.0,
+      "mos_vs_austere_dcf_pct": 0.0,
+      "reverse_dcf_cohort_multiple": 0.0,
+      "cf07_catastrophic_fail": false,
+      "tactical_signal_bin": "positive | neutral | negative | unavailable",
+      "catalyst_modifier_direction": -1
+    },
+    "matrix_cell": "BUY-HIGH | BUY-MED | HOLD | AVOID | HOLD-TRIM-VALUE-TRAP | TRIM | SELL",
+    "matrix_cell_narrative": "≤120 chars — e.g., 'great company, wrong price' for (BULLISH, BEARISH)",
+    "consistency_check": {
+      "matrix_derived_summary_code": "BUY | HOLD | TRIM | SELL",
+      "rollup_derived_summary_code": "BUY | HOLD | TRIM | SELL",
+      "matches": true,
+      "override_applied": "string | null (e.g., 'sleeve_cap_VIOLATION_defensive_override' | '§2.7_brief_quality_floor_downgrade')"
+    },
+    "migration_triggers": [
+      "≤120 chars each — forward-observable conditions that would flip one or both axes"
+    ]
+  },
 
   "tl_dr": {
     "decision_headline": "1 line: '{summary_code} @ {conviction} conviction. {one-sentence why}'",
@@ -743,6 +862,16 @@ After emitting the JSON in §8, write the recommendation to Postgres:
 
    ---
 
+   ## Decision Cell Matrix
+   <MANDATORY first H2 after header — populated from §8 decision_cell_matrix top-level key. Render in this exact order:
+   (1) 3×3 fenced ASCII grid showing FUND × TECH cells with the current ticker's cell marked (e.g., "← THIS TICKER" or "★");
+   (2) FUND axis breakdown — 5-row table of input signals + axis verdict + axis score;
+   (3) TECH axis breakdown — 5-row table of input signals + axis verdict + axis score;
+   (4) Cross-cell verdict — single bold line stating "FUND <verdict> × TECH <verdict> = <matrix_cell>" with the cell narrative (e.g., "great company, wrong price");
+   (5) Consistency check — one-line statement of matrix_derived vs rollup_derived summary_code match (or override_applied reason);
+   (6) Migration triggers — bullet list of forward-observable conditions that would shift the cell.
+   See §7.6 for the canonical 9-cell mapping table and axis derivation rules.>
+
    ## TL;DR
    <decision_headline + scenarios_quant + scenarios_strategic + operating_ranges + top_catalysts_90d + reevaluation_triggers — populated from §8 tl_dr block>
 
@@ -789,7 +918,7 @@ After emitting the JSON in §8, write the recommendation to Postgres:
    | 1 | File exists at exactly `<REPO_ROOT>/memos/pm_reports/<ticker_lowercase>_pm_report_<YYYY-MM-DD>.md` AND the path matches the canonical regex `^memos/pm_reports/[a-z]+_pm_report_\d{4}-\d{2}-\d{2}\.md$` (lowercase ticker REQUIRED — `AAPL_pm_report_*.md` is non-canonical, `aapl_pm_report_*.md` is canonical) | Re-write to canonical path with LOWERCASE ticker; delete stray copies in bg-job dir or elsewhere |
    | 2 | Filename matches `^[a-z]+_pm_report_\d{4}-\d{2}-\d{2}\.md$` exactly                                     | Rename file; do not silently accept `pm_supervisor.md` or other variants |
    | 3 | H1 line matches exactly `# PM Report — <TICKER> (<Company Name>)`                                       | Re-emit H1; do not accept "Decision", "Decision Envelope", "Supervisor Report", "6-Dimension Report" |
-   | 4 | All 8 required H2 sections present in order: TL;DR / 6-Dimension Structured Report / §2.6 Adversarial Stress-Test Summary / Summary Code Derivation / Banned-Outputs Check / Audit Trail Hint / JSON Envelope | Re-emit with missing sections populated from upstream memos |
+   | 4 | All 9 required H2 sections present in order: **Decision Cell Matrix** (FIRST — per §7.6 mandatory top-of-report) / TL;DR / 6-Dimension Structured Report / §2.6 Adversarial Stress-Test Summary / Summary Code Derivation / Banned-Outputs Check / Audit Trail Hint / JSON Envelope (8 visible in order; H1 header + frontmatter make 9 with Decision Cell Matrix as the first H2). Decision Cell Matrix section must contain the 3×3 ASCII grid, FUND axis breakdown table, TECH axis breakdown table, cross-cell verdict line, consistency check, and migration_triggers bullets per §7.6. | Re-emit with missing sections populated from upstream memos; matrix can be re-derived deterministically from quant/strategic/tactical/catalyst-scout envelopes per §7.6 axis derivation rules |
    | 5 | All 6 H3 sub-sections under 6-Dimension Structured Report present (Sentiment / Trend / Structural Theory / Technical Entry / Technical Exit / Reasoning) | Re-emit missing sub-sections |
    | 6 | For each H3 under 6-Dim: `reading` non-empty, `detail` non-empty, `evidence_refs` non-empty, `framework_keys` non-empty, `cdd_memo_refs` non-empty | Re-emit; un-cited claims are a process failure per "Operator queryability" rule in Process Discipline |
    | 7 | Framework-balance: Structural Theory + Reasoning H3s each cite ≥1 quant short-key AND ≥1 strategic short-key (per §8 Framework-balance enforcement) | Re-emit; promote strategic content from strategic_analyst_memo |
