@@ -123,6 +123,49 @@ Emit in `wacc_regime` block (§5) with sensitivity: `wacc_at_erp_plus_100bp` and
 - Auto-revert trigger: ≥2/3 hold-out fail direction-correctness criterion → forward calculus reverts to GAAP regime only; promoted-period runs retain stamped version per audit-chain append-only immutability; surface to fresh /review-me.
 - Pass criterion: ≥2/3 hold-out pass → lock promotion; remove provisional flag.
 
+**Step 4.5 additive rigor gates (per /review-me v5-final convergence 2026-05-22 — additive ENHANCEMENTS to the 2/3 direction-correct gate above, NOT replacements):**
+
+The 2/3 direction-correct gate is operationally simple but statistically weak: direction is mechanically determined by the input data (R&D-heavy ticker → positive uplift by construction of EPW γ_SGA + Hall seed). A totally broken implementation that produced +0.1% uplift on every high-R&D name would still pass 3/3. The three gates below catch bug classes the direction-only test cannot.
+
+**Gate D — MSFT FY2024 canary (deterministic regression test, fires on config/code change):**
+
+Detects code/parameter pipeline drift against the validated baseline. Runs on commits touching `.claude/agents/quantitative-analyst.md` §3.10, `evaluator_gates/intangibles_adjustment_shape.py`, EPW parameter file, or `src/intangibles/**`. Test: compute MSFT FY2024 adjusted NOPAT via current code path; assert ∈ [$103B, $113B] (±5% of Mauboussin $108B published anchor, reproduced at $106.56B during Step 3 desk-calc). Fail blocks commit via pre-commit hook. Executable: `scripts/canary_intangibles_msft.sh` (follow-up commit — spec defines contract; script enforces). NOT a per-ticker validator — independent regression test against the only currently-available published reproducibility anchor.
+
+EPW upstream re-baseline procedure (when EPW publishes new rates): iterative work on a feature branch — update pinned hash, recompute MSFT canary with new rates, adjust Gate D target band in spec text based on observed value, re-run canary, iterate until pass, atomic squash-merge to main.
+
+**Gate E(d) — Closed-form recompute (per-dispatch sanity check, catches fencepost / off-by-one bugs):**
+
+The direction-only gate misses smooth, correctly-signed wrong answers from index-alignment bugs (a systematic one-year lag in SG&A history lookup produces direction-correct but magnitudinally-wrong output). Per PROVISIONAL dispatch (tier ∈ {core_fundamental, thematic_growth}), assert:
+
+```
+|capitalized_intangibles_balance_usd - K_recomputed| ≤ max(0.005 × K_recomputed, $1M)
+
+where K_recomputed =
+    K_seed_R&D × (1 - δ_R&D)^(N-1)
+  + K_seed_organ × (1 - δ_organ)^(N-1)
+  + Σ_{k=0..N-1} RD_{t-k} × (1 - δ_R&D)^k
+  + Σ_{k=0..N-1} γ_SGA × SGA_{t-k} × (1 - δ_organ)^k
+
+with K_seed_R&D   = RD_{t-(N-1)}            / (g_R&D + δ_R&D)
+     K_seed_organ = γ_SGA × SGA_{t-(N-1)}   / (g_SGA + δ_organ)
+     N           = years of observed R&D + SG&A history (typically 5-10 from EDGAR)
+```
+
+**Corrado-Hulten convention footnote:** the seed `K_seed` represents pre-history accumulated stock (built from the flow `RD_{t-(N-1)}` extrapolated as Gordon-growth perpetuity); the seed-decay exponent is `(N-1)`, NOT `N` — common fencepost mistake. The observed-window sum k=0..N-1 includes the deposit `RD_{t-(N-1)}` at k=N-1; this is NOT double-counting because the seed captures pre-history accumulation while the observed-window sum captures in-history deposits. Standard BEA / Corrado-Hulten treatment.
+
+Sub-check failure handling: log to `system_errors` with `event_type='gate_e_d_closed_form_breach'` + ticker + observed `|Δ|`. Does NOT auto-flip the regime flag on first failure (single-ticker noise tolerance for corp-action / one-off discontinuities). Escalation: ≥2 distinct tickers breaching this gate in the most recent 10 *global* PROVISIONAL dispatches → surface to fresh /review-me for manual triage.
+
+**Gate F (ii) — IV-uplift hard-blocker on final promotion:**
+
+The pass criterion above (`≥2/3 hold-out pass → lock promotion; remove provisional flag`) is necessary but NOT sufficient for final promotion. Final promotion ALSO requires:
+
+- (i) `≥2/3 hold-out pass` per the Step 4.5 direction-only gate above
+- (ii) An `evidence_index` row exists with `evidence_type='intangibles_iv_uplift_verification'`, MSFT IV-uplift verified under the full quant chain (full `/research-company` dispatch on MSFT, NOT desk-calc), UUID logged, AND the UUID's git SHA is a descendant of the §3.10 promotion commit `3b5b027` — prevents reuse of stale pre-promotion IV-uplift evidence
+
+**Why this hard-blocker exists:** v7-final §3 adoption criterion is **IV-uplift** (full DCF revaluation), but Step 3 verification used **NOPAT-uplift** as proxy because the desk-calc bypassed the full quant chain due to stale-spec session blocker (see promotion memo). NOPAT-uplift and IV-uplift are directionally correlated but magnitudes differ — IV-uplift on long-duration cash flows typically 1.2-1.5× NOPAT-uplift, so MSFT's +9.85% NOPAT-uplift maps to roughly +12-15% IV-uplift (inside the 5-25% Mauboussin band, but this is *inferred* not *measured*). Without (ii), the system can drift to "final" via the 2/3 gate alone, never having satisfied the actual v7-final criterion. The hard-blocker forces operator to close this debt before the PROVISIONAL label can come off.
+
+**Loop-back path:** if the IV-uplift verification fails when run (full quant chain produces NOPAT-uplift OK but IV-uplift outside the 5-25% band), the 2/3 hold-out pass result is informational only; the regime flag does NOT advance past PROVISIONAL until either (a) IV-uplift verification re-runs and passes, or (b) /review-me re-convenes to adjust the v7-final criterion. NOPAT-uplift-only validation is insufficient for final promotion.
+
 **Methodology source:** Ewens, Peters, Wang (2024) "Measuring Intangible Capital with Market Prices," *Management Science* 71(1):407-427. Industry-specific rates derived from firm-exit market prices. Parameter file: https://github.com/michaelewens/Intangible-capital-stocks (publicly downloadable).
 
 **Why EPW 2024 rather than Hulten 2010 or Mauboussin SL 6/2/2yr:** see `/Users/sehoonbyun/.claude/jobs/4a47ad37/step1_verification_note.md` (Step 1 primary-source verification) + the useful-life /review-me cycle (iters 1-3 + external /research). Short version: EPW is the strongest current peer-reviewed source; industry-specific is empirically right per Iqbal-Rajgopal-Srivastava-Zhao 2025 (the very paper Mauboussin cites in his April 2025 deck argues against uniform rules-of-thumb); externally-maintained parameter file = minimal ongoing maintenance; resolves the Hulten/Mauboussin internal incoherence by being independent of both.
