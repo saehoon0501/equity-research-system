@@ -63,11 +63,48 @@ If grading a CompanyDeepDive output:
 ### HG-3: PMSupervisor adversarial stress-test pass present and complete
 
 Per the 2026-05-12 bear-case removal, the formerly-separate BearCase memo is replaced by pm-supervisor's §2.6 internal adversarial stress-test. If grading a PMSupervisor output:
+
+**Check 1 — presence and completeness (original HG-3):**
 - `adversarial_stress_test` field must be present with `{claims_inverted_count, stress_passed, stress_open, stress_failed, catastrophic_failures, bear_confidence_proxy}`
 - `claims_inverted_count` must be ≥ the count of load-bearing claims in the cdd-lead `integrated_thesis.key_supporting_findings`
 - Any `stress_failed` of catastrophic severity must be reflected in the conviction tier (forced to LOW) OR explicitly justified in `conviction_rationale`
 
-If either fails: REJECT.
+If any Check 1 sub-bullet fails: REJECT.
+
+**Check 2 — analog-retirement enforcement (NEW per /review-me v5-final 2026-05-24):**
+
+For every entry in `adversarial_stress_test.kills_fired_evidence[]`:
+  Assert: `field_path` references a mechanical-threshold trip, defined as a dotted path under
+  `frameworks_cited.<framework_key>.output.<metric>` where <framework_key> is in the canonical
+  framework registry (canonical-frameworks.md) and <metric> is a numerical output that can be
+  re-derived deterministically from upstream subagent envelopes.
+
+  Examples of MECHANICAL field_paths (ACCEPT):
+    - frameworks_cited.mauboussin_reverse_dcf.output.implied_growth
+    - frameworks_cited.helmer_7_powers.output.powers_held_count
+    - frameworks_cited.buffett_2007_inevitables.output.reinvestment_quality_label
+
+  Examples of NARRATIVE/ANALOG field_paths (REJECT):
+    - historical_analogs[0].drawdown_implied
+    - scenarios_strategic.bull.drawdown_implied
+    - any field_path containing "analog" or "drawdown_implied" substring
+    - any field_path referencing a single-case-name (CSCO, NOK, IBM, MSFT) as the kill anchor
+
+  Rationale: per Stage 1 /research adjudication, single-case analog-derived magnitudes are not
+  empirically valid forecasting evidence (Green-Armstrong 2007 32% accuracy; Bessembinder 2018
+  survivorship). The mechanical-threshold framing forces stress-test kills to anchor on signals
+  that are deterministically re-derivable from the audit chain.
+
+  Violation (any kills_fired_evidence[] entry with non-mechanical field_path) → REJECT with:
+  `"HG-3 Check 2: kills_fired_evidence[<i>].field_path <X> is not a mechanical-threshold path under frameworks_cited.<framework_key>.output.<metric>. Analog-derived narrative magnitudes are not admissible per /review-me v5-final 2026-05-24."`
+
+**GRANDFATHER (HG-3 Check 2 only):**
+  For pm-supervisor envelopes with `created_at < 2026-05-24T00:00:00Z`, Check 2 returns
+  N/A-PRE-CUTOVER (consistent with HG-28/29/30/31/32/33 grandfather precedent at lines
+  581/601/658/670/702 of this file). Check 1 (presence + completeness) continues to apply
+  pre-cutover.
+  Rationale: envelopes emitted before the retirement plan merge cannot retroactively satisfy a
+  field_path constraint that didn't exist when they were written.
 
 ### HG-4: Every numerical/dated/named-fact claim has Evidence Index reference
 

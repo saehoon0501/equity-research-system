@@ -84,7 +84,14 @@ For each claimed source, state:
 - Specific evidence (cite filing pulled via `mcp__edgar__*` or news via `mcp__market_data__*`)
 - Expected fade pattern (timeline + driver)
 
-**Analog discipline.** Your `historical_analogs` field surfaces MOAT-FADE patterns (how a moat eroded over multi-year horizons) as the primary lens. Price-collapse-at-cycle-peak framing is allowed as secondary commentary — the dedicated bear-case subagent that formerly owned that territory was retired 2026-05-12, so you now carry both. Example: Cisco 1999/2000 from a *moat-fade* lens = "optical-router process power eroded over 5 years as Huawei/ZTE achieved feature parity" + secondary note that the stock re-rated -80% over the same window. Be explicit about which lens each analog is invoked under so pm-supervisor's §2.6 adversarial stress-test can use it cleanly.
+**Analog discipline.** Your `historical_analogs` field surfaces MOAT-FADE patterns (how a moat eroded over multi-year horizons) as **illustrative narrative only — NOT forecasting evidence**. Per Green-Armstrong 2007 (J. Int. Forecasting), single-case historical analogs are 32% accurate as forecasting evidence (≈ chance) and trigger representativeness + hindsight + survivorship biases. The empirically-validated forecasting-evidence path in this codebase is the `outside_view` block (statistical cohort base rates per Mauboussin Base Rate Book 2016 / Counterpoint Global 2024). Mechanism-first framing is mandatory: each analog must name the structural mechanism (e.g., "switching-cost erosion via regulatory unbundling", "process-power decay as commodity vendors achieved feature parity"). **Drawdown magnitudes (e.g., "X drew down 80%+") are non-evidentiary illustration only and MUST NOT be used as drawdown-magnitude or multiple-compression anchors.** Example: Cisco 1999/2000 from the canonical *mechanism* lens = "multiple-compression mechanism intact through ROIC peak as optical-router process power eroded over 5 years against Huawei/ZTE feature parity" — NOT "the stock re-rated -80% over the same window." Operator-facing fields (TL;DR, scenarios tables) MUST use mechanical reference-class data (`outside_view` cohort, reverse-DCF implied compression) for magnitude anchoring, never analogs.
+
+**Analog construction rules (consumed by the §5 schema):**
+1. Each analog entry MUST populate `comparable_dimensions` (list of dimensions making the analog comparable to the subject) BEFORE the `moat_fade_lesson` is cited — per Mauboussin's rule that comparability must be established prior to invoking the analog.
+2. Each analog entry MUST populate `mechanism_specified` (the structural mechanism, e.g., "switching-cost erosion via regulatory unbundling") — NOT the drawdown magnitude.
+3. Cap `historical_analogs[]` at **MAX 2 entries**. Bias toward fewer.
+4. **Reject any analog that does not carry BOTH `comparable_dimensions` AND `mechanism_specified`.** Do not emit it.
+5. Drawdown magnitudes (e.g., "X drew down 80%+") are non-evidentiary illustration only. Operator-facing fields (TL;DR, scenarios tables) MUST use mechanical reference-class data (`outside_view` cohort, reverse-DCF implied compression) for magnitude anchoring.
 
 #### helmer_7_powers
 
@@ -190,8 +197,21 @@ frameworks_cited:
           evidence: <cite filing or search finding>
           expected_fade_pattern: <timeline + driver>
       historical_analogs:
-        - ticker_year: <e.g., "CSCO 1999/2000">
-          moat_fade_lesson: <one-line takeaway>
+        # USAGE LOCK — illustrative narrative only; NOT forecasting evidence.
+        # Per Green-Armstrong 2007 (J. Int. Forecasting): single-case historical analogs are 32% accurate
+        # as forecasting evidence (≈ chance) and trigger representativeness + hindsight + survivorship biases.
+        # The empirically-validated forecasting-evidence path is the `outside_view` block
+        # (statistical cohort base rates per Mauboussin Base Rate Book 2016 / Counterpoint Global 2024).
+        # Use historical_analogs[] ONLY for moat-fade pattern illustration; NEVER as drawdown-magnitude
+        # or multiple-compression anchor.
+        usage: "illustrative_narrative_only"
+        # MAX 2 entries (Green-Armstrong n≥2 accuracy floor; bias toward fewer per anti-creep).
+        # Each entry MUST carry BOTH comparable_dimensions AND mechanism_specified; otherwise reject.
+        entries:
+          - ticker_year: <e.g., "CSCO 1999/2000">
+            comparable_dimensions: [<list of dimensions making the analog comparable BEFORE citation — per Mauboussin's rule; e.g., "process-power moat source", "cycle-peak ROIC posture", "commodity-vendor entrant pattern">]
+            mechanism_specified: <names the STRUCTURAL mechanism, e.g., "switching-cost erosion via regulatory unbundling" — NOT the drawdown magnitude>
+            moat_fade_lesson: <one-line mechanism-focused takeaway>
   - framework_key: helmer_7_powers
     output:
       helmer_powers_evidence:
