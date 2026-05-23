@@ -100,70 +100,10 @@ def test_p3_unicode_drill_payload_round_trips(monkeypatch: pytest.MonkeyPatch) -
 
 
 # ---------------------------------------------------------------------------
-# 2. peak_pain_catalog round-trip
+# Section 2 (peak_pain_catalog round-trip): tests removed 2026-05-23 with
+# src/peak_pain_catalog/ deletion (mig 041) per docs/superpowers/specs/
+# 2026-05-23-eval-loop-deletion-design.md.
 # ---------------------------------------------------------------------------
-
-
-def test_peak_pain_catalog_column_signature_verifies() -> None:
-    """A peak-pain catalog row signed under PEAK_PAIN_HMAC_KEY must verify."""
-    from src.peak_pain_catalog.persistence import (
-        PersistencePayload,
-        verify_hmac,
-    )
-
-    payload_unsigned = {
-        "case_id": "TEST-2024",
-        "ticker": "TEST",
-        "peak_date": "2024-01-01",
-        "trough_date": "2024-12-31",
-        "peak_dd_pct": -50.0,
-        "outcome": "SURVIVOR",
-        "sector": "tech_saas",
-        "era_category": "post_zirp",
-        "universal_core_features": {"founder_in_place": "yes"},
-        "sector_extensions": {"NDR_trend": "expanding"},
-        "universal_core_consensus": {},
-        "validation_status": "validated",
-        "consensus_method": "feature-typed-v0.1",
-        "notes": "test row",
-        "source_urls": [],
-    }
-    # Sign explicitly with the canonical helper
-    sig = compute_signature_dict(payload_unsigned, b"peak-pain-secret")
-    p = PersistencePayload(**{**payload_unsigned, "hmac_signature": sig})
-    assert verify_hmac(p, hmac_key=b"peak-pain-secret")
-    # Tampered version fails:
-    tampered = replace(p, ticker="EVIL")
-    assert not verify_hmac(tampered, hmac_key=b"peak-pain-secret")
-
-
-def test_peak_pain_catalog_unicode_round_trip() -> None:
-    """Non-ASCII fields must round-trip (ensure_ascii=False contract)."""
-    from src.peak_pain_catalog.persistence import (
-        PersistencePayload,
-        verify_hmac,
-    )
-
-    payload = {
-        "case_id": "GREEK-α",
-        "ticker": "TEST",
-        "peak_date": "2024-01-01",
-        "trough_date": "2024-12-31",
-        "peak_dd_pct": -50.0,
-        "outcome": "SURVIVOR",
-        "sector": "tech_saas",
-        "era_category": "post_zirp",
-        "universal_core_features": {"note": "δ — em-dash"},
-        "sector_extensions": {},
-        "universal_core_consensus": {},
-        "validation_status": "validated",
-        "consensus_method": "feature-typed-v0.1",
-        "notes": "α — Δ",
-        "source_urls": [],
-    }
-    sig = compute_signature_dict(payload, b"peak-pain-secret")
-    p = PersistencePayload(**{**payload, "hmac_signature": sig})
-    assert verify_hmac(p, hmac_key=b"peak-pain-secret")
 
 
 # ---------------------------------------------------------------------------
