@@ -75,3 +75,4 @@ checkpoints/
 
 # Working notes (not committed)
 .scratch/
+.claude/worktrees/
