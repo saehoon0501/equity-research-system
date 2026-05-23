@@ -230,6 +230,46 @@ PEG ratios are mathematically undefined or structurally noisy for companies with
 
 Damodaran's canonical framework for pre-revenue and early-stage names: traditional DCF/multiple anchors fail when the going-concern assumption is itself the open question. Recommends milestone-tree gating (phase-by-phase probability-of-success factors per biotech analog), Hall steady-state EV (intangibles capitalization), and real-options framing (Trigeorgis, Copeland-Antikarov) over USD-price triggers. Cite when **speculative_optionality tier emits `fundamental_track = null` with `null_reason = "milestone-tree gated — see report.reasoning.detail"`** as the canonical emission. The substantive narrative (phase POS factors, real-options framing) routes to `report.reasoning.detail`; the fundamental_track stays null because price-anchored entry triggers do not apply to binary-outcome names.
 
+## Technical-anchor empirical priors (v2.2 — 2026-05-23)
+
+These short-keys back the tier-conditional TECHNICAL anchor guidance in `pm-supervisor.md` §7.6 v2.2 (parallels v2.1 fundamental-side priors). Same conventions as v2.1: in-track anchor priors cited inside `technical_track` free-form text via the existing `framework_keys[]` channel; NOT synthesis short-keys; `§8` framework-balance enumeration (7 quant + 3 strategic) is NOT extended. /research findings 2026-05-23 (6 parallel research-skill-executor subagents) significantly refined and in cases REJECTED initial proposals — see pm-supervisor.md §7.6 v2.2 "Considered-and-rejected technical anchors" block for the audit-trail.
+
+### kaminski_lo_2014
+
+**Source:** Kaminski, Lo, "When Do Stop-Loss Rules Stop Losses?" Journal of Financial Markets. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=968338
+
+Under Random Walk and mean-reversion regimes, simple stop-loss rules **always decrease expected return** — stops "miss reversals and lower expected return." Stops add value ONLY when momentum is present; empirically on US equities 1950-2004 momentum-conditioned stops added 50-100 bps/month during stop-out periods. Cite when justifying **NO PRICE STOP for core_fundamental tier** (quality compounders exhibit mean-reverting drawdowns; stops convert paper losses to permanent).
+
+### asness_frazzini_pedersen_qmj_2014
+
+**Source:** Asness, Frazzini, Pedersen, "Quality Minus Junk," SSRN 2312432. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2312432
+
+Quality factor (profitability + growth + safety + payout) has **positive convexity in market downturns** — exhibits flight-to-quality rather than crash risk. Quality-minus-junk returns are HIGH during crises, not negatively skewed. Empirically confirms that high-quality mega-cap drawdowns historically reverse, supporting the no-price-stop discipline for core_fundamental tier. Cite together with `kaminski_lo_2014` when the agent emits "No price stop" in `technical_track` for quality compounders.
+
+### han_yang_zhou_2013
+
+**Source:** Han, Yang, Zhou, "A New Anomaly: The Cross-Sectional Profitability of Technical Analysis," Journal of Financial and Quantitative Analysis. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1656460
+
+MA-timing's abnormal returns are **monotonically increasing in volatility decile** — benefit concentrated in high-vol / small / young / low-coverage firms; marginal for low-vol large-caps. Mechanism: gradual underreaction → price continuation → trend-based exits dominate buy-and-hold in this cohort. Cite when justifying **regime-MA exits for thematic_growth + speculative_optionality tiers** (trend-based MA crosses dominate fixed price stops AND fixed time stops in high-vol cohorts).
+
+### cao_han_2013
+
+**Source:** Cao, Han, "Cross section of option returns and idiosyncratic stock volatility," Journal of Financial Economics. https://www-2.rotman.utoronto.ca/facbios/file/Han_JFE_published.pdf
+
+Delta-hedged equity option returns **decrease monotonically with idiosyncratic volatility** of the underlying. Practical implication: IV signals on high-idio-vol (typically small-cap speculative) names earn lower realized payoff and are less reliable, consistent with thin-chain pollution making the signal less interpretable. Cite when justifying **tier-conditional IV term-structure interpretation** (reliable on low-idio-vol mega-cap; degrades through mid-cap thematic; unreliable on high-idio-vol speculative → fall back to sector-IV proxy like XBI / IGV).
+
+### patell_wolfson_1981
+
+**Source:** Patell, Wolfson, "The Ex Ante and Ex Post Price Effects of Quarterly Earnings Announcements Reflected in Option and Stock Prices," Journal of Financial Economics. https://www.sciencedirect.com/science/article/pii/0304405X81900078
+
+Canonical pre-/post-earnings implied-volatility pattern: IV rises ahead of earnings announcement, peaks shortly before, drops abruptly after. Pre-print IV systematically exceeds eventual realized vol; practitioner-confirmed overnight IV crush of 30-70% is the modern manifestation. Cite when justifying the **HARD earnings blackout T-3 → T+1 trading days across all tiers** in `technical_track` (IV crush + binary gap risk + variance-of-outcome asymmetry — NOT PEAD, which is empirically dead in mid/large-cap per Martineau 2021).
+
+### kurov_wolfe_gilbert_2021
+
+**Source:** Kurov, Wolfe, Gilbert, "The Disappearing Pre-FOMC Announcement Drift," Finance Research Letters. https://pmc.ncbi.nlm.nih.gov/articles/PMC7525326/
+
+Pre-FOMC drift (Lucca-Moench 2015 original 49 bps) collapsed sharply: **44.5 bps (2011-2015) → 9.2 bps (2016-2019)**, a ~79% decline attributed to lower VIX regime (mean VIX 17.7 → 14.7 post-ZLB) and dual-form FOMC communication. Statistically indistinct from zero post-2016. Cite when justifying **REJECTION of a pre-FOMC blackout as hard rule** in `technical_track` guidance — same logic extends to CPI/NFP (effects smaller and not single-name-specific). Prevents over-disciplined operator behavior on an empirically dead anomaly.
+
 ## Sector addenda
 
 ### bessemer_cloud_100
