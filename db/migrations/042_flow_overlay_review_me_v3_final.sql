@@ -62,14 +62,14 @@ BEGIN;
 INSERT INTO parameters (parameter_key, parameter_namespace, value, description, change_rationale, approved_by, tag)
 SELECT 'flow.gex_positive_bin_threshold_normalized', 'flow', '0.25'::jsonb,
        'Normalized net-GEX threshold above which gamma_bin = positive (dampening regime). Normalization formula updated to net_gex_per_1pct_move / notional_ADV_30d per Vasquez 2025 own usage + SpotGamma GEX/ADV ratio convention. Bin classification winsorized at ±2.0 (see flow.gex_bin_winsorize_at); raw ratio retained for telemetry alerting.',
-       'v3-final override per /review-me 2026-05-23 (3 iterations); HIGH severity — original ±0.05 + `net_gex/(spot^2*100)` formula produced dimensionally-incoherent AAPL smoke result (normalized_gex=24.6, 490× over threshold). Iter-1 prescribed ADV-normalization; iter-2 added winsorization-scope clarification (bin-only, raw retained); iter-3 stamped solid. Anchored in Vasquez 2025 (own ADV-normalization) + SpotGamma published GEX/ADV ratio (regime flips 0.5-1.0) + Tier1Alpha 2024 backtests (SPX July 2023, NVDA May 2024 cluster at 0.3-0.8). Single-name dispersion wider than index; threshold +30-day telemetry re-baseline plan.',
+       'v3-final override per /review-me 2026-05-23; HIGH severity — original ±0.05 + `net_gex/(spot^2*100)` formula produced dimensionally-incoherent AAPL smoke result (normalized_gex=24.6, 490× over threshold). Anchored in Vasquez 2025 (own ADV-normalization) + SpotGamma published GEX/ADV ratio (regime flips 0.5-1.0) + Tier1Alpha 2024 backtests (SPX July 2023, NVDA May 2024 cluster at 0.3-0.8). Single-name dispersion wider than index; threshold +30-day telemetry re-baseline plan. Bin classification winsorized at ±2.0 (see flow.gex_bin_winsorize_at); raw retained for alerting.',
        'review_me_v3_final_2026-05-23', NULL
 WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.gex_positive_bin_threshold_normalized' AND approved_by = 'review_me_v3_final_2026-05-23');
 
 INSERT INTO parameters (parameter_key, parameter_namespace, value, description, change_rationale, approved_by, tag)
 SELECT 'flow.gex_negative_bin_threshold_normalized', 'flow', '-0.25'::jsonb,
        'Normalized net-GEX threshold below which gamma_bin = negative (procyclical regime). Mirrors positive threshold per the new ADV-normalization (see flow.gex_positive_bin_threshold_normalized change_rationale).',
-       'v3-final override per /review-me 2026-05-23 (3 iterations). See positive_bin_threshold change_rationale for full reasoning.',
+       'v3-final override per /review-me 2026-05-23. See flow.gex_positive_bin_threshold_normalized change_rationale for full reasoning.',
        'review_me_v3_final_2026-05-23', NULL
 WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.gex_negative_bin_threshold_normalized' AND approved_by = 'review_me_v3_final_2026-05-23');
 
@@ -86,7 +86,7 @@ WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.gex_negat
 INSERT INTO parameters (parameter_key, parameter_namespace, value, description, change_rationale, approved_by, tag)
 SELECT 'flow.gex_bin_winsorize_at', 'flow', '2.0'::jsonb,
        'Winsorization bound (absolute value) applied to normalized_gex BEFORE bin classification. Raw normalized_gex is retained in the envelope and telemetry-alerted when abs(raw) > this bound. Prevents single-name dispersion (raw can exceed 1.0 for ultra-illiquid + concentrated-OI names) from one-tail-dominating the ±0.25 threshold calibration.',
-       'v3-final per /review-me 2026-05-23 iter-2 + iter-3. Iter-2 introduced the winsorization concept; iter-3 clarified scope to bin-classification only (preserves raw value + alerting on true squeeze episodes). Sized at ±2.0 to allow normal mid-cap dispersion without capping mid-range, but bound extreme excursions before they shift bin distribution. Tier1Alpha 2024 published extreme-gamma episodes top out 0.3-0.8 on the ADV-normalized metric for indices; single-name dispersion can reach 1.5-2.0 in normal regimes per iter-2 analysis.',
+       'v3-final per /review-me 2026-05-23. Scoped to bin-classification only; preserves raw value + alerting on true squeeze episodes. Sized at ±2.0 to allow normal mid-cap dispersion without capping mid-range, but bound extreme excursions before they shift bin distribution. Tier1Alpha 2024 published extreme-gamma episodes top out 0.3-0.8 on the ADV-normalized metric for indices; single-name dispersion can reach 1.5-2.0 in normal regimes.',
        'review_me_v3_final_2026-05-23', NULL
 WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.gex_bin_winsorize_at' AND approved_by = 'review_me_v3_final_2026-05-23');
 
@@ -103,7 +103,7 @@ WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.gex_bin_w
 INSERT INTO parameters (parameter_key, parameter_namespace, value, description, change_rationale, approved_by, tag)
 SELECT 'flow.erp_add_bps.gamma_negative', 'flow', '25'::jsonb,
        'ERP add-on (basis points) consumed by quantitative-analyst when flow-overlay reports gamma_regime.bin = negative. Reduced from launch_default +50 → +25 per /review-me v3-final. Conservative midpoint of Barberis 2018 extrapolative-beliefs framework (20-40bp around dealer de-leveraging episodes) + ACM 2013 90th-percentile VIX-correlated risk-premium moves (~30bp at high-vol shock). The magnitude is still partially a forced choice (neither paper publishes a calibrated regime-conditional gamma→ERP threshold); +25bp is the lower-bound consistent with both anchors. Precise magnitude awaits regime-conditional telemetry.',
-       'v3-final override per /review-me 2026-05-23 iter-1 + iter-2 + iter-3. Iter-1 LOW: literature implies ~20-40bp episode-conditional, not +50. Iter-2 corrected the 040 rationale: Bonelli 2025 tested UNCONDITIONAL VIX→ERP (null) and is ORTHOGONAL to regime-conditional gamma→ERP (Barberis 2018 + ACM 2013) — Bonelli citation in migration 040 was a category error and is REMOVED from this overriding rationale. Iter-3 added the epistemic-status sentence acknowledging the magnitude remains a forced choice within the published range.',
+       'v3-final override per /review-me 2026-05-23. Literature implies ~20-40bp episode-conditional, not +50. Bonelli 2025 tested UNCONDITIONAL VIX→ERP (null) and is ORTHOGONAL to regime-conditional gamma→ERP (Barberis 2018 + ACM 2013) — Bonelli citation in migration 040 was a category error and is REMOVED from this overriding rationale. Magnitude remains a forced choice within the published range.',
        'review_me_v3_final_2026-05-23', NULL
 WHERE NOT EXISTS (SELECT 1 FROM parameters WHERE parameter_key = 'flow.erp_add_bps.gamma_negative' AND approved_by = 'review_me_v3_final_2026-05-23');
 

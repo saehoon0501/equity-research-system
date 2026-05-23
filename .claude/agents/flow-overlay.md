@@ -101,10 +101,10 @@ If any required input is missing, halt and report.
    ```python
    from src.p9_flow_overlay.gex_aggregator import classify_gamma_regime
 
-   # v3-final: compute trailing-30d notional ADV from existing price data
+   # Compute trailing-30d notional ADV from existing price data
    # (mcp__market_data__get_prices already returns volume + adj_close).
-   # Normalization formula switched FROM net_gex/(spot²×100) TO net_gex/notional_adv_30d
-   # per /review-me 2026-05-23 v3-final (Vasquez 2025 ADV-normalization + SpotGamma GEX/ADV).
+   # Normalization formula is net_gex / notional_adv_30d
+   # (Vasquez 2025 ADV-normalization + SpotGamma GEX/ADV convention).
    last_30 = ticker_price_rows[-30:]  # rows with adj_close + volume
    notional_adv_30d = sum(row["adj_close"] * row["volume"] for row in last_30) / len(last_30)
 
@@ -117,8 +117,8 @@ If any required input is missing, halt and report.
        dealer_sign_convention=PARAMETERS_USED['flow.gex_dealer_sign_convention'],
        regime_flip_signal_method=PARAMETERS_USED['flow.gex_regime_flip_signal_method'],
        rf=current_rf_decimal,
-       notional_adv_30d=notional_adv_30d,  # v3-final: ADV-normalization (per Vasquez 2025)
-       winsorize_at=PARAMETERS_USED['flow.gex_bin_winsorize_at'],  # v3-final: ±2.0 bin-classification cap
+       notional_adv_30d=notional_adv_30d,  # ADV-normalization (Vasquez 2025)
+       winsorize_at=PARAMETERS_USED['flow.gex_bin_winsorize_at'],  # bin-classification cap
    )
    # gamma_result keys: bin, net_gex_at_spot, normalized_gex (bin-classified, post-winsorize),
    # normalized_gex_unbounded (raw — alert when abs > winsorize_at),

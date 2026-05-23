@@ -291,9 +291,9 @@ def classify_gamma_regime(
         grid_pct / grid_steps: zero-gamma search params.
         notional_adv_30d: trailing-30d average daily notional dollar volume
             (avg shares × avg adj_close). When provided, normalization uses
-            `net_gex / notional_adv_30d` per /review-me v3-final (Vasquez 2025
-            + SpotGamma GEX/ADV convention). When None, back-compat falls back
-            to v0.2 formula `net_gex / (spot² × 100)`.
+            `net_gex / notional_adv_30d` (Vasquez 2025 + SpotGamma GEX/ADV
+            convention). When None, back-compat falls back to the legacy
+            formula `net_gex / (spot² × 100)`.
         winsorize_at: absolute-value bound applied to normalized_gex for BIN
             CLASSIFICATION ONLY; raw value retained in output. Prevents
             single-name dispersion from one-tail-dominating threshold
@@ -334,9 +334,9 @@ def classify_gamma_regime(
     )
     net_gex = decomp.get("total_net_gex", 0.0)
 
-    # Normalization formula choice — v3-final uses notional_adv_30d when provided
-    # (Vasquez 2025 + SpotGamma GEX/ADV convention; replaces the dimensionally-
-    # incoherent v0.2 spot²×100 formula). Back-compat fallback when adv is None.
+    # Normalization formula: use notional_adv_30d when provided
+    # (Vasquez 2025 + SpotGamma GEX/ADV convention); fall back to spot²×100
+    # for back-compat when adv is None or non-positive.
     if notional_adv_30d is not None and notional_adv_30d > 0:
         normalized_raw = net_gex / notional_adv_30d
         formula = "adv_30d"
@@ -381,6 +381,10 @@ def classify_gamma_regime(
         if zg_level is not None:
             zero_gamma_distance_pct = (zg_level - spot) / spot
 
+    # winsorization_fired is derivable (normalized_for_bin != normalized_raw)
+    # but emitted explicitly because the flow-overlay agent's telemetry-alert
+    # contract reads it as a boolean gate; the explicit field removes a
+    # float-equality check from the consumer's reasoning path.
     return {
         "bin": bin_,
         "net_gex_at_spot": net_gex,
