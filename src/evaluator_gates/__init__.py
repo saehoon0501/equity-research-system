@@ -83,6 +83,10 @@ from src.evaluator_gates.catalyst_modifier_composition_check import (
     CatalystModifierCompositionResult,
     validate_catalyst_modifier_composition,
 )
+from src.evaluator_gates.crowding_composition_check import (
+    CrowdingCompositionResult,
+    validate_crowding_composition,
+)
 
 
 # Stable rule IDs used in audit rows + delta-prompts. The convention
@@ -100,6 +104,7 @@ GATE_IDS: dict[str, str] = {
     "cdd_memo_shape":        "HG-32",
     "tactical_envelope_shape": "HG-33",
     "catalyst_modifier_composition_check": "HG-34",
+    "crowding_composition_check": "HG-35",
     "intangibles_adjustment_shape": "HG-38",
 }
 
@@ -381,6 +386,30 @@ def _fingerprint_catalyst_modifier_composition(r: CatalystModifierCompositionRes
     return "|".join(sorted(parts)) if parts else "ok"
 
 
+def _fingerprint_crowding_composition(r: CrowdingCompositionResult) -> str:
+    """Deterministic stuck-loop signature for HG-35 (crowding composition).
+
+    Distinguishes:
+    - missing inputs (flow envelope's components.crowding.warning absent or params absent)
+    - invalid inputs (parameter coercion failed; logic_operator unrecognized)
+    - invariant_violations (INV-CRD-1/2/3 surfaced — fail-safe contract breached)
+    - drift_detected — re-derived warning bit-different from emitted; agent
+      must invoke classify_crowding() verbatim per its emission contract.
+    """
+    parts: list[str] = []
+    for k in r.missing_inputs:
+        parts.append(f"missing:{k}")
+    for k in r.invalid_inputs:
+        parts.append(f"invalid:{k}")
+    for v in r.invariant_violations:
+        # Take the invariant identifier (INV-CRD-X) as the stable signature
+        head = v.split(":", 1)[0]
+        parts.append(f"invariant:{head}")
+    if r.drift_detected:
+        parts.append("warning_drift")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
 def _fingerprint_counterfactual(r: CounterfactualCatalogResult) -> str:
     parts: list[str] = []
     if r.missing_buckets:
@@ -521,6 +550,34 @@ def _validate_pm_envelope(
         summary["catalyst_modifier_composition_check"] = "pass" if cmc.valid else "fail"
     else:
         summary["catalyst_modifier_composition_check"] = "skipped"
+
+    # HG-35 (v0.3): crowding warning composition determinism check.
+    # Re-derives flow-overlay.components.crowding.warning from emitted numerics
+    # + parameters. NOT-APPLICABLE when flow_env is None or lacks crowding block
+    # (v0.1/v0.2 envelopes pass-through cleanly). Skipped if params_snapshot is None.
+    if params_snapshot is not None:
+        cwc = validate_crowding_composition(
+            flow_env=flow_env,
+            parameters_active_snapshot=params_snapshot,
+        )
+        outcomes.append(_outcome(
+            "crowding_composition_check",
+            cwc.valid,
+            {
+                "warning_expected": cwc.warning_expected,
+                "warning_observed": cwc.warning_observed,
+                "missing_inputs": cwc.missing_inputs,
+                "invalid_inputs": cwc.invalid_inputs,
+                "invariant_violations": cwc.invariant_violations,
+                "drift_detected": cwc.drift_detected,
+                "drift_summary": cwc.drift_summary,
+                "notes": cwc.notes,
+            },
+            _fingerprint_crowding_composition(cwc),
+        ))
+        summary["crowding_composition_check"] = "pass" if cwc.valid else "fail"
+    else:
+        summary["crowding_composition_check"] = "skipped"
 
     return outcomes, summary
 
@@ -758,7 +815,7 @@ def _cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="validate_all",
         description=(
-            "Run every Tier-1 gate (HG-23/24/25/26/27/28/29/30/31/32/33/34/38) "
+            "Run every Tier-1 gate (HG-23/24/25/26/27/28/29/30/31/32/33/34/35/38) "
             "against a pm-supervisor envelope. Exit 0 valid, 1 invalid, 2 unparseable."
         ),
     )

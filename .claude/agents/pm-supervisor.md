@@ -508,23 +508,24 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 - `BEARISH` if `fund_axis_score ≤ -2` OR quality_gate fails
 - `NEUTRAL` otherwise
 
-**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + flow-overlay + catalyst-scout (price + flow + momentum). 6 SCORING signals:
+**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + flow-overlay + catalyst-scout (price + flow + momentum). 7 SCORING signals (6 symmetric ±1 + 1 asymmetric -1-only):
 
 | Signal | Source | BULLISH if | BEARISH if | Contributes to score? |
 |---|---|---|---|---|
-| MoS vs inherited DCF base | quant envelope `dcf_divergence.inherited_dcf_base` | `(base − spot) / spot > +20%` | `(base − spot) / spot < -20%` | YES |
-| MoS vs austere DCF base | quant envelope `dcf_divergence.austere_dcf_base` | `> +0%` | `< -50%` | YES |
-| Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) | YES |
-| Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` | YES |
-| Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` | YES |
-| Flow signal_bin (v0.2 — ACTIVATED) | flow-overlay envelope | `positive` | `negative` | YES |
+| MoS vs inherited DCF base | quant envelope `dcf_divergence.inherited_dcf_base` | `(base − spot) / spot > +20%` | `(base − spot) / spot < -20%` | YES (±1) |
+| MoS vs austere DCF base | quant envelope `dcf_divergence.austere_dcf_base` | `> +0%` | `< -50%` | YES (±1) |
+| Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) | YES (±1) |
+| Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` | YES (±1) |
+| Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` | YES (±1) |
+| Flow signal_bin (v0.2 — ACTIVATED) | flow-overlay envelope | `positive` | `negative` | YES (±1) |
+| Crowding warning (v0.3 — ASYMMETRIC) | flow-overlay envelope `components.crowding.warning` | n/a (never +1) | `true` (crowded short-squeeze risk) | YES (-1 only) |
 
-Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over all 6 scoring signals**. Verdict:
-- `BULLISH` if `tech_axis_score ≥ sizing.tech_axis_bullish_score_min` (PARAMETERS_USED-resolved; v0.2 launch default 4; recalibrated from v0.1's +3 to preserve prior fire rate in the 6-signal world)
+Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over all 7 scoring signals; crowding contributes -1 when warning=True, 0 otherwise (never +1)**. The asymmetric contribution preserves the ceiling (max = +6) so `sizing.tech_axis_bullish_score_min` does NOT require recalibration from its v0.2 value (4); only the floor extends by 1 downward. Verdict:
+- `BULLISH` if `tech_axis_score ≥ sizing.tech_axis_bullish_score_min` (PARAMETERS_USED-resolved; v0.2 launch default 4 — UNCHANGED in v0.3 by design)
 - `BEARISH` if `tech_axis_score ≤ -2` OR cf-07 catastrophic FAIL fires
 - `NEUTRAL` otherwise
 
-If flow-overlay envelope is absent (offline / `.degraded` sentinel), `tech_axis_signals.flow_signal_bin` is reported as `"offline"` and contributes 0 to `tech_axis_score` (handled by `src.p7_recommendation_emitter.catalyst_flow_modifier._flow_sign`).
+If flow-overlay envelope is absent (offline / `.degraded` sentinel), BOTH `tech_axis_signals.flow_signal_bin` AND `tech_axis_signals.crowding_warning` are reported as `"offline"` and contribute 0 to `tech_axis_score` (flow_signal_bin handled by `src.p7_recommendation_emitter.catalyst_flow_modifier._flow_sign`; crowding fail-safes to no-vote via the asymmetric design). When the envelope is present but `components.crowding` is absent (short-interest data unavailable for the ticker), crowding contributes 0 (per the v0.3 fail-safe contract).
 
 **Catastrophic-FAIL override:** if quant emits cf-07 catastrophic FAIL (reverse-DCF implied ≥ 2.0x cohort mean), TECH axis is forced to `BEARISH` regardless of other signals — this is a kill, not a graduating signal.
 
