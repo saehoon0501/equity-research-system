@@ -346,6 +346,56 @@ Apply: `final_size_band = base_band × mode_multiplier`. Round midpoint to 2 dec
 
 Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to **`sizing.catalyst_modifier_bound.full_pct` of the final midpoint** (launch default: ±25%), with the sign of the dominant catalyst. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
 
+**Flow modifier (v0.1 — CTA-proximity sub-signal):** flow-overlay's `flow_signal_bin` contributes additively alongside the catalyst direction. The composition is **deterministic** — you MUST invoke `src.p7_recommendation_emitter.catalyst_flow_modifier.compose_catalyst_flow_modifier()` rather than reasoning through the arithmetic. The function pins:
+
+```
+combined_modifier_pp = clip(catalyst_pp + flow_pp, -bound_pp, +bound_pp)
+  catalyst_pp = catalyst_direction × magnitude_scaler[magnitude] × base_midpoint_pp
+  flow_pp     = flow_sign × flow_per_unit_pct × base_midpoint_pp
+              where flow_sign = +1 if positive, -1 if negative, 0 otherwise
+  bound_pp    = bound_pct × base_midpoint_pp
+```
+
+Key invariants the helper enforces:
+- **INV-CFM-1:** `catalyst_pp + flow_pp` is computed BEFORE clipping (the bound applies to the COMBINED contribution, not each separately).
+- **INV-CFM-2:** clip is symmetric — combined ∈ [-bound_pp, +bound_pp].
+- **INV-CFM-3:** result is deterministic in its 6 inputs; no LLM judgment, no I/O.
+
+Required PARAMETERS_USED keys (read from the §1.5 Step 6 block — block wins over prose):
+- `sizing.catalyst_modifier_magnitude_scaler.low` / `.medium` / `.high` (catalyst magnitude scalers; stored as integer-percent 5 / 10 / 20)
+- `sizing.flow_modifier_pp_per_unit` (per-unit flow contribution; stored as integer-percent 5 — smaller than catalyst high-magnitude to keep flow as the modulator, not the dominant signal)
+- `sizing.catalyst_modifier_bound.full_pct` (stored as integer-percent 25)
+- `sizing.catalyst_modifier_bound.shrunk_pct` (stored as integer-percent 10)
+
+**UNIT CONVENTION — LOAD-BEARING (per /review-me iter 2 Finding A):** The `parameters_active` table stores all `sizing.*_pct` rows as **integer percent** (e.g., `25` for 25%). The `compose_catalyst_flow_modifier()` helper expects **fractional** input (e.g., `0.25`). You MUST divide each `*_pct` value by 100.0 before passing to the helper. Example:
+
+```python
+from src.p7_recommendation_emitter.catalyst_flow_modifier import compose_catalyst_flow_modifier
+# Raw values from PARAMETERS_USED block (integer-percent storage):
+raw_full_pct = 25            # sizing.catalyst_modifier_bound.full_pct
+raw_low = 5; raw_med = 10; raw_high = 20  # sizing.catalyst_modifier_magnitude_scaler.{low,med,high}
+raw_flow_pp = 5              # sizing.flow_modifier_pp_per_unit
+
+# Convert to fractional BEFORE calling helper (mandatory):
+result = compose_catalyst_flow_modifier(
+    base_midpoint_pp=base_midpoint,
+    catalyst_direction=cat_dir,
+    catalyst_magnitude=cat_mag,
+    catalyst_magnitude_scaler={"low": raw_low / 100.0, "medium": raw_med / 100.0, "high": raw_high / 100.0},
+    flow_signal_bin=flow_bin,
+    flow_per_unit_pct=raw_flow_pp / 100.0,
+    bound_pct=raw_full_pct / 100.0,  # or raw_shrunk_pct / 100.0 per data-quality rule
+)
+```
+
+The helper has an INV-CFM-UNIT input-range guard that raises ValueError if any scaler exceeds 1.0 — this catches the "forgot the /100" error before it produces a 100× incorrect audit string.
+
+The combined entry in `catalyst_modifier_applied` is the helper's `audit_string` field verbatim (e.g. `"+0.60pp | catalyst +0.40pp (dir=1, mag=medium) — 2 high-confidence catalysts | flow +0.20pp (bin=positive) — positive ticker + SPY trend | bound=±1.00pp"`). DO NOT rewrite or paraphrase — the audit string is the load-bearing record.
+
+If flow-overlay envelope is absent (`memos/envelopes/flow-overlay__<run_id>.json` missing or `.degraded` sentinel present), pass `flow_signal_bin="offline"` to the helper — it treats offline as zero contribution with explicit audit-string trace.
+
+**HG note:** a deterministic re-derivation gate (`src/evaluator_gates/catalyst_modifier_composition_check.py`) that re-computes the expected `audit_string` from upstream envelopes and rejects pm-supervisor emissions that drift will ship in v0.2 alongside the gamma-regime sub-signal. v0.1 ships the helper module + the pm-supervisor obligation to call it; v0.2 wires the gate into the evaluator dispatch.
+
 **Modifier bound by signal data quality (Bug 14 fix — 2026-05-16):**
 
 The bound shrinks to **`sizing.catalyst_modifier_bound.shrunk_pct`** (launch default ±10%) when EITHER of two signal-quality flags is true (OR-ed, not AND-ed):
@@ -367,6 +417,31 @@ Decision table:
 - `catalyst-scout absent entirely` (offline / null input): modifier = 0.
 
 Append the signal-quality state to `catalyst_modifier_applied` so the audit trail surfaces it. Example: `"+0.04 (2 high-confidence catalysts, positioning=full, sentiment=degraded — AAII+II+BofA-FMS WebFetch failures; bound shrunk to ±10%)"`.
+
+---
+
+## §6.5 Stage-3 overlay-cell completion (idempotent post-emission step)
+
+Both `tactical-overlay` and `flow-overlay` run in Stage 1 parallel and may emit their respective `*_cell` blocks as `null` if pm-supervisor's `conviction` has not yet been emitted at Stage 1 dispatch time (the Stage 1 timing race). After your §5 conviction rollup completes and BEFORE your §8 emission, you MUST complete any null overlay cells using a pure deterministic step. NO LLM reasoning at this stage — the completion is a parameters_active read + Python call.
+
+**Precedence rule (DO NOT silently overwrite a non-null Stage 1 cell):**
+- If the overlay's envelope already has a non-null cell (e.g. `tactical_cell != null` or `flow_cell != null`), keep it verbatim. Stage 1 emission wins on idempotency grounds — re-deriving and overwriting would risk drift across retries.
+- Only when the overlay emitted `*_cell: null` do you compute the cell yourself.
+
+**Completion procedure (per overlay):**
+
+| Overlay | Envelope path | Helper to call | Helper signature |
+|---|---|---|---|
+| tactical-overlay | `memos/envelopes/tactical-overlay__<run_id>.json` | `src/p8_tactical_overlay/overlay.py::tactical_cell_size_pct + tactical_disposition` | `(conviction, tactical_bin, band_min_pct, band_max_pct)` → `cell_size_pct`; `(conviction, tactical_bin)` → `cell_disposition` |
+| flow-overlay | `memos/envelopes/flow-overlay__<run_id>.json` | `src/p9_flow_overlay/overlay.py::flow_cell_size_pct + flow_disposition` | `(conviction, flow_bin, band_min_pct, band_max_pct)` → `cell_size_pct`; `(conviction, flow_bin)` → `cell_disposition` |
+
+For each null cell: read `sizing.conviction_band.<conviction>.min_pct` and `sizing.conviction_band.<conviction>.max_pct` from PARAMETERS_USED (they are scoped to your subagent block per §1.5 Step 6), then call the helper with `(conviction, *_bin, band_min, band_max)`. Update the envelope on disk so downstream readers see the completed cell.
+
+**Idempotency contract (load-bearing on retry):** the completion is bit-identical across retries because (a) parameters_active values are snapshot-pinned by the §1.5 run_parameters_snapshot lockstep — see §1.5 Step 4; (b) the helper functions are pure Python with no clock/RNG dependencies; (c) the precedence rule ensures Stage 1-emitted cells are never re-derived. Concrete: if pm-supervisor is re-dispatched with the same `run_id`, both overlay cells produce the same `cell_size_pct` + `cell_disposition` they did on the first pass.
+
+**Halt discipline:** if `conviction` is null after §5 (should never happen post-rollup) OR if the conviction is not in `{HIGH, MEDIUM, LOW}` OR if a required `sizing.conviction_band.*` row is missing from PARAMETERS_USED → halt and surface to operator. Do NOT attempt to fabricate a fallback cell. The envelope on disk stays at its Stage 1 null state; the run is recorded as failed at §6.5.
+
+**LOW-row carve-out (matches tactical's `_DISPOSITION_MAP` semantics for both overlays):** when conviction == LOW, the helper hard-zeros `cell_size_pct` regardless of `*_bin` — the LOW-row veto is preserved through the Stage 3 path.
 
 ---
 
@@ -431,20 +506,45 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 - `BEARISH` if `fund_axis_score ≤ -2` OR quality_gate fails
 - `NEUTRAL` otherwise
 
-**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + catalyst-scout (price + flow + momentum). 5 input signals:
+<!--
+  v0.2 ATOMIC-FLIP CHECKLIST (when activating flow as a SCORING signal — per
+  /review-me iter 2 Finding D). The flip is NOT a single-edit target; touch
+  ALL of these in one PR with the recalibrated cutoff:
 
-| Signal | Source | BULLISH if | BEARISH if |
-|---|---|---|---|
-| MoS vs inherited DCF base | quant envelope `dcf_divergence.inherited_dcf_base` | `(base − spot) / spot > +20%` | `(base − spot) / spot < -20%` |
-| MoS vs austere DCF base | quant envelope `dcf_divergence.austere_dcf_base` | `> +0%` | `< -50%` |
-| Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) |
-| Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` |
-| Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` |
+    1. Below: change "5 SCORING signals + 1 INFORMATIONAL" → "6 SCORING signals"
+    2. Below: in the table, flip the flow_signal_bin row's "Contributes to score?"
+       from "NO — v0.1 deliberately decoupled" → "YES"
+    3. Below: delete the v0.1 carve-out paragraph entirely (the one starting
+       "v0.1 carve-out (load-bearing — do NOT silently change)")
+    4. Below: in the "Compute tech_axis_score" sentence, change
+       "over the 5 scoring signals only" → "over all 6 scoring signals"
+    5. Below: in the verdict thresholds, change `≥+3` → `≥+4` (or whatever
+       /review-me delivers as the recalibrated 6-signal cutoff)
+    6. Below: delete the "If flow-overlay envelope is absent..." paragraph's
+       "since flow is informational in v0.1" clause; flow now scores 0 when
+       offline (which it already does via _flow_sign in
+       src/p7_recommendation_emitter/catalyst_flow_modifier.py)
+-->
 
-Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals). Verdict:
+**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + catalyst-scout (price + flow + momentum). 5 SCORING signals (unchanged from pre-flow-overlay) + 1 INFORMATIONAL signal (flow_signal_bin, v0.1 carve-out):
+
+| Signal | Source | BULLISH if | BEARISH if | Contributes to score? |
+|---|---|---|---|---|
+| MoS vs inherited DCF base | quant envelope `dcf_divergence.inherited_dcf_base` | `(base − spot) / spot > +20%` | `(base − spot) / spot < -20%` | YES |
+| MoS vs austere DCF base | quant envelope `dcf_divergence.austere_dcf_base` | `> +0%` | `< -50%` | YES |
+| Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) | YES |
+| Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` | YES |
+| Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` | YES |
+| **Flow signal_bin (v0.1 — INFORMATIONAL ONLY)** | flow-overlay envelope | `positive` (informational) | `negative` (informational) | **NO — v0.1 deliberately decoupled** |
+
+**v0.1 carve-out (load-bearing — do NOT silently change):** flow_signal_bin appears in the matrix as an informational row and in the §8 `tech_axis_signals.flow_signal_bin` field, but contributes **zero** to `tech_axis_score`. This is the v0.1 conservative default — preserving the prior 5-signal fire rate exactly until `/review-me` recalibrates the cutoff threshold for the 6-signal world. Activating flow's score contribution is a v0.2 deliverable that ships ALONGSIDE the recalibrated thresholds, not before. Empirical rationale: adding a 6th independent ±1 vote with p(+1)≈p(-1)≈0.25 monotonically increases P(score≥+3) without changing the cutoff (the new vote can only rescue near-misses to BULLISH, not push existing BULLISHs below threshold) — pre-recalibration activation would meaningfully increase the BUY-HIGH/BUY-MED matrix-cell hit rate.
+
+Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over the 5 scoring signals only**. Verdict:
 - `BULLISH` if `tech_axis_score ≥ +3`
 - `BEARISH` if `tech_axis_score ≤ -2` OR cf-07 catastrophic FAIL fires
 - `NEUTRAL` otherwise
+
+If flow-overlay envelope is absent (offline / `.degraded` sentinel), `tech_axis_signals.flow_signal_bin` is reported as `"offline"`; this has no effect on `tech_axis_score` since flow is informational in v0.1.
 
 **Catastrophic-FAIL override:** if quant emits cf-07 catastrophic FAIL (reverse-DCF implied ≥ 2.0x cohort mean), TECH axis is forced to `BEARISH` regardless of other signals — this is a kill, not a graduating signal.
 
@@ -597,6 +697,7 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
       "reverse_dcf_cohort_multiple": 0.0,
       "cf07_catastrophic_fail": false,
       "tactical_signal_bin": "positive | neutral | negative | unavailable",
+      "flow_signal_bin": "positive | neutral | negative | unavailable | offline",
       "catalyst_modifier_direction": -1
     },
     "matrix_cell": "BUY-HIGH | BUY-MED | HOLD | AVOID | HOLD-TRIM-VALUE-TRAP | TRIM | SELL",
@@ -660,7 +761,7 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
     },
     "trend": {
       "reading": "Regime label (e.g., 'PARABOLIC LATE-STAGE', 'MEAN-REVERTING', 'BASING', 'TRENDING UP', 'BREAKING DOWN', 'RANGE-BOUND')",
-      "detail": "Price action math from cdd-lead memo: 3mo move %, 90d high/low, recent acceleration / deceleration, sell-side target_mean vs spot (lead/lag), volume profile, 8-cyclical-peak-signals-fired count if applicable. Cite quant memo numerics.",
+      "detail": "Price action math from cdd-lead memo: 3mo move %, 90d high/low, recent acceleration / deceleration, sell-side target_mean vs spot (lead/lag), volume profile, 8-cyclical-peak-signals-fired count if applicable. Cite quant memo numerics. Also cite tactical-overlay `tactical_signal_bin` + flow-overlay `flow_signal_bin` (v0.1 CTA-proximity composite of ticker + SPY TSMOM + MA-distance + Donchian state) — these give the mechanical-flow regime context distinct from the discretionary price-action reading.",
       "evidence_refs": [{"evidence_id": "uuid", "claim_summary": "≤120 chars"}],
       "framework_keys": [],
       "cdd_memo_refs": []
