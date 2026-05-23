@@ -100,6 +100,14 @@ If any required input is missing, halt and report.
 4. Classify gamma regime:
    ```python
    from src.p9_flow_overlay.gex_aggregator import classify_gamma_regime
+
+   # Compute trailing-30d notional ADV from existing price data
+   # (mcp__market_data__get_prices already returns volume + adj_close).
+   # Normalization formula is net_gex / notional_adv_30d
+   # (Vasquez 2025 ADV-normalization + SpotGamma GEX/ADV convention).
+   last_30 = ticker_price_rows[-30:]  # rows with adj_close + volume
+   notional_adv_30d = sum(row["adj_close"] * row["volume"] for row in last_30) / len(last_30)
+
    gamma_result = classify_gamma_regime(
        contracts=contracts_list,
        spot=current_spot,
@@ -109,9 +117,16 @@ If any required input is missing, halt and report.
        dealer_sign_convention=PARAMETERS_USED['flow.gex_dealer_sign_convention'],
        regime_flip_signal_method=PARAMETERS_USED['flow.gex_regime_flip_signal_method'],
        rf=current_rf_decimal,
+       notional_adv_30d=notional_adv_30d,  # ADV-normalization (Vasquez 2025)
+       winsorize_at=PARAMETERS_USED['flow.gex_bin_winsorize_at'],  # bin-classification cap
    )
-   # gamma_result is {bin, net_gex_at_spot, normalized_gex, zero_gamma_distance_pct, dte_bucket_decomp, dealer_sign_convention, regime_flip_signal_method}
+   # gamma_result keys: bin, net_gex_at_spot, normalized_gex (bin-classified, post-winsorize),
+   # normalized_gex_unbounded (raw — alert when abs > winsorize_at),
+   # winsorization_fired, normalization_formula ("adv_30d" expected),
+   # zero_gamma_distance_pct, dte_bucket_decomp, dealer_sign_convention, regime_flip_signal_method
    ```
+
+   **Telemetry alert**: when `gamma_result["winsorization_fired"] == True`, the raw unbounded `normalized_gex_unbounded` exceeded the winsorize bound. This is informational, not a halt-and-degrade — surfaces true squeeze episodes (e.g., GME during a real positioning extreme) that would otherwise be silently absorbed into the bin. Log + surface in the envelope; downstream consumers (pm-supervisor) read `normalized_gex` for the bin calibration and `normalized_gex_unbounded` for the unfiltered audit.
 
 5. Call the deterministic flow classifier with the gamma_regime input:
    ```python
@@ -199,6 +214,9 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
       "bin": "positive",
       "net_gex_at_spot": 5.4e9,
       "normalized_gex": 0.082,
+      "normalized_gex_unbounded": 0.082,
+      "winsorization_fired": false,
+      "normalization_formula": "adv_30d",
       "zero_gamma_distance_pct": -0.034,
       "dte_bucket_decomp": {"0DTE": 1.2e9, "1-7d": 3.0e9, "8-30d": 1.2e9},
       "dealer_sign_convention": "spotgamma",
