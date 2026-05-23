@@ -167,7 +167,7 @@ def test_zero_gamma_returns_none_when_no_crossing_in_grid():
 
 
 def test_classify_returns_required_keys():
-    """End-to-end check that result has all schema-required keys."""
+    """End-to-end check that result has all schema-required keys (v3-final expansion)."""
     as_of = date(2026, 5, 23)
     contracts = [
         {"type": "call", "gamma": 0.01, "open_interest": 100, "expiry": "2026-06-01",
@@ -177,16 +177,139 @@ def test_classify_returns_required_keys():
     ]
     result = classify_gamma_regime(
         contracts, spot=400.0, as_of=as_of,
-        positive_threshold_normalized=0.05,
-        negative_threshold_normalized=-0.05,
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
     )
     required = {
         "bin", "net_gex_at_spot", "normalized_gex", "zero_gamma_distance_pct",
         "dte_bucket_decomp", "dealer_sign_convention", "regime_flip_signal_method",
+        # v3-final additions
+        "normalized_gex_unbounded", "winsorization_fired", "normalization_formula",
     }
     assert required.issubset(result.keys())
     assert result["bin"] in ("positive", "neutral", "negative")
     assert result["dealer_sign_convention"] == "spotgamma"
+    # Default formula (no ADV passed) = spot_squared back-compat
+    assert result["normalization_formula"] == "spot_squared"
+    assert result["winsorization_fired"] is False
+
+
+# ---------- v3-final: ADV normalization ----------
+
+
+def test_classify_adv_normalization_when_adv_provided():
+    """When notional_adv_30d > 0, normalization formula = adv_30d."""
+    contracts = [
+        {"type": "call", "gamma": 0.01, "open_interest": 1000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
+        notional_adv_30d=1_000_000_000.0,  # $1B daily notional
+    )
+    assert result["normalization_formula"] == "adv_30d"
+    # net_gex = 0.01 * 1000 * 100 * 400² * 0.01 * 1 = 1.6e6; normalized = 1.6e6 / 1e9 = 0.0016
+    assert result["normalized_gex"] == pytest.approx(result["net_gex_at_spot"] / 1_000_000_000.0)
+
+
+def test_classify_falls_back_to_spot_squared_when_adv_missing():
+    """notional_adv_30d=None → back-compat formula (spot²×100)."""
+    contracts = [
+        {"type": "call", "gamma": 0.01, "open_interest": 1000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.05,
+        negative_threshold_normalized=-0.05,
+    )
+    assert result["normalization_formula"] == "spot_squared"
+
+
+def test_classify_adv_zero_falls_back_to_spot_squared():
+    """Defensive: adv=0 (degenerate) falls back to spot²×100."""
+    contracts = [
+        {"type": "call", "gamma": 0.01, "open_interest": 1000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.05,
+        negative_threshold_normalized=-0.05,
+        notional_adv_30d=0.0,
+    )
+    assert result["normalization_formula"] == "spot_squared"
+
+
+# ---------- v3-final: winsorization ----------
+
+
+def test_classify_winsorization_fires_when_raw_exceeds_bound():
+    """Raw normalized_gex > winsorize_at → bin uses capped value; raw retained."""
+    contracts = [
+        # Make GEX large enough to push normalized > 2.0 under tiny ADV
+        {"type": "call", "gamma": 0.05, "open_interest": 10_000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
+        notional_adv_30d=1_000_000.0,  # $1M daily — tiny — forces ratio to blow up
+        winsorize_at=2.0,
+    )
+    assert result["winsorization_fired"] is True
+    assert result["normalized_gex"] == pytest.approx(2.0)  # capped for bin
+    assert result["normalized_gex_unbounded"] > 2.0       # raw retained
+    assert result["bin"] == "positive"  # capped value still over +0.25 threshold
+
+
+def test_classify_winsorization_negative_side():
+    """Raw normalized_gex < -winsorize_at → bin uses capped negative value."""
+    contracts = [
+        # Single PUT with large gamma — under spotgamma convention puts get -1 sign
+        {"type": "put", "gamma": 0.05, "open_interest": 10_000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
+        notional_adv_30d=1_000_000.0,
+        winsorize_at=2.0,
+    )
+    assert result["winsorization_fired"] is True
+    assert result["normalized_gex"] == pytest.approx(-2.0)
+    assert result["normalized_gex_unbounded"] < -2.0
+    assert result["bin"] == "negative"
+
+
+def test_classify_winsorization_inactive_when_raw_within_bounds():
+    contracts = [
+        {"type": "call", "gamma": 0.01, "open_interest": 100, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
+        notional_adv_30d=1_000_000_000.0,
+        winsorize_at=2.0,
+    )
+    assert result["winsorization_fired"] is False
+    assert result["normalized_gex"] == result["normalized_gex_unbounded"]
+
+
+def test_classify_no_winsorize_when_winsorize_at_none():
+    """When winsorize_at=None, no capping; raw equals classified."""
+    contracts = [
+        {"type": "call", "gamma": 0.05, "open_interest": 10_000, "expiry": "2026-06-01"},
+    ]
+    result = classify_gamma_regime(
+        contracts, spot=400.0, as_of=date(2026, 5, 23),
+        positive_threshold_normalized=0.25,
+        negative_threshold_normalized=-0.25,
+        notional_adv_30d=1_000_000.0,
+        # winsorize_at omitted → None default
+    )
+    assert result["winsorization_fired"] is False
+    assert result["normalized_gex"] == result["normalized_gex_unbounded"]
 
 
 def test_classify_unknown_dealer_sign_raises():
