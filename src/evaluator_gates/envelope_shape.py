@@ -31,6 +31,7 @@ REQUIRED_TOP_LEVEL: tuple[str, ...] = (
     "as_of",
     "tier",
     "mode",
+    "decision_cell_matrix",  # §7.6 v2 (2026-05-23): mandatory top-of-report cell synthesis
     "tl_dr",
     "report",
     "audit_trail_hint",
@@ -59,6 +60,24 @@ NULLABLE_TOP_LEVEL: frozenset[str] = frozenset({
     "veto_reason",       # null when no counterfactual veto fired
     "sleeve_reference",  # null for non-speculative tiers (also optional top-level)
 })
+
+# Per-block sub-key nullable map. Same semantics as NULLABLE_TOP_LEVEL but
+# scoped to a parent block's sub-keys. Used by the sub-key validation loop
+# so that nullable sub-keys count as "present" when the KEY exists and the
+# value is None, instead of requiring non-empty. §7.6 v2 (2026-05-23) added
+# the decision_cell_matrix.{fundamental_track, technical_track, null_reason}
+# trio where any of the three may legitimately be None (a SELL cell has
+# fundamental_track=None; an AVOID cell has both tracks None; a populated
+# BUY-HIGH cell has null_reason=None). The cross-field rule "null_reason
+# REQUIRED iff either track is null" is enforced separately in the
+# conditional block below.
+NULLABLE_SUBKEYS: dict[str, frozenset[str]] = {
+    "decision_cell_matrix": frozenset({
+        "fundamental_track",
+        "technical_track",
+        "null_reason",
+    }),
+}
 
 # Forbidden fields per the HIGH-4 consensus (docs/high-4-enum-drift-consensus.md,
 # 2026-05-16). The MSFT 2026-05-15 run invented ``summary_code_operator_semantic``
@@ -96,6 +115,24 @@ REQUIRED_SUBKEYS: dict[str, tuple[str, ...]] = {
         "instructions_for_operator",
         "cross_run_artifact_ids",
         "evidence_index_query_template",
+    ),
+    # §7.6 v2 (2026-05-23): Decision Cell Matrix sub-keys. The 8 non-nullable
+    # sub-keys carry the deterministic axis derivation + cell mapping +
+    # consistency check + migration triggers. The 2 nullable sub-keys
+    # (fundamental_track, technical_track) carry the USD-anchored entry/exit
+    # tracks per the operator-locked v2 emission shape; null_reason is
+    # conditionally required iff either track is null (enforced below).
+    "decision_cell_matrix": (
+        "fund_axis_verdict",
+        "fund_axis_signals",
+        "tech_axis_verdict",
+        "tech_axis_signals",
+        "matrix_cell",
+        "matrix_cell_narrative",
+        "consistency_check",
+        "migration_triggers",
+        "fundamental_track",  # nullable — see NULLABLE_SUBKEYS
+        "technical_track",    # nullable — see NULLABLE_SUBKEYS
     ),
 }
 
@@ -196,7 +233,9 @@ def validate_envelope_shape(
                 "conviction_override_reason (HG-22 Check 3)"
             )
 
-    # Sub-key presence for the three critical blocks.
+    # Sub-key presence for the validated blocks. Nullable sub-keys
+    # (NULLABLE_SUBKEYS) require only KEY presence; non-nullable sub-keys
+    # require both KEY presence AND a non-empty value.
     for top_key, subkeys in REQUIRED_SUBKEYS.items():
         block = envelope.get(top_key)
         if not isinstance(block, dict):
@@ -204,11 +243,34 @@ def validate_envelope_shape(
             # in missing_top_level — don't double-report sub-keys for
             # a block that doesn't exist.
             continue
-        missing_here = [
-            sk for sk in subkeys if not _is_present_non_empty(block.get(sk))
-        ]
+        nullable_for_block = NULLABLE_SUBKEYS.get(top_key, frozenset())
+        missing_here = []
+        for sk in subkeys:
+            if sk in nullable_for_block:
+                if sk not in block:
+                    missing_here.append(sk)
+            else:
+                if not _is_present_non_empty(block.get(sk)):
+                    missing_here.append(sk)
         if missing_here:
             result.missing_subkeys[top_key] = missing_here
+
+    # §7.6 v2 conditional: decision_cell_matrix.null_reason required iff
+    # either fundamental_track or technical_track is null. Mirror of the
+    # HG-22 conviction_override_reason conditional above.
+    dcm = envelope.get("decision_cell_matrix")
+    if isinstance(dcm, dict):
+        fund_t = dcm.get("fundamental_track")
+        tech_t = dcm.get("technical_track")
+        null_r = dcm.get("null_reason")
+        if (fund_t is None or tech_t is None) and not _is_present_non_empty(null_r):
+            result.missing_subkeys.setdefault(
+                "decision_cell_matrix", []
+            ).append("null_reason")
+            result.notes.append(
+                "decision_cell_matrix.null_reason required when either "
+                "fundamental_track or technical_track is null (§7.6 v2)"
+            )
 
     # Strict mode: each report.* row must have the row-level subkeys.
     if strict:
@@ -324,4 +386,6 @@ __all__ = [
     "CRITICAL_KEYS",
     "FORBIDDEN_TOP_LEVEL",
     "VALID_SUMMARY_CODES",
+    "NULLABLE_TOP_LEVEL",
+    "NULLABLE_SUBKEYS",
 ]
