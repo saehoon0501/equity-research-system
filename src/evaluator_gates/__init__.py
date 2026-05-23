@@ -75,6 +75,10 @@ from src.evaluator_gates.tactical_envelope_shape import (
     TacticalEnvelopeShapeResult,
     validate_tactical_envelope_shape,
 )
+from src.evaluator_gates.reversion_envelope_shape import (
+    ReversionEnvelopeShapeResult,
+    validate_reversion_envelope_shape,
+)
 from src.evaluator_gates.intangibles_adjustment_shape import (
     IntangiblesAdjustmentResult,
     validate_intangibles_adjustment,
@@ -106,6 +110,7 @@ GATE_IDS: dict[str, str] = {
     "catalyst_modifier_composition_check": "HG-34",
     "crowding_composition_check": "HG-35",
     "intangibles_adjustment_shape": "HG-38",
+    "reversion_envelope_shape": "HG-36",
 }
 
 
@@ -118,6 +123,7 @@ VALID_ARTIFACT_TYPES = (
     "catalyst_memo",
     "cdd_memo",
     "tactical_envelope",
+    "reversion_envelope",
 )
 
 
@@ -679,6 +685,56 @@ def _validate_cdd_memo(env: dict[str, Any]) -> tuple[list[GateOutcome], dict[str
     return outcomes, summary
 
 
+def _fingerprint_reversion_envelope(r: ReversionEnvelopeShapeResult) -> str:
+    """Deterministic stuck-loop signature for reversion envelope shape gate (HG-36)."""
+    parts: list[str] = []
+    for k in r.missing_top_level:
+        parts.append(f"top:{k}")
+    for v in r.invalid_enum_values:
+        parts.append(f"enum:{v}")
+    if r.invalid_audit_mode is not None:
+        parts.append(f"audit_mode:{r.invalid_audit_mode}")
+    for v in r.audit_mode_field_violations:
+        parts.append(f"audit_field:{v[:40]}")  # truncate long messages
+    if r.reversion_cell_non_null:
+        parts.append("reversion_cell_non_null")
+    if r.missing_unavailable_reason:
+        parts.append("missing_unavailable_reason")
+    if r.invalid_unavailable_reason is not None:
+        parts.append(f"bad_unavail_reason:{r.invalid_unavailable_reason}")
+    for k in r.missing_components_keys:
+        parts.append(f"comp:{k}")
+    for k in r.missing_sub_signal_fires:
+        parts.append(f"fires:{k}")
+    if r.inv_3_6_a_violation:
+        parts.append("inv_3_6_a")
+    for v in r.inv_3_6_b_violation:
+        parts.append(f"inv_3_6_b:{v[:40]}")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
+def _validate_reversion_envelope(env: dict[str, Any]) -> tuple[list[GateOutcome], dict[str, str]]:
+    """Gate set for mean-reversion-overlay envelopes: shape only (HG-36).
+
+    v0.4.0 standalone mode — no UUID check (mean-reversion-overlay does not
+    own evidence_index rows), no snapshot roundtrip (audit_mode field handles
+    snapshot/standalone branching at shape level).
+    """
+    outcomes: list[GateOutcome] = []
+    summary: dict[str, str] = {}
+
+    shape = validate_reversion_envelope_shape(env)
+    outcomes.append(_outcome(
+        "reversion_envelope_shape",
+        shape.valid,
+        _to_dict_safe(shape),
+        _fingerprint_reversion_envelope(shape),
+    ))
+    summary["reversion_envelope_shape"] = "pass" if shape.valid else "fail"
+
+    return outcomes, summary
+
+
 def _validate_tactical_envelope(env: dict[str, Any]) -> tuple[list[GateOutcome], dict[str, str]]:
     """Gate set for tactical-overlay envelopes: shape only (HG-33).
 
@@ -788,6 +844,8 @@ def validate_all(
         outcomes, summary = _validate_cdd_memo(env)
     elif artifact_type == "tactical_envelope":
         outcomes, summary = _validate_tactical_envelope(env)
+    elif artifact_type == "reversion_envelope":
+        outcomes, summary = _validate_reversion_envelope(env)
     else:  # pragma: no cover — guarded above
         raise AssertionError("unreachable artifact_type branch")
 

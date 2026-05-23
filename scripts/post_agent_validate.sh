@@ -82,12 +82,13 @@ esac
 # Unknown agent types exit silent: hook only enforces the pipeline it knows.
 # ---------------------------------------------------------------------------
 case "$SUBAGENT_TYPE" in
-    quantitative-analyst) ARTIFACT_TYPE="quant_memo" ;;
-    strategic-analyst)    ARTIFACT_TYPE="strategic_memo" ;;
-    catalyst-scout)       ARTIFACT_TYPE="catalyst_memo" ;;
-    pm-supervisor)        ARTIFACT_TYPE="pm_envelope" ;;
-    tactical-overlay)     ARTIFACT_TYPE="tactical_envelope" ;;
-    *)                    exit 0 ;;
+    quantitative-analyst)    ARTIFACT_TYPE="quant_memo" ;;
+    strategic-analyst)       ARTIFACT_TYPE="strategic_memo" ;;
+    catalyst-scout)          ARTIFACT_TYPE="catalyst_memo" ;;
+    pm-supervisor)           ARTIFACT_TYPE="pm_envelope" ;;
+    tactical-overlay)        ARTIFACT_TYPE="tactical_envelope" ;;
+    mean-reversion-overlay)  ARTIFACT_TYPE="reversion_envelope" ;;
+    *)                       exit 0 ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -185,12 +186,13 @@ fi
 if [ "${USAGE_TOTAL:-0}" -le 0 ] 2>/dev/null || [ -z "${COST_ESTIMATE_USD:-}" ]; then
     # Fallback: tool_response.usage not present or extraction failed.
     case "$SUBAGENT_TYPE" in
-        quantitative-analyst) COST_ESTIMATE_USD="14.0" ;;
-        strategic-analyst)    COST_ESTIMATE_USD="14.0" ;;
-        catalyst-scout)       COST_ESTIMATE_USD="18.0" ;;
-        pm-supervisor)        COST_ESTIMATE_USD="11.0" ;;
-        tactical-overlay)     COST_ESTIMATE_USD="1.0" ;;
-        *)                    COST_ESTIMATE_USD="5.0" ;;
+        quantitative-analyst)    COST_ESTIMATE_USD="14.0" ;;
+        strategic-analyst)       COST_ESTIMATE_USD="14.0" ;;
+        catalyst-scout)          COST_ESTIMATE_USD="18.0" ;;
+        pm-supervisor)           COST_ESTIMATE_USD="11.0" ;;
+        tactical-overlay)        COST_ESTIMATE_USD="1.0" ;;
+        mean-reversion-overlay)  COST_ESTIMATE_USD="1.0" ;;
+        *)                       COST_ESTIMATE_USD="5.0" ;;
     esac
     COST_SOURCE="fallback_constant"
 else
