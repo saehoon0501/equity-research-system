@@ -120,9 +120,16 @@ MAX_COMPOSITE_SCORE_V01 = VOTES_PER_INSTRUMENT * 2  # ticker + SPY = 8
 GAMMA_REGIME_VOTE_WEIGHT = 1
 MAX_COMPOSITE_SCORE_V02 = MAX_COMPOSITE_SCORE_V01 + GAMMA_REGIME_VOTE_WEIGHT  # 9
 
+# v0.3 extension: crowding_warning is ASYMMETRIC — contributes -1 to the
+# composite when warning=True, 0 otherwise (NEVER +1). This preserves the
+# ceiling (MAX = 9 = MAX_COMPOSITE_SCORE_V02); only the floor extends by 1
+# downward. POSITIVE_BIN_THRESHOLD does NOT need recalibration as a result.
+CROWDING_VOTE_NEGATIVE_ONLY = True
+MAX_COMPOSITE_SCORE_V03 = MAX_COMPOSITE_SCORE_V02  # ceiling preserved by asymmetry
+
 # Back-compat alias: v0.1 callers reading MAX_COMPOSITE_SCORE still get the
-# v0.1 value (8). v0.2 internal logic uses the version-specific constant per
-# the gamma_regime input presence.
+# v0.1 value (8). v0.2/v0.3 internal logic uses the version-specific constant per
+# the gamma_regime / crowding_warning input presence.
 MAX_COMPOSITE_SCORE = MAX_COMPOSITE_SCORE_V01
 
 
@@ -142,18 +149,42 @@ def _gamma_score(gamma_regime: dict | None) -> int:
     return 0  # neutral or any other value
 
 
+def _crowding_score(crowding_warning: dict | None) -> int:
+    """Map v0.3 crowding_warning to an asymmetric vote contribution.
+
+    Returns -1 when warning=True, 0 otherwise (NEVER +1). Per the v0.3 plan:
+    asymmetric signals contribute -N when fired, 0 otherwise.
+
+    None crowding_warning returns 0 (back-compat: tickers without short-interest
+    data, or v0.1/v0.2 callers that don't pass the kwarg).
+    """
+    if crowding_warning is None:
+        return 0
+    return -1 if crowding_warning.get("warning") is True else 0
+
+
 def classify_flow(
     ticker_prices_adj_close: list[float],
     spy_prices_adj_close: list[float],
     gamma_regime: dict | None = None,
+    crowding_warning: dict | None = None,
 ) -> dict:
     """CTA-proximity composite classification on already-fetched inputs.
 
     v0.2 extension: optional `gamma_regime` kwarg from
     `src.p9_flow_overlay.gex_aggregator.classify_gamma_regime()`. When
     provided, contributes one additional ±1 vote to the composite score
-    (max_composite shifts from 8 to 9). When None, behavior is bit-identical
-    to v0.1 (back-compat for tickers without options chain availability).
+    (max_composite shifts from 8 to 9).
+
+    v0.3 extension: optional `crowding_warning` kwarg from
+    `src.p9_flow_overlay.crowding_classifier.classify_crowding()`. ASYMMETRIC:
+    contributes -1 ONLY when warning=True; 0 otherwise (never +1). Ceiling
+    of composite is preserved (still 9 when gamma_regime present); only the
+    floor extends downward by 1.
+
+    Back-compat: when both gamma_regime and crowding_warning are None,
+    behavior is bit-identical to v0.1 (composite divisor = 8, components dict
+    has only the 3 v0.1 keys, no v0.2/v0.3 keys present).
 
     Args:
         ticker_prices_adj_close: ordered list of ticker adjusted close
@@ -161,6 +192,8 @@ def classify_flow(
         spy_prices_adj_close: same shape for SPY (the market-level CTA proxy).
         gamma_regime: optional dict from gex_aggregator.classify_gamma_regime()
             with keys including 'bin' ∈ {positive, neutral, negative}.
+        crowding_warning: optional dict from crowding_classifier.classify_crowding()
+            with key 'warning' ∈ {True, False}.
 
     Returns:
         {
@@ -169,10 +202,12 @@ def classify_flow(
                 'ticker_score': int (range [-4, +4]),
                 'market_score': int (range [-4, +4]),
                 'composite_score_normalized': float (range [-1.0, +1.0]),
-                # v0.2 (only when gamma_regime is not None; omitted entirely
-                # otherwise to preserve bit-identical v0.1 components dict shape):
+                # v0.2 (only when gamma_regime is not None):
                 'gamma_score': int (range [-1, +1]),
                 'gamma_regime': dict (verbatim from input),
+                # v0.3 (only when crowding_warning is not None):
+                'crowding_score': int (range [-1, 0]),
+                'crowding': dict (verbatim from input),
             },
             'unavailable_reason': str | None,
         }
@@ -213,13 +248,19 @@ def classify_flow(
         + _vote_from_donchian(spy_prices_adj_close)
     )
 
-    # Bit-identical v0.1 behavior when gamma_regime is None: omit gamma_score
-    # and gamma_regime from the components dict entirely so the emitted shape
-    # matches v0.1 exactly. When gamma_regime is provided, use the v0.2 9-vote
-    # composite and emit the gamma block.
+    # Determine composite denominator + assemble components dict.
+    # - When both gamma_regime and crowding_warning are None: bit-identical v0.1
+    #   (divisor=8, only the 3 v0.1 keys).
+    # - When gamma_regime is provided (with/without crowding): divisor=9 (v0.2),
+    #   ceiling preserved at +1; crowding adds asymmetric -1 only when warning=True.
+    # - When crowding_warning is provided without gamma_regime: divisor stays at
+    #   v0.1 (8); crowding asymmetric -1 contributes to numerator, ceiling unchanged.
+    crowding_vote = _crowding_score(crowding_warning)
+
     if gamma_regime is not None:
         gamma_vote = _gamma_score(gamma_regime)
-        composite = (ticker_score + market_score + gamma_vote) / MAX_COMPOSITE_SCORE_V02
+        numerator = ticker_score + market_score + gamma_vote + crowding_vote
+        composite = numerator / MAX_COMPOSITE_SCORE_V02
         components = {
             "ticker_score": ticker_score,
             "market_score": market_score,
@@ -228,12 +269,17 @@ def classify_flow(
             "gamma_regime": gamma_regime,
         }
     else:
-        composite = (ticker_score + market_score) / MAX_COMPOSITE_SCORE_V01
+        numerator = ticker_score + market_score + crowding_vote
+        composite = numerator / MAX_COMPOSITE_SCORE_V01
         components = {
             "ticker_score": ticker_score,
             "market_score": market_score,
             "composite_score_normalized": composite,
         }
+
+    if crowding_warning is not None:
+        components["crowding_score"] = crowding_vote
+        components["crowding"] = crowding_warning
 
     if composite >= POSITIVE_BIN_THRESHOLD:
         bin_ = "positive"

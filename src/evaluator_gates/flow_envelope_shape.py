@@ -44,6 +44,10 @@ UNAVAILABLE_REASON_VALUES: frozenset[str] = frozenset(
         "options_chain_unavailable",
         "gex_data_stale",
         "bs_iv_unavailable",
+        # v0.3 additions (crowding sub-signal)
+        "short_interest_unavailable",
+        "short_interest_stale",
+        "shares_outstanding_unavailable",
     }
 )
 

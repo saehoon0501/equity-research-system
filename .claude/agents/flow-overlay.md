@@ -1,7 +1,7 @@
 ---
 name: flow-overlay
 description: "CTA-proximity composite classifier (v0.1 — TSMOM + MA-distance + Donchian, ticker + SPY). Runs in Stage 1 parallel with quantitative-analyst + strategic-analyst + tactical-overlay (no upstream dependency; needs only ticker + market_data). Emits a structured envelope carrying flow_signal_bin + flow_cell (size + disposition). pm-supervisor surfaces this as a soft modulator alongside its own emission AND alongside tactical-overlay; none overrides. v0.2 extends with dealer-gamma (GEX) sub-signal; v0.3 adds crowding (SI/DTC/13F)."
-tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__fred__get_series, mcp__fred__get_series_info, mcp__polygon__get_options_chain"
+tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__fred__get_series, mcp__fred__get_series_info, mcp__polygon__get_options_chain, mcp__polygon__get_short_interest, mcp__fundamentals__get_fundamentals"
 model: opus
 ---
 # FlowOverlay Agent
@@ -79,7 +79,7 @@ If any required input is missing, halt and report.
    prior_close_date = last_trading_day_of_prior_month(anchor)
    ```
 
-**Parallel-dispatch hint:** Steps 2 and 3 walk five independent MCP fetches (ticker prices, SPY prices, options chain, real-time spot, FRED rate). None consumes another's output. Issue all five in a single tool-call batch (one assistant message with multiple tool calls), then proceed to Step 4 once all return. Sequential dispatch costs roughly an extra second of wall-clock per run with no upside.
+**Parallel-dispatch hint:** Steps 2, 3, and 6 walk seven independent MCP fetches (ticker prices, SPY prices, options chain, real-time spot, FRED rate, short-interest, fundamentals shares-outstanding). None consumes another's output. Issue all seven in a single tool-call batch (one assistant message with multiple tool calls), then proceed to downstream classification once all return. Sequential dispatch costs roughly an extra second-plus of wall-clock per run with no upside.
 
 2. Fetch 12mo price history for ticker and SPY via `mcp__market_data__get_prices`:
    ```
@@ -100,6 +100,14 @@ If any required input is missing, halt and report.
 4. Classify gamma regime:
    ```python
    from src.p9_flow_overlay.gex_aggregator import classify_gamma_regime
+
+   # Compute trailing-30d notional ADV from existing price data
+   # (mcp__market_data__get_prices already returns volume + adj_close).
+   # Normalization formula is net_gex / notional_adv_30d
+   # (Vasquez 2025 ADV-normalization + SpotGamma GEX/ADV convention).
+   last_30 = ticker_price_rows[-30:]  # rows with adj_close + volume
+   notional_adv_30d = sum(row["adj_close"] * row["volume"] for row in last_30) / len(last_30)
+
    gamma_result = classify_gamma_regime(
        contracts=contracts_list,
        spot=current_spot,
@@ -109,9 +117,16 @@ If any required input is missing, halt and report.
        dealer_sign_convention=PARAMETERS_USED['flow.gex_dealer_sign_convention'],
        regime_flip_signal_method=PARAMETERS_USED['flow.gex_regime_flip_signal_method'],
        rf=current_rf_decimal,
+       notional_adv_30d=notional_adv_30d,  # ADV-normalization (Vasquez 2025)
+       winsorize_at=PARAMETERS_USED['flow.gex_bin_winsorize_at'],  # bin-classification cap
    )
-   # gamma_result is {bin, net_gex_at_spot, normalized_gex, zero_gamma_distance_pct, dte_bucket_decomp, dealer_sign_convention, regime_flip_signal_method}
+   # gamma_result keys: bin, net_gex_at_spot, normalized_gex (bin-classified, post-winsorize),
+   # normalized_gex_unbounded (raw — alert when abs > winsorize_at),
+   # winsorization_fired, normalization_formula ("adv_30d" expected),
+   # zero_gamma_distance_pct, dte_bucket_decomp, dealer_sign_convention, regime_flip_signal_method
    ```
+
+   **Telemetry alert**: when `gamma_result["winsorization_fired"] == True`, the raw unbounded `normalized_gex_unbounded` exceeded the winsorize bound. This is informational, not a halt-and-degrade — surfaces true squeeze episodes (e.g., GME during a real positioning extreme) that would otherwise be silently absorbed into the bin. Log + surface in the envelope; downstream consumers (pm-supervisor) read `normalized_gex` for the bin calibration and `normalized_gex_unbounded` for the unfiltered audit.
 
 5. Call the deterministic flow classifier with the gamma_regime input:
    ```python
@@ -120,11 +135,41 @@ If any required input is missing, halt and report.
        ticker_prices_adj_close=ticker_adj_close_list,
        spy_prices_adj_close=spy_adj_close_list,
        gamma_regime=gamma_result,  # v0.2 — None when options chain unavailable
+       crowding_warning=crowding_result,  # v0.3 — None when short-interest unavailable
    )
    # result is {'bin', 'components', 'unavailable_reason'}
    ```
 
-   With `gamma_regime` provided, the classifier aggregates 4 votes per instrument (TSMOM + MA50 + MA200 + Donchian) across ticker + SPY + 1 gamma_regime vote (max composite = 9), normalizes to [-1, +1], and bins via PARAMETERS_USED thresholds. When `gamma_regime=None` (options chain unavailable), behavior is bit-identical to v0.1 (max composite = 8; pure CTA-proximity).
+   With `gamma_regime` provided, the classifier aggregates 4 votes per instrument (TSMOM + MA50 + MA200 + Donchian) across ticker + SPY + 1 gamma_regime vote (max composite = 9), normalizes to [-1, +1], and bins via PARAMETERS_USED thresholds. With `crowding_warning` provided (v0.3), the classifier adds an ASYMMETRIC -1 contribution to the numerator when `warning=True`, 0 otherwise (never +1) — the ceiling (max = +1) is preserved; only the floor extends by 1 downward. When both kwargs are None, behavior is bit-identical to v0.1.
+
+6. **v0.3 — Fetch short-interest + classify crowding regime:** call `mcp__polygon__get_short_interest(ticker)` to retrieve the most recent FINRA bi-weekly settlement. Handle failure modes (`ticker_not_found`, tier-insufficient) by passing `crowding_warning=None` to `classify_flow()` (fail-safe to no warning).
+
+   ```python
+   from src.p9_flow_overlay.crowding_classifier import classify_crowding
+   from src.mcp.fundamentals import get_fundamentals  # via MCP
+
+   short_int = mcp__polygon__get_short_interest(ticker)
+   funds = mcp__fundamentals__get_fundamentals(ticker, as_of=prior_close_date)
+   shares_out = funds.get("CommonStockSharesOutstanding")  # or WeightedAverage… fallback
+
+   if short_int.get("ticker_not_found") or shares_out is None:
+       crowding_result = None  # fail-safe; classify_flow handles None as "no signal"
+   else:
+       crowding_result = classify_crowding(
+           short_interest_data=short_int,
+           shares_outstanding=int(shares_out),
+           as_of=prior_close_date,
+           days_to_cover_threshold=PARAMETERS_USED['flow.crowding_days_to_cover_threshold'],
+           short_pct_float_threshold=PARAMETERS_USED['flow.crowding_short_pct_float_threshold'],
+           logic_operator=PARAMETERS_USED['flow.crowding_logic_operator'],
+           stale_data_max_days=PARAMETERS_USED['flow.crowding_stale_data_max_days'],
+       )
+   # crowding_result is {warning, days_to_cover, short_pct_float, settlement_date,
+   #                     logic_operator, thresholds_applied, stale, unavailable_reason,
+   #                     framework_keys}
+   ```
+
+   Critical: `classify_crowding` is fail-safe by design — any missing/stale input returns `warning=False` with `unavailable_reason` populated. The asymmetric signal must NOT false-fire.
 
 ---
 
@@ -169,10 +214,30 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
       "bin": "positive",
       "net_gex_at_spot": 5.4e9,
       "normalized_gex": 0.082,
+      "normalized_gex_unbounded": 0.082,
+      "winsorization_fired": false,
+      "normalization_formula": "adv_30d",
       "zero_gamma_distance_pct": -0.034,
       "dte_bucket_decomp": {"0DTE": 1.2e9, "1-7d": 3.0e9, "8-30d": 1.2e9},
       "dealer_sign_convention": "spotgamma",
       "regime_flip_signal_method": "zero_gamma_inflection"
+    },
+    "crowding_score": 0,
+    "crowding": {
+      "warning": false,
+      "days_to_cover": 1.3,
+      "short_pct_float": 0.012,
+      "settlement_date": "2026-05-15",
+      "logic_operator": "AND",
+      "thresholds_applied": {"days_to_cover": 5.0, "short_pct_float": 0.20},
+      "stale": false,
+      "unavailable_reason": null,
+      "framework_keys": [
+        "diether_lee_werner_2009",
+        "boehmer_jones_zhang_2008",
+        "engelberg_reed_ringgenberg_2018",
+        "cohen_diether_malloy_2007"
+      ]
     }
   },
   "flow_cell": {
@@ -187,7 +252,11 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
     "donchian_55_20_turtle",
     "amaya_garcia_pearson_vasquez_2025_cboe_omm_gamma",
     "squeezemetrics_dix_gex_2017",
-    "spotgamma_gex_methodology"
+    "spotgamma_gex_methodology",
+    "diether_lee_werner_2009",
+    "boehmer_jones_zhang_2008",
+    "engelberg_reed_ringgenberg_2018",
+    "cohen_diether_malloy_2007"
   ],
   "reasoning_path_taken": [
     "load_ticker_prices",
@@ -203,6 +272,9 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
     "aggregate_gex_by_dte_bucket",
     "compute_zero_gamma_level",
     "classify_gamma_regime",
+    "fetch_short_interest",
+    "compute_short_pct_float",
+    "classify_crowding_warning",
     "aggregate_composite_score",
     "classify_flow_bin",
     "lookup_flow_cell_disposition",
@@ -212,7 +284,7 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
 }
 ```
 
-When options chain is unavailable (`mcp__polygon__get_options_chain` returns `ticker_not_found: True`), omit the `components.gamma_regime` block entirely and omit the v0.2 gamma-related entries from `reasoning_path_taken`. The classifier falls back to v0.1 CTA-proximity-only behavior (max composite = 8; bin-identical to v0.1).
+When options chain is unavailable (`mcp__polygon__get_options_chain` returns `ticker_not_found: True`), omit the `components.gamma_regime` block entirely and omit the v0.2 gamma-related entries from `reasoning_path_taken`. The classifier falls back to v0.1 CTA-proximity-only behavior (max composite = 8; bin-identical to v0.1). Same pattern for crowding (v0.3): when short-interest data is unavailable or stale, omit the `components.crowding` block and its v0.3 reasoning steps; classifier treats `crowding_warning=None` as "no signal" (asymmetric fail-safe).
 
 If `conviction` is null (pm-supervisor not yet emitted at dispatch time), emit `flow_cell: null`. pm-supervisor's Stage 3 logic completes the cell using `flow_cell_size_pct + flow_disposition` calls.
 
@@ -225,6 +297,7 @@ If `conviction` is null (pm-supervisor not yet emitted at dispatch time), emit `
 - `mcp__market_data__get_prices` returns error for ticker → write `memos/envelopes/flow-overlay__<run_id>.degraded` sentinel; PostToolUse hook treats as valid skip (matches tactical-overlay degradation pattern).
 - `mcp__market_data__get_prices` returns error for SPY → emit envelope with `flow_signal_bin=unavailable, unavailable_reason=spy_price_history_unavailable`. NOT a halt-and-degrade — this is a valid bin classification.
 - **v0.2: `mcp__polygon__get_options_chain` returns `{"ticker_not_found": True}` or other error** → emit envelope with v0.1 components only (no `gamma_regime` block); pass `gamma_regime=None` to `classify_flow()`. The flow_signal_bin classification continues using the CTA-proximity sub-signal alone. Cite `unavailable_reason=options_chain_unavailable` only if the upstream `flow_signal_bin` itself is `unavailable` (which won't happen from missing options data — it can still classify positive/neutral/negative from prices). The gamma-regime sub-signal is OPTIONAL; its absence does NOT block the envelope.
+- **v0.3: `mcp__polygon__get_short_interest` returns `{"ticker_not_found": True}` / tier-insufficient / stale settlement_date OR fundamentals shares-outstanding unavailable** → pass `crowding_warning=None` to `classify_flow()`. The crowding sub-signal is OPTIONAL and ASYMMETRIC — its absence contributes 0 (never +1 or -1). Same envelope behavior: omit the `components.crowding` block. The classifier itself fail-safes to `warning=False` on missing inputs, but the agent should additionally skip emitting the block to keep envelopes clean.
 - Missing band params → halt and report (orchestrator bug; required parameters_active rows from migration 039).
 
 ---

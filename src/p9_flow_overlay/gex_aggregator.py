@@ -273,6 +273,8 @@ def classify_gamma_regime(
     rf: float = 0.0,
     grid_pct: float = DEFAULT_GRID_PCT,
     grid_steps: int = DEFAULT_GRID_STEPS,
+    notional_adv_30d: Optional[float] = None,
+    winsorize_at: Optional[float] = None,
 ) -> dict:
     """End-to-end gamma-regime classification.
 
@@ -280,28 +282,39 @@ def classify_gamma_regime(
         contracts: list of Polygon contract dicts.
         spot: current underlying price.
         as_of: reference date for DTE/TTM.
-        positive_threshold_normalized: normalized (by spot²×100) net-GEX above which bin=positive.
+        positive_threshold_normalized: normalized net-GEX above which bin=positive.
         negative_threshold_normalized: normalized net-GEX below which bin=negative.
         dealer_sign_convention: "spotgamma" | "squeezemetrics".
         regime_flip_signal_method: "zero_gamma_inflection" | "volatility_trigger" (volatility_trigger unimplemented in v0.2).
         dte_boundaries: bucket boundaries.
         rf: risk-free rate for BS re-pricing.
         grid_pct / grid_steps: zero-gamma search params.
+        notional_adv_30d: trailing-30d average daily notional dollar volume
+            (avg shares × avg adj_close). When provided, normalization uses
+            `net_gex / notional_adv_30d` (Vasquez 2025 + SpotGamma GEX/ADV
+            convention). When None, back-compat falls back to the legacy
+            formula `net_gex / (spot² × 100)`.
+        winsorize_at: absolute-value bound applied to normalized_gex for BIN
+            CLASSIFICATION ONLY; raw value retained in output. Prevents
+            single-name dispersion from one-tail-dominating threshold
+            calibration. When None, no winsorization (back-compat).
 
     Returns:
         {
             "bin": "positive" | "neutral" | "negative",
-            "net_gex_at_spot": float (dollar GEX),
-            "normalized_gex": float (net_gex / (spot² × 100)),
-            "zero_gamma_distance_pct": float | None (signed),
+            "net_gex_at_spot": float (dollar GEX per 1% move),
+            "normalized_gex": float (raw — see normalized_gex_unbounded note),
+            "normalized_gex_unbounded": float (raw; equal to normalized_gex
+                when no winsorization fired; differs only when raw exceeded
+                ±winsorize_at — surfaces true squeeze episodes for telemetry),
+            "winsorization_fired": bool (True iff abs(raw) > winsorize_at),
+            "normalization_formula": "adv_30d" | "spot_squared" (audit lineage
+                for which formula classify produced this result),
+            "zero_gamma_distance_pct": float | None,
             "dte_bucket_decomp": dict[str, float],
             "dealer_sign_convention": str,
             "regime_flip_signal_method": str,
         }
-
-    The bin classification uses the NORMALIZED metric to be ticker-comparable
-    (per Vasquez 2025: absolute OMM gamma is 0.04-0.17% of liquidity, not a
-    fixed dollar level).
     """
     if dealer_sign_convention == "spotgamma":
         sign_calls, sign_puts = 1, -1
@@ -321,13 +334,35 @@ def classify_gamma_regime(
     )
     net_gex = decomp.get("total_net_gex", 0.0)
 
-    # Normalize by spot²×100 (the "dealer-gamma per dollar of notional" frame)
-    normalizer = spot * spot * CONTRACT_MULTIPLIER
-    normalized = net_gex / normalizer if normalizer > 0 else 0.0
+    # Normalization formula: use notional_adv_30d when provided
+    # (Vasquez 2025 + SpotGamma GEX/ADV convention); fall back to spot²×100
+    # for back-compat when adv is None or non-positive.
+    if notional_adv_30d is not None and notional_adv_30d > 0:
+        normalized_raw = net_gex / notional_adv_30d
+        formula = "adv_30d"
+    else:
+        normalizer = spot * spot * CONTRACT_MULTIPLIER
+        normalized_raw = net_gex / normalizer if normalizer > 0 else 0.0
+        formula = "spot_squared"
 
-    if normalized >= positive_threshold_normalized:
+    # Winsorize for BIN CLASSIFICATION only; raw retained in output for
+    # telemetry-alerting on true squeeze episodes (raw > winsorize_at).
+    winsorization_fired = False
+    if winsorize_at is not None and winsorize_at > 0:
+        if normalized_raw > winsorize_at:
+            normalized_for_bin = winsorize_at
+            winsorization_fired = True
+        elif normalized_raw < -winsorize_at:
+            normalized_for_bin = -winsorize_at
+            winsorization_fired = True
+        else:
+            normalized_for_bin = normalized_raw
+    else:
+        normalized_for_bin = normalized_raw
+
+    if normalized_for_bin >= positive_threshold_normalized:
         bin_ = "positive"
-    elif normalized <= negative_threshold_normalized:
+    elif normalized_for_bin <= negative_threshold_normalized:
         bin_ = "negative"
     else:
         bin_ = "neutral"
@@ -346,10 +381,17 @@ def classify_gamma_regime(
         if zg_level is not None:
             zero_gamma_distance_pct = (zg_level - spot) / spot
 
+    # winsorization_fired is derivable (normalized_for_bin != normalized_raw)
+    # but emitted explicitly because the flow-overlay agent's telemetry-alert
+    # contract reads it as a boolean gate; the explicit field removes a
+    # float-equality check from the consumer's reasoning path.
     return {
         "bin": bin_,
         "net_gex_at_spot": net_gex,
-        "normalized_gex": normalized,
+        "normalized_gex": normalized_for_bin,
+        "normalized_gex_unbounded": normalized_raw,
+        "winsorization_fired": winsorization_fired,
+        "normalization_formula": formula,
         "zero_gamma_distance_pct": zero_gamma_distance_pct,
         "dte_bucket_decomp": {k: v for k, v in decomp.items() if k != "total_net_gex"},
         "dealer_sign_convention": dealer_sign_convention,

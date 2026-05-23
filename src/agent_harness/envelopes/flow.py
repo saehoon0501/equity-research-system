@@ -43,6 +43,10 @@ UNAVAILABLE_REASON_VALUES: tuple[str, ...] = (
     "options_chain_unavailable",
     "gex_data_stale",
     "bs_iv_unavailable",
+    # v0.3 additions (crowding sub-signal)
+    "short_interest_unavailable",
+    "short_interest_stale",
+    "shares_outstanding_unavailable",
 )
 
 # Reasoning-path enum — CTA-proximity composite + v0.2 gamma-regime decision path.
@@ -69,6 +73,10 @@ REASONING_STEPS: tuple[str, ...] = (
     "aggregate_gex_by_dte_bucket",
     "compute_zero_gamma_level",
     "classify_gamma_regime",
+    # v0.3 crowding steps (cited iff short-interest was fetched + classified)
+    "fetch_short_interest",
+    "compute_short_pct_float",
+    "classify_crowding_warning",
 )
 
 
@@ -117,8 +125,22 @@ SCHEMA: dict[str, Any] = {
             #       regime_flip_signal_method: "zero_gamma_inflection" | "volatility_trigger"
             #     }
             #
-            # Schema stays permissive (additionalProperties: True) so v0.1 envelopes
-            # without gamma_regime continue to validate cleanly (back-compat).
+            #   v0.3 extension (crowding sub-signal — present when short-interest fetched):
+            #     crowding_score: int ∈ {-1, 0} (asymmetric — never +1)
+            #     crowding: {
+            #       warning: bool,
+            #       days_to_cover: float | null,
+            #       short_pct_float: float | null,
+            #       settlement_date: str | null,
+            #       logic_operator: "AND" | "OR",
+            #       thresholds_applied: {days_to_cover: float, short_pct_float: float},
+            #       stale: bool,
+            #       unavailable_reason: str | null,
+            #       framework_keys: list[str]
+            #     }
+            #
+            # Schema stays permissive (additionalProperties: True) so v0.1/v0.2 envelopes
+            # without these blocks continue to validate cleanly (back-compat).
             "type": ["object", "null"],
             "additionalProperties": True,
         },
