@@ -19,7 +19,7 @@ forgetting another.
 
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent.parent
 MIGRATION_PATH = REPO / "db" / "migrations" / "040_flow_overlay_v02_gamma_erp.sql"
 QUANT_AGENT_PATH = REPO / ".claude" / "agents" / "quantitative-analyst.md"
 RESEARCH_COMPANY_PATH = REPO / ".claude" / "commands" / "research-company.md"

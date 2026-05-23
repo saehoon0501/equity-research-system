@@ -353,7 +353,7 @@ def test_state_isolated_per_run_id_and_agent(tmp_path: Path) -> None:
 def _run_bash(env_path: Path, **kwargs) -> tuple[int, str, str]:
     """Run scripts/validate_envelope.sh with the given args; return
     (exit_code, stdout, stderr)."""
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
     script = repo_root / "scripts" / "validate_envelope.sh"
     args = [
         str(script),

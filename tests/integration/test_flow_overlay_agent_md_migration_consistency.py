@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 AGENT_MD = REPO_ROOT / ".claude" / "agents" / "flow-overlay.md"
 MIGRATION_SQL = REPO_ROOT / "db" / "migrations" / "039_flow_overlay_parameters.sql"

@@ -84,7 +84,7 @@ def test_artifact_type_via_cli_quant_memo(tmp_path) -> None:
     memo_path = tmp_path / "quant.json"
     memo_path.write_text("{}", encoding="utf-8")
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent.parent
     proc = subprocess.run(
         [
             sys.executable, "-m", "src.evaluator_gates",
@@ -112,7 +112,7 @@ def test_artifact_type_via_orchestrator_step_cli(tmp_path) -> None:
     memo_path = tmp_path / "strategic.json"
     memo_path.write_text("{}", encoding="utf-8")
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent.parent
     proc = subprocess.run(
         [
             sys.executable, "-m", "src.agent_harness.orchestrator_step",
