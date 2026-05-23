@@ -190,6 +190,46 @@ Annual ERP, country risk, industry betas, multiples by sector. Load-bearing for 
 
 ROIC × growth value-driver tree; operating-leverage decomposition. Empirical chapter showing top-quintile ROIC firms persist ~5pp above average 15 years out (US 1963–2017). Cite when invoking ROIC > WACC framing or sector-level operating-leverage analysis.
 
+## Anchor-framework empirical priors (v2.1 — 2026-05-23)
+
+These short-keys back the tier-conditional anchor guidance in `pm-supervisor.md` §7.6 v2.1. They are in-track anchor priors (cited inside `fundamental_track` / `technical_track` free-form text via the existing `framework_keys[]` channel), NOT synthesis short-keys for `structural_theory.framework_keys[]` / `reasoning.framework_keys[]` framework-balance enforcement. The §8 framework-balance enumeration in pm-supervisor.md (quant: 7 keys, strategic: 3 keys) is NOT extended by this section.
+
+### aqr_buffetts_alpha
+
+**Source:** Frazzini, Kabiller, Pedersen, "Buffett's Alpha," NBER Working Paper w19681. http://docs.lhpedersen.com/BuffettsAlpha.pdf
+
+Berkshire's 1976-2011 alpha decomposes into a 3-factor exposure (Quality + Safety + Cheap-vs-Quality), not P/E mean-reversion. Cite when justifying **forward P/E compression via EPS growth as the PRIMARY core_fundamental anchor** over historical P/E mean-reversion (which the paper's regressions empirically demote to a noisy single-name signal). The forward-P/E-compression anchor maps onto the paper's "Cheap-vs-Quality" factor: pay a fair multiple for a high-quality compounder and let EPS grow into the price.
+
+### aqr_vol_targeting_2020
+
+**Source:** Harvey, Hoyle, Rattray, Sargaison, Sinclair, Van Hemert, "The Best Strategies for the Worst Crises," Financial Analysts Journal 2020. https://www.tandfonline.com/doi/full/10.1080/0015198X.2020.1790853
+
+Conditional volatility targeting formula: `position_size = (target_vol / realized_vol) × baseline_size`. Empirical max-drawdown reduction averages ~6.6pp across equity markets when applied as a position-sizing overlay. Cite when **thematic_growth tier DCA legs are sized via vol-scaling** rather than equal-weight (high-vol names like ARKK-cohort 2021-2022 demonstrated the value of vol-scaled legs — equal-weight legs over-allocated capital into the -77% drawdown). Reference the formula by short-key inside `technical_track` text; do not re-derive inline.
+
+### aqr_factor_timing_is_hard
+
+**Source:** AQR Capital Management, "Factor Timing is Hard." https://www.aqr.com/Insights/Perspectives/Factor-Timing-is-Hard
+
+AQR's standing position: valuation measures (P/E, P/B, CAPE) are NOT effective single-name market-timing signals — they describe rich/cheap conditions but do not generate entry timing. Cite when **demoting historical P/E mean-reversion from PRIMARY anchor to SECONDARY rich/cheap rail** in core_fundamental tier guidance. The implication: a "P/E is at 5y high" reading informs sizing discipline (be smaller / wait for compression) but does NOT trigger entry on its own.
+
+### vanguard_lsi_vs_dca_2023
+
+**Source:** Vanguard, "Cost averaging: Invest now or temporarily hold your cash?" 2023. https://corporate.vanguard.com/content/dam/corp/research/pdf/cost_averaging_invest_now_or_temporarily_hold_your_cash.pdf
+
+Lump-sum investing (LSI) beats dollar-cost averaging (DCA) on expected-return basis approximately 68% of the time across US/UK/Australia equity markets, 1976-2022. Cite when **framing DCA grids in `technical_track` as RISK-MANAGEMENT framing rather than return-optimal entry**. The honest framing: DCA is the operator's hedge against being wrong about entry timing (drawdown insurance under uncertain conviction); it is not a mathematically optimal entry strategy.
+
+### easton_peg_2004
+
+**Source:** Easton, "PE Ratios, PEG Ratios, and Estimating the Implied Expected Rate of Return on Equity Capital," SSRN 423601. https://papers.ssrn.com/sol3/papers.cfm?abstract_id=423601
+
+PEG ratios are mathematically undefined or structurally noisy for companies with negative, near-zero, or volatile earnings — the denominator collapses or oscillates and the ratio loses signal value. Cite when **excluding PEG from thematic_growth tier anchor list** for names with negative or near-zero FY+1/FY+2 EPS consensus (which describes the bulk of high-growth pre-profitability software, biotech, and platform names that populate the thematic_growth tier).
+
+### damodaran_young_growth
+
+**Source:** Aswath Damodaran, "Valuing Young, Start-Up and Growth Companies: Estimation Issues and Valuation Challenges." https://pages.stern.nyu.edu/~adamodar/pdfiles/papers/younggrowth.pdf
+
+Damodaran's canonical framework for pre-revenue and early-stage names: traditional DCF/multiple anchors fail when the going-concern assumption is itself the open question. Recommends milestone-tree gating (phase-by-phase probability-of-success factors per biotech analog), Hall steady-state EV (intangibles capitalization), and real-options framing (Trigeorgis, Copeland-Antikarov) over USD-price triggers. Cite when **speculative_optionality tier emits `fundamental_track = null` with `null_reason = "milestone-tree gated — see report.reasoning.detail"`** as the canonical emission. The substantive narrative (phase POS factors, real-options framing) routes to `report.reasoning.detail`; the fundamental_track stays null because price-anchored entry triggers do not apply to binary-outcome names.
+
 ## Sector addenda
 
 ### bessemer_cloud_100
