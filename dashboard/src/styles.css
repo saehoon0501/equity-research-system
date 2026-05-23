@@ -36,29 +36,32 @@
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
+/* Dark theme — Gate.io exchange palette: navy-ink bg, vivid white text,
+ * semantic green/red/yellow for status. Crypto-exchange info density.
+ */
 :root[data-theme="dark"] {
-  --bg:          #0a0a0a;
-  --bg-soft:     #141414;
-  --panel:       #0a0a0a;
-  --rule:        rgba(255, 255, 255, 0.07);
-  --rule-strong: rgba(255, 255, 255, 0.14);
-  --border:      rgba(255, 255, 255, 0.09);
-  --text:        #fafafa;
-  --text-soft:   #d4d4d4;
-  --muted:       #737373;
-  --muted-2:     #525252;
-  --accent:      #fafafa;
-  --accent-soft: rgba(255, 255, 255, 0.04);
-  --buy:         #fafafa;
-  --hold:        #a3a3a3;
-  --hold-soft:   rgba(163, 163, 163, 0.06);
-  --trim:        #d4d4d4;
-  --trim-soft:   rgba(212, 212, 212, 0.06);
-  --sell:        #fafafa;
-  --sell-soft:   rgba(255, 255, 255, 0.04);
-  --danger:      #fafafa;
-  --danger-soft: rgba(255, 255, 255, 0.04);
-  --pill:        rgba(255, 255, 255, 0.04);
+  --bg:          #0b0e13;            /* deep navy-ink */
+  --bg-soft:     #161a23;            /* hover / panel surface */
+  --panel:       #11141b;            /* card surface, slightly lifted */
+  --rule:        rgba(255, 255, 255, 0.06);
+  --rule-strong: rgba(255, 255, 255, 0.12);
+  --border:      rgba(255, 255, 255, 0.08);
+  --text:        #ffffff;            /* pure vivid white */
+  --text-soft:   #e5e7ed;
+  --muted:       #8a92a6;            /* cool gray w/ slight blue */
+  --muted-2:     #5b6273;
+  --accent:      #2354e6;            /* Gate.io signature blue */
+  --accent-soft: rgba(35, 84, 230, 0.12);
+  --buy:         #00c076;            /* up / long / green */
+  --hold:        #f0b90b;            /* yellow — neutral / hold */
+  --hold-soft:   rgba(240, 185, 11, 0.10);
+  --trim:        #ff9800;            /* warning orange */
+  --trim-soft:   rgba(255, 152, 0, 0.10);
+  --sell:        #f6465d;            /* down / short / red */
+  --sell-soft:   rgba(246, 70, 93, 0.10);
+  --danger:      #f6465d;
+  --danger-soft: rgba(246, 70, 93, 0.10);
+  --pill:        rgba(255, 255, 255, 0.05);
   --btn-bg:      transparent;
   --btn-hover:   rgba(255, 255, 255, 0.05);
 }
@@ -2185,4 +2188,130 @@ a:hover { text-decoration: underline; }
   background: transparent;
   border-color: var(--text);
 }
+
+
+/* ============================================================ */
+/* GATE.IO DARK OVERLAY — restore semantic color in dark mode  */
+/* (light mode stays monochrome; minimal overlay still applies) */
+/* ============================================================ */
+
+:root[data-theme="dark"] body {
+  font-feature-settings: "tnum", "zero";
+}
+
+/* Decision badges: filled with semantic color in dark mode */
+:root[data-theme="dark"] .code-BUY,
+:root[data-theme="dark"] .code-ADD {
+  color: var(--buy);
+  border-color: var(--buy);
+  background: rgba(0, 192, 118, 0.10) !important;
+}
+:root[data-theme="dark"] .code-HOLD,
+:root[data-theme="dark"] .code-WATCH {
+  color: var(--hold);
+  border-color: var(--hold);
+  background: var(--hold-soft) !important;
+}
+:root[data-theme="dark"] .code-TRIM,
+:root[data-theme="dark"] .code-PASS {
+  color: var(--trim);
+  border-color: var(--trim);
+  background: var(--trim-soft) !important;
+}
+:root[data-theme="dark"] .code-SELL,
+:root[data-theme="dark"] .code-REJECT {
+  color: var(--sell);
+  border-color: var(--sell);
+  background: var(--sell-soft) !important;
+}
+
+/* Source badge: accent blue for db, neutral for file/agent */
+:root[data-theme="dark"] .src-db {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft) !important;
+}
+
+/* Active sidebar/tab indicator: Gate.io blue */
+:root[data-theme="dark"] .tick-row.active::before,
+:root[data-theme="dark"] .rrow-active::before { background: var(--accent); }
+:root[data-theme="dark"] .tab-active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+:root[data-theme="dark"] .view-toggle-btn.view-active {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Run status pills: semantic color */
+:root[data-theme="dark"] .rs-ok {
+  color: var(--buy);
+  border-color: var(--buy);
+  background: rgba(0, 192, 118, 0.08) !important;
+}
+:root[data-theme="dark"] .rs-flight {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft) !important;
+}
+:root[data-theme="dark"] .rs-fail {
+  color: var(--sell);
+  border-color: var(--sell);
+  background: var(--sell-soft) !important;
+  font-weight: 600;
+}
+
+/* Validation decision pills: PASS=green, RETRY=yellow, ESCALATE=red */
+:root[data-theme="dark"] .rd-pass     { color: var(--buy); }
+:root[data-theme="dark"] .rd-retry    { color: var(--hold); }
+:root[data-theme="dark"] .rd-escalate { color: var(--sell); font-weight: 700; }
+
+/* Gate scorecard pass-rate cells */
+:root[data-theme="dark"] .gs-rate-good {
+  color: var(--buy);
+  background: rgba(0, 192, 118, 0.08) !important;
+}
+:root[data-theme="dark"] .gs-rate-mid {
+  color: var(--hold);
+  background: var(--hold-soft) !important;
+}
+:root[data-theme="dark"] .gs-rate-bad {
+  color: var(--sell);
+  background: var(--sell-soft) !important;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .gs-trend-up   { color: var(--sell); font-weight: 700; }
+:root[data-theme="dark"] .gs-trend-down { color: var(--buy); }
+:root[data-theme="dark"] .gs-esc        { color: var(--sell); }
+
+/* Gates insights panel: yellow exchange-warning accent */
+:root[data-theme="dark"] .gs-insights {
+  border-left-color: var(--hold);
+  background: var(--hold-soft);
+}
+:root[data-theme="dark"] .gs-insights h3 { color: var(--hold); }
+
+/* Sparkline */
+:root[data-theme="dark"] .gs-spark-pass { color: var(--buy); opacity: 1; }
+:root[data-theme="dark"] .gs-spark-fail { color: var(--sell); opacity: 1; }
+
+/* Live price (Polygon): green up / red down */
+:root[data-theme="dark"] .live-change.up   { color: var(--buy); }
+:root[data-theme="dark"] .live-change.down { color: var(--sell); }
+:root[data-theme="dark"] .live { border-top-color: var(--accent); }
+
+/* Search focus: accent-blue underline */
+:root[data-theme="dark"] .search:focus { border-bottom-color: var(--accent); }
+
+/* Status banner: red border + dim red fill */
+:root[data-theme="dark"] .status-banner {
+  border-color: var(--sell);
+  border-left-color: var(--sell);
+  background: rgba(246, 70, 93, 0.06);
+}
+:root[data-theme="dark"] .status-icon  { color: var(--sell); }
+:root[data-theme="dark"] .status-title { color: var(--sell); }
+
+/* Hover row highlight on tables (subtle bg lift) */
+:root[data-theme="dark"] .gs-table tbody tr:hover { background: var(--bg-soft); }
 
