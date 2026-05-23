@@ -277,30 +277,10 @@ def test_premortem_cadence_dst_safe_arithmetic() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Bug F: counterfactual_veto retrieval_date is UTC.
+# Bug F (counterfactual_veto retrieval_date UTC): test removed 2026-05-23 with
+# src/counterfactual_veto/ deletion (mig 041) per docs/superpowers/specs/
+# 2026-05-23-eval-loop-deletion-design.md.
 # ---------------------------------------------------------------------------
-
-
-def test_counterfactual_veto_retrieval_date_is_utc() -> None:
-    """Smoke: writing path uses UTC date.
-
-    We don't run the full pipeline (DB-bound). We just validate that
-    the orchestrator module references the canonical UTC pattern.
-    """
-    import inspect
-
-    from src.counterfactual_veto import orchestrator as cv_orch
-
-    src = inspect.getsource(cv_orch._persist_retrieval_row)
-    # Strip comments before scanning — a comment may legitimately mention
-    # the legacy ``date.today()`` pattern in its rationale.
-    code_lines = [
-        line.split("#", 1)[0]
-        for line in src.splitlines()
-    ]
-    code_only = "\n".join(code_lines)
-    assert "_dt.date.today()" not in code_only
-    assert "datetime.now" in code_only and "timezone.utc" in code_only
 
 
 def test_p4_debate_uses_utc_date() -> None:

@@ -31,7 +31,6 @@ from src.audit_trail.hmac_verify import (
     _isoformat,
     canonical_payload_dict,
 )
-from src.counterfactual_veto.layer1_cooling_off import evaluate_cooling_off
 
 
 # ---------------------------------------------------------------------------
@@ -137,97 +136,10 @@ def test_alert_channels_pending_rows_coerce_naive_to_utc() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Bug 2: counterfactual_veto cooling-off — naive datetime crashes Layer 1
+# Bug 2 (counterfactual_veto cooling-off): tests removed 2026-05-23 with
+# src/counterfactual_veto/ deletion (mig 041) per docs/superpowers/specs/
+# 2026-05-23-eval-loop-deletion-design.md.
 # ---------------------------------------------------------------------------
-
-
-def test_cooling_off_72h_48h_24h_boundary_aware() -> None:
-    """B 72h / B' 48h / C 24h boundaries computed with aware UTC clocks."""
-    trigger = _dt.datetime(2026, 4, 29, 12, 0, tzinfo=timezone.utc)
-
-    # Mode B — 72h
-    just_before = trigger + _dt.timedelta(hours=72) - _dt.timedelta(seconds=1)
-    just_after = trigger + _dt.timedelta(hours=72)
-    assert evaluate_cooling_off(
-        mode="B", trigger_event_at=trigger, now=just_before
-    ).blocking
-    assert not evaluate_cooling_off(
-        mode="B", trigger_event_at=trigger, now=just_after
-    ).blocking
-
-    # Mode B' — 48h
-    assert evaluate_cooling_off(
-        mode="B_prime",
-        trigger_event_at=trigger,
-        now=trigger + _dt.timedelta(hours=47, minutes=59),
-    ).blocking
-    assert not evaluate_cooling_off(
-        mode="B_prime",
-        trigger_event_at=trigger,
-        now=trigger + _dt.timedelta(hours=48),
-    ).blocking
-
-    # Mode C — 24h
-    assert evaluate_cooling_off(
-        mode="C",
-        trigger_event_at=trigger,
-        now=trigger + _dt.timedelta(hours=23, minutes=59),
-    ).blocking
-    assert not evaluate_cooling_off(
-        mode="C",
-        trigger_event_at=trigger,
-        now=trigger + _dt.timedelta(hours=24),
-    ).blocking
-
-
-def test_cooling_off_naive_trigger_crashes_under_aware_now() -> None:
-    """Naive `trigger_event_at` MUST not silently produce wrong answers.
-
-    The CLI fix coerces tz-less ISO strings to aware UTC before passing
-    them in, but this test pins the contract: a naive trigger paired
-    with an aware `now` must raise (preferred) — silent wrong answers
-    are the dangerous outcome.
-    """
-    naive_trigger = _dt.datetime(2026, 4, 29, 12, 0)  # no tzinfo
-    aware_now = _dt.datetime(2026, 4, 29, 13, 0, tzinfo=timezone.utc)
-    with pytest.raises(TypeError):
-        evaluate_cooling_off(
-            mode="B", trigger_event_at=naive_trigger, now=aware_now
-        )
-
-
-def test_counterfactual_veto_cli_load_fires_coerces_naive_iso() -> None:
-    """CLI `_load_fires_from_json` must coerce naive ISO `fired_at` to UTC.
-
-    Regression: pre-fix, a JSON file with `"fired_at": "2026-04-29T12:00:00"`
-    (no tz) yielded a naive datetime that crashed Layer 2 multi-source
-    `evaluated_at - fired_at` math.
-    """
-    from src.counterfactual_veto.cli import _load_fires_from_json
-
-    import tempfile
-    import os
-
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    ) as f:
-        json.dump(
-            [
-                {
-                    "kill_id": "auto-tighten",
-                    "fired_at": "2026-04-29T12:00:00",  # naive
-                }
-            ],
-            f,
-        )
-        path = f.name
-    try:
-        fires = _load_fires_from_json(path)
-        assert len(fires) == 1
-        assert fires[0].fired_at.tzinfo is not None
-        assert fires[0].fired_at.utcoffset() == _dt.timedelta(0)
-    finally:
-        os.unlink(path)
 
 
 # ---------------------------------------------------------------------------

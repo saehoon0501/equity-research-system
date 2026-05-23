@@ -493,96 +493,10 @@ def test_e2e_clean_buy_path(
 
 
 # ===========================================================================
-# Scenario 2 — Kill criterion fires during /daily-monitor sweep
+# Scenario 2 (Kill criterion fires via counterfactual_veto): test removed
+# 2026-05-23 with src/counterfactual_veto/ deletion (mig 041) per
+# docs/superpowers/specs/2026-05-23-eval-loop-deletion-design.md.
 # ===========================================================================
-
-
-def test_e2e_kill_criterion_fires(hmac_keys: dict[str, bytes]) -> None:
-    """During L4 daily-monitor sweep, scenario_A.kill_3 fires.
-
-    NVDA growth_rate_inflection_yoy_pct < -50% -> kill_3 trips.
-    L4 materiality classifies M-3. Q3 routing fires full P4 5-agent
-    re-underwrite + operator alert. PMSupervisor downgrades to PASS;
-    cut signal emitted via P9 + counterfactual veto pipeline.
-
-    This test surfaces that:
-      * P7 with kills_fired >= 2 rolls down to LOW conviction.
-      * P7 with TRIGGER_M3 + materiality_event_ref produces a valid
-        trigger_metadata row consumable downstream.
-      * The unread_alerts row schema (severity=3, alert_type=...) is the
-        contract counterfactual_veto.orchestrator._maybe_emit_unread_alert
-        writes (verified by SQL-shape assertions).
-
-    Per v3 spec Section 4.5 Q3 (kill thresholds) + Section 4.5 Q6 (cut path).
-    """
-    # --- Simulate kill_3 firing: 2 kills observed (kill_3 + kill_3_confirm)
-    #     should drive P7 to LOW conviction per Section 4.6 Phase 4 Q2. ---
-    inp = _baseline_emit_inputs(
-        kills_fired=2,
-        debate_add_count=1,  # Re-underwrite flips to PASS-leaning
-        debate_consensus_summary="1/5 ADD; 4/5 PASS — kill_3 confirmed",
-        primary_recommendation="SELL",
-        triggered_by=TRIGGER_M3,
-        materiality_event_ref=str(uuid4()),
-    )
-    out = emit_recommendation(inp, conn=None)
-    assert out.conviction == CONVICTION_LOW
-    # M-3 trigger requires a materiality_event_ref (caught upstream by
-    # compute_trigger_metadata; absence raises ValueError there).
-    assert out.trigger_metadata["triggered_by"] == TRIGGER_M3
-
-    # --- Verify the unread_alerts SQL contract: severity=3, alert_type ---
-    # (We don't run the full counterfactual_veto pipeline here — that
-    # requires a peak-pain catalog + premortem lookup. We pin the
-    # interface via the orchestrator module's docstring/SQL shape.)
-    from src.counterfactual_veto.orchestrator import _maybe_emit_unread_alert
-    from src.counterfactual_veto.layer3_veto import VetoStatus
-    from src.counterfactual_veto.retrieval import RetrievalMatch
-
-    # SURVIVOR-dominant veto status -> alert MUST fire.
-    captured: list[tuple[str, tuple]] = []
-
-    def _exec(sql: str, params: tuple) -> None:
-        captured.append((sql, params))
-
-    # Build a minimal SURVIVOR-dominant VetoStatus by hand.
-    # We don't construct full RetrievalMatch instances; the alert path only
-    # reads veto.archetype_distribution + veto.veto_invoked + veto.top_3_matches
-    # so we use a fake.
-    @dataclass
-    class _FakeMatch:
-        case: Any
-        similarity: float
-
-    @dataclass
-    class _FakeCase:
-        case_id: str
-
-    veto_status = VetoStatus(
-        veto_invoked=True,
-        status="operator_override_required",
-        archetype_distribution={"SURVIVOR": 3, "NON_SURVIVOR": 0},
-        top_3_matches=[
-            _FakeMatch(case=_FakeCase(case_id="NVDA-2018"), similarity=0.85),
-            _FakeMatch(case=_FakeCase(case_id="AMD-2018"), similarity=0.78),
-            _FakeMatch(case=_FakeCase(case_id="MSFT-2000"), similarity=0.72),
-        ],
-        rationale="3/3 SURVIVOR top-3 -> cut blocked pending operator override",
-    )
-    fired = _maybe_emit_unread_alert(
-        ticker=NVDA_TICKER,
-        veto=veto_status,
-        retrieval_id=str(uuid4()),
-        drawdown_pp=28.0,  # > 24 pp B' 2x threshold
-        execute=_exec,
-    )
-    assert fired is True
-    assert len(captured) == 1
-    sql, params = captured[0]
-    assert "INSERT INTO unread_alerts" in sql
-    assert params[0] == 3  # severity
-    assert params[1] == "counterfactual_veto"  # alert_type
-    assert params[2] == NVDA_TICKER  # ticker
 
 
 # ===========================================================================
