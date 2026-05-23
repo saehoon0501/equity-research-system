@@ -72,7 +72,8 @@ html, body, #root { height: 100%; margin: 0; }
 
 body {
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 500;
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
@@ -82,7 +83,7 @@ body {
 
 h1, h2, h3, h4 {
   font-family: var(--font-body);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.005em;
 }
 
@@ -1536,8 +1537,8 @@ a:hover { text-decoration: underline; }
 .sidebar { padding: 14px 12px; border-right: 1px solid var(--rule); }
 .sidebar h1 {
   font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: none;
   color: var(--text);
@@ -1551,7 +1552,7 @@ a:hover { text-decoration: underline; }
   border-radius: 0;
   padding: 5px 0;
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0;
   color: var(--text);
   transition: border-color 100ms ease;
@@ -1573,8 +1574,8 @@ a:hover { text-decoration: underline; }
   border: none;
   border-right: 1px solid var(--rule);
   font-family: var(--font-body);
-  font-size: 10px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
@@ -1599,7 +1600,7 @@ a:hover { text-decoration: underline; }
   height: 22px;
   border-radius: 2px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   transition: color 100ms, border-color 100ms;
 }
 .sidebar-collapse-btn:hover,
@@ -1628,16 +1629,16 @@ a:hover { text-decoration: underline; }
 .tick {
   padding: 6px 2px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
 }
-.tick .tick-name { font-weight: 500; color: var(--text); }
+.tick .tick-name { font-weight: 600; color: var(--text); }
 .tick-row.active .tick { color: var(--text); font-weight: 600; }
 .count {
   background: transparent;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   padding: 0;
   border-radius: 0;
 }
@@ -1645,7 +1646,7 @@ a:hover { text-decoration: underline; }
 
 .sidebar-foot {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0;
   color: var(--muted);
   border-top: 1px solid var(--rule);
@@ -1654,7 +1655,7 @@ a:hover { text-decoration: underline; }
 }
 .sidebar-runs-hint {
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   line-height: 1.5;
   color: var(--muted);
@@ -1676,21 +1677,21 @@ a:hover { text-decoration: underline; }
 .content-h h2 {
   font-family: var(--font-body);
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 600;
   margin: 0;
   letter-spacing: -0.01em;
   line-height: 1;
 }
 .content-h .muted {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   color: var(--muted);
   text-transform: none;
 }
 .sort {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0;
   text-transform: none;
   color: var(--muted);
@@ -1701,7 +1702,7 @@ a:hover { text-decoration: underline; }
   border-bottom: 1px solid var(--rule);
   border-radius: 0;
   font-family: var(--font-body);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
 }
 
@@ -1719,8 +1720,8 @@ a:hover { text-decoration: underline; }
   border-bottom: 2px solid transparent;
   border-radius: 0;
   font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
   color: var(--muted);
@@ -1749,13 +1750,13 @@ a:hover { text-decoration: underline; }
 .memo-h:hover { background: transparent; }
 .memo-kind {
   font-family: var(--font-body);
-  font-weight: 500;
-  font-size: 13px;
+  font-weight: 600;
+  font-size: 14px;
   letter-spacing: 0;
 }
 .memo-file {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0;
   color: var(--muted);
 }
@@ -1767,7 +1768,7 @@ a:hover { text-decoration: underline; }
   border-width: 1px;
   background: transparent !important;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
   padding: 1px 6px;
@@ -1782,7 +1783,7 @@ a:hover { text-decoration: underline; }
 }
 .code-badge-sm {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   border-radius: 2px;
   padding: 1px 5px;
@@ -1790,7 +1791,7 @@ a:hover { text-decoration: underline; }
 .src-badge {
   border-radius: 2px;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.06em;
   padding: 1px 5px;
   background: transparent !important;
@@ -1805,7 +1806,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--rule);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0;
   border-radius: 2px;
   padding: 1px 5px;
@@ -1814,7 +1815,7 @@ a:hover { text-decoration: underline; }
   background: var(--pill);
   border-radius: 2px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   padding: 0 5px;
 }
 
@@ -1824,7 +1825,7 @@ a:hover { text-decoration: underline; }
   border: none;
   padding: 4px 0;
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.55;
   color: var(--text);
 }
@@ -1872,8 +1873,8 @@ a:hover { text-decoration: underline; }
 /* — Section toggles — */
 .section-h {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 500;
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: none;
   color: var(--muted);
@@ -1882,7 +1883,7 @@ a:hover { text-decoration: underline; }
 .section { border-bottom: 1px solid var(--rule); }
 .kv-key {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0;
   color: var(--muted);
 }
@@ -1898,16 +1899,16 @@ a:hover { text-decoration: underline; }
 .rdetail-h h2 {
   font-family: var(--font-body);
   font-size: 18px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.2;
 }
 .rdetail-meta {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0;
 }
-.rdetail-id { font-family: var(--font-mono); font-size: 10px; color: var(--muted); }
+.rdetail-id { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
 .rdetail-id code { background: transparent; border: none; padding: 0; color: var(--muted); }
 
 .rsec {
@@ -1920,8 +1921,8 @@ a:hover { text-decoration: underline; }
 .rsec:first-of-type { border-top: 1px solid var(--rule-strong); margin-top: 10px; }
 .rsec-h {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 500;
+  font-size: 11.5px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: none;
   color: var(--muted);
@@ -1936,7 +1937,7 @@ a:hover { text-decoration: underline; }
 .rlist { background: var(--panel); border-right: 1px solid var(--rule); padding: 12px 12px; }
 .rlist-count {
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.04em;
   text-transform: none;
   color: var(--muted);
@@ -1968,10 +1969,10 @@ a:hover { text-decoration: underline; }
 .rrow-ticker {
   font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 11.5px;
+  font-size: 12.5px;
   letter-spacing: 0.02em;
 }
-.rrow-mid, .rrow-bot { font-family: var(--font-mono); font-size: 10px; }
+.rrow-mid, .rrow-bot { font-family: var(--font-mono); font-size: 11px; }
 
 /* — Stage timeline — */
 .rstage {
@@ -1980,10 +1981,10 @@ a:hover { text-decoration: underline; }
   border-radius: 2px;
   padding: 6px 8px;
 }
-.rstage-agent { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0; }
+.rstage-agent { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0; }
 .rpill {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   border-radius: 2px;
   padding: 2px 5px;
   background: transparent;
@@ -2014,14 +2015,14 @@ a:hover { text-decoration: underline; }
   background: var(--bg-soft);
   border-bottom: 1px solid var(--rule);
 }
-.renv-agent { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; }
+.renv-agent { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; }
 
 /* — JsonView — */
-.rv-key { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0; color: var(--muted); }
-.rv-val { font-family: var(--font-body); font-size: 12px; }
+.rv-key { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0; color: var(--muted); }
+.rv-val { font-family: var(--font-body); font-size: 13px; }
 .rv-num { color: var(--text); font-family: var(--font-mono); font-feature-settings: "tnum", "zero"; }
 .rv-str { color: var(--text); }
-.rv-bool { color: var(--text); font-family: var(--font-mono); font-weight: 500; }
+.rv-bool { color: var(--text); font-family: var(--font-mono); font-weight: 600; }
 .rv-null { color: var(--muted-2); font-style: normal; }
 .rv-row { border-top: 1px solid var(--rule); }
 .rv-more {
@@ -2029,7 +2030,7 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--rule);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   border-radius: 2px;
 }
@@ -2045,11 +2046,11 @@ a:hover { text-decoration: underline; }
 .gview-h h2 {
   font-family: var(--font-body);
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: -0.01em;
   margin-bottom: 6px;
 }
-.gview-meta { font-family: var(--font-mono); font-size: 10.5px; }
+.gview-meta { font-family: var(--font-mono); font-size: 11.5px; }
 .gview-meta strong { font-family: var(--font-mono); font-weight: 600; color: var(--text); }
 .gview-meta .gs-warn strong { color: var(--text); font-weight: 700; }
 
@@ -2059,14 +2060,14 @@ a:hover { text-decoration: underline; }
   border-left: 2px solid var(--text);
   border-radius: 2px;
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 13px;
   font-style: normal;
   line-height: 1.5;
   color: var(--text);
 }
 .gs-insights h3 {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
   color: var(--muted);
@@ -2076,7 +2077,7 @@ a:hover { text-decoration: underline; }
 .gs-section-h h3 {
   font-family: var(--font-body);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
@@ -2085,13 +2086,13 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
   font-family: var(--font-body);
-  font-size: 12px;
+  font-size: 13px;
 }
 .gs-table thead th {
   background: var(--bg-soft);
   font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 500;
+  font-size: 10.5px;
+  font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: none;
   color: var(--muted);
@@ -2104,8 +2105,8 @@ a:hover { text-decoration: underline; }
   background: transparent;
   border: 1px solid var(--rule);
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   padding: 1px 5px;
   border-radius: 2px;
   color: var(--text);
@@ -2114,7 +2115,7 @@ a:hover { text-decoration: underline; }
 .gs-rate {
   border-radius: 2px;
   font-family: var(--font-mono);
-  font-weight: 500;
+  font-weight: 600;
   background: transparent !important;
 }
 .gs-rate-good { color: var(--text); }
@@ -2134,13 +2135,13 @@ a:hover { text-decoration: underline; }
   background: transparent;
   border: 1px solid var(--rule);
   font-family: var(--font-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0;
   color: var(--muted);
   border-radius: 2px;
 }
 
-.gs-foot { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0; color: var(--muted); }
+.gs-foot { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0; color: var(--muted); }
 .gs-foot code { background: transparent; padding: 0; }
 
 /* — Live panel — */
@@ -2152,11 +2153,11 @@ a:hover { text-decoration: underline; }
   border-radius: 0;
   padding: 10px 12px;
 }
-.live-tile-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.06em; color: var(--muted); }
-.live-price-val { font-family: var(--font-mono); font-size: 22px; font-weight: 500; letter-spacing: -0.01em; color: var(--text); }
+.live-tile-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.06em; color: var(--muted); }
+.live-price-val { font-family: var(--font-mono); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
 .live-change { font-family: var(--font-mono); font-feature-settings: "tnum"; color: var(--text); }
 .live-change.up, .live-change.down { color: var(--text); }
-.live-meta { font-family: var(--font-mono); font-size: 10px; }
+.live-meta { font-family: var(--font-mono); font-size: 11px; }
 
 /* — Modal — */
 .modal {

@@ -137,6 +137,7 @@ SCHEMA: dict[str, Any] = {
         },
         "conviction": {"type": "string", "enum": list(CONVICTION_VALUES)},
         "size_band_if_long": {},
+        "size_band_pre_modifier_midpoint_pp": {},
         "sleeve_cap_check": {},
         "counterfactual_top3_summary": {},
         "adversarial_stress_test": {
