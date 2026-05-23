@@ -344,6 +344,8 @@ Mode multiplier (parameter_key in `sizing.mode_multiplier.*`; vol-regime boundar
 
 Apply: `final_size_band = base_band × mode_multiplier`. Round midpoint to 2 decimals.
 
+**Emit the pre-modifier midpoint as a top-level envelope field** `size_band_pre_modifier_midpoint_pp` (float, percent of book). This is the `final_size_band.midpoint` value computed above, BEFORE the catalyst+flow modifier is added in. Required by HG-34 (`src/evaluator_gates/catalyst_modifier_composition_check.py`) to re-derive the audit string deterministically; absence causes HG-34 to fail with `missing_inputs=["pm_env.size_band_pre_modifier_midpoint_pp"]`. Emit even when `summary_code != BUY` (so the "would-be size" audit trace remains verifiable).
+
 Catalyst modifier (input 5) is an additive ± adjustment to the midpoint, bounded to **`sizing.catalyst_modifier_bound.full_pct` of the final midpoint** (launch default: ±25%), with the sign of the dominant catalyst. Record as `catalyst_modifier_applied: "+/-/0 with reason"`.
 
 **Flow modifier (v0.1 — CTA-proximity sub-signal):** flow-overlay's `flow_signal_bin` contributes additively alongside the catalyst direction. The composition is **deterministic** — you MUST invoke `src.p7_recommendation_emitter.catalyst_flow_modifier.compose_catalyst_flow_modifier()` rather than reasoning through the arithmetic. The function pins:
@@ -394,7 +396,7 @@ The combined entry in `catalyst_modifier_applied` is the helper's `audit_string`
 
 If flow-overlay envelope is absent (`memos/envelopes/flow-overlay__<run_id>.json` missing or `.degraded` sentinel present), pass `flow_signal_bin="offline"` to the helper — it treats offline as zero contribution with explicit audit-string trace.
 
-**HG note:** a deterministic re-derivation gate (`src/evaluator_gates/catalyst_modifier_composition_check.py`) that re-computes the expected `audit_string` from upstream envelopes and rejects pm-supervisor emissions that drift will ship in v0.2 alongside the gamma-regime sub-signal. v0.1 ships the helper module + the pm-supervisor obligation to call it; v0.2 wires the gate into the evaluator dispatch.
+**HG note:** ENFORCED via `src/evaluator_gates/catalyst_modifier_composition_check.py` (HG-34, shipped in v0.2). The gate reads upstream catalyst-scout + flow-overlay envelopes + parameters_active snapshot, re-derives the expected `audit_string` via the same `compose_catalyst_flow_modifier()` helper you invoke here, and rejects pm-supervisor emissions where the audit string drifts bit-for-bit. Bit-identical comparison — emit the helper's `audit_string` field verbatim with NO paraphrasing. **Operator debugging hint:** when HG-34 surfaces `drift_detected=True`, inspect `size_band_pre_modifier_midpoint_pp` FIRST — a wrong (stale or post-modifier) base value re-derives a wrong expected audit string and presents as audit drift rather than as a field error.
 
 **Modifier bound by signal data quality (Bug 14 fix — 2026-05-16):**
 
@@ -506,27 +508,7 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 - `BEARISH` if `fund_axis_score ≤ -2` OR quality_gate fails
 - `NEUTRAL` otherwise
 
-<!--
-  v0.2 ATOMIC-FLIP CHECKLIST (when activating flow as a SCORING signal — per
-  /review-me iter 2 Finding D). The flip is NOT a single-edit target; touch
-  ALL of these in one PR with the recalibrated cutoff:
-
-    1. Below: change "5 SCORING signals + 1 INFORMATIONAL" → "6 SCORING signals"
-    2. Below: in the table, flip the flow_signal_bin row's "Contributes to score?"
-       from "NO — v0.1 deliberately decoupled" → "YES"
-    3. Below: delete the v0.1 carve-out paragraph entirely (the one starting
-       "v0.1 carve-out (load-bearing — do NOT silently change)")
-    4. Below: in the "Compute tech_axis_score" sentence, change
-       "over the 5 scoring signals only" → "over all 6 scoring signals"
-    5. Below: in the verdict thresholds, change `≥+3` → `≥+4` (or whatever
-       /review-me delivers as the recalibrated 6-signal cutoff)
-    6. Below: delete the "If flow-overlay envelope is absent..." paragraph's
-       "since flow is informational in v0.1" clause; flow now scores 0 when
-       offline (which it already does via _flow_sign in
-       src/p7_recommendation_emitter/catalyst_flow_modifier.py)
--->
-
-**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + catalyst-scout (price + flow + momentum). 5 SCORING signals (unchanged from pre-flow-overlay) + 1 INFORMATIONAL signal (flow_signal_bin, v0.1 carve-out):
+**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + flow-overlay + catalyst-scout (price + flow + momentum). 6 SCORING signals:
 
 | Signal | Source | BULLISH if | BEARISH if | Contributes to score? |
 |---|---|---|---|---|
@@ -535,16 +517,14 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 | Reverse-DCF cf-07 status | quant envelope `frameworks_cited.mauboussin_reverse_dcf` | implied ≤ 1.25x cohort mean | implied ≥ 2.0x cohort mean (catastrophic FAIL) | YES |
 | Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` | YES |
 | Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` | YES |
-| **Flow signal_bin (v0.1 — INFORMATIONAL ONLY)** | flow-overlay envelope | `positive` (informational) | `negative` (informational) | **NO — v0.1 deliberately decoupled** |
+| Flow signal_bin (v0.2 — ACTIVATED) | flow-overlay envelope | `positive` | `negative` | YES |
 
-**v0.1 carve-out (load-bearing — do NOT silently change):** flow_signal_bin appears in the matrix as an informational row and in the §8 `tech_axis_signals.flow_signal_bin` field, but contributes **zero** to `tech_axis_score`. This is the v0.1 conservative default — preserving the prior 5-signal fire rate exactly until `/review-me` recalibrates the cutoff threshold for the 6-signal world. Activating flow's score contribution is a v0.2 deliverable that ships ALONGSIDE the recalibrated thresholds, not before. Empirical rationale: adding a 6th independent ±1 vote with p(+1)≈p(-1)≈0.25 monotonically increases P(score≥+3) without changing the cutoff (the new vote can only rescue near-misses to BULLISH, not push existing BULLISHs below threshold) — pre-recalibration activation would meaningfully increase the BUY-HIGH/BUY-MED matrix-cell hit rate.
-
-Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over the 5 scoring signals only**. Verdict:
-- `BULLISH` if `tech_axis_score ≥ +3`
+Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over all 6 scoring signals**. Verdict:
+- `BULLISH` if `tech_axis_score ≥ sizing.tech_axis_bullish_score_min` (PARAMETERS_USED-resolved; v0.2 launch default 4; recalibrated from v0.1's +3 to preserve prior fire rate in the 6-signal world)
 - `BEARISH` if `tech_axis_score ≤ -2` OR cf-07 catastrophic FAIL fires
 - `NEUTRAL` otherwise
 
-If flow-overlay envelope is absent (offline / `.degraded` sentinel), `tech_axis_signals.flow_signal_bin` is reported as `"offline"`; this has no effect on `tech_axis_score` since flow is informational in v0.1.
+If flow-overlay envelope is absent (offline / `.degraded` sentinel), `tech_axis_signals.flow_signal_bin` is reported as `"offline"` and contributes 0 to `tech_axis_score` (handled by `src.p7_recommendation_emitter.catalyst_flow_modifier._flow_sign`).
 
 **Catastrophic-FAIL override:** if quant emits cf-07 catastrophic FAIL (reverse-DCF implied ≥ 2.0x cohort mean), TECH axis is forced to `BEARISH` regardless of other signals — this is a kill, not a graduating signal.
 
@@ -816,6 +796,7 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
     "max_book_pct": 0.0,
     "midpoint": 0.0
   },
+  "size_band_pre_modifier_midpoint_pp": 0.0,
 
   "sleeve_cap_check": {
     "tier_cap": 0.0,

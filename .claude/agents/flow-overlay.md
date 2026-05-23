@@ -1,7 +1,7 @@
 ---
 name: flow-overlay
 description: "CTA-proximity composite classifier (v0.1 — TSMOM + MA-distance + Donchian, ticker + SPY). Runs in Stage 1 parallel with quantitative-analyst + strategic-analyst + tactical-overlay (no upstream dependency; needs only ticker + market_data). Emits a structured envelope carrying flow_signal_bin + flow_cell (size + disposition). pm-supervisor surfaces this as a soft modulator alongside its own emission AND alongside tactical-overlay; none overrides. v0.2 extends with dealer-gamma (GEX) sub-signal; v0.3 adds crowding (SI/DTC/13F)."
-tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__fred__get_series, mcp__fred__get_series_info"
+tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__fred__get_series, mcp__fred__get_series_info, mcp__polygon__get_options_chain"
 model: opus
 ---
 # FlowOverlay Agent
@@ -79,6 +79,8 @@ If any required input is missing, halt and report.
    prior_close_date = last_trading_day_of_prior_month(anchor)
    ```
 
+**Parallel-dispatch hint:** Steps 2 and 3 walk five independent MCP fetches (ticker prices, SPY prices, options chain, real-time spot, FRED rate). None consumes another's output. Issue all five in a single tool-call batch (one assistant message with multiple tool calls), then proceed to Step 4 once all return. Sequential dispatch costs roughly an extra second of wall-clock per run with no upside.
+
 2. Fetch 12mo price history for ticker and SPY via `mcp__market_data__get_prices`:
    ```
    mcp__market_data__get_prices(ticker, start=<400 days back from prior_close>,
@@ -89,17 +91,40 @@ If any required input is missing, halt and report.
    - `insufficient_price_history` if ticker series is short
    - `spy_price_history_unavailable` if SPY series is short (rare; suggests data-feed issue)
 
-3. Call the deterministic classifier:
+3. **v0.2 — Fetch options chain for gamma-regime sub-signal:** call `mcp__polygon__get_options_chain(ticker)` to retrieve the per-strike contracts. Polygon returns greeks pre-computed (per `src/mcp/polygon/server.py:163-196`), so no Black-Scholes work is needed for per-strike GEX at current spot. Handle the failure modes:
+   - Return shape `{"ticker_not_found": True, ...}` → emit envelope with `flow_signal_bin: unavailable, unavailable_reason: options_chain_unavailable` and skip gamma-regime classification.
+   - Successful return: extract the `contracts` list (each contract has `strike, expiry, type, open_interest, volume, iv, delta, gamma, theta, vega`; `gamma` and `open_interest` may be `None` for illiquid contracts — handled gracefully by the aggregator).
+   - Also fetch current spot price for the underlying via `mcp__market_data__get_real_time_quote(ticker)` (used by the GEX formula and zero-gamma re-pricing).
+   - Optional: fetch risk-free rate via `mcp__fred__get_series(series_id=PARAMETERS_USED['flow.gex_bs_risk_free_rate_series'])` (default DGS3MO). Used for BS gamma re-pricing in zero-gamma level construction. If unavailable, pass `rf=0.0` (the closed-form gamma is only weakly sensitive to rf at typical sub-90DTE durations).
+
+4. Classify gamma regime:
+   ```python
+   from src.p9_flow_overlay.gex_aggregator import classify_gamma_regime
+   gamma_result = classify_gamma_regime(
+       contracts=contracts_list,
+       spot=current_spot,
+       as_of=prior_close_date,
+       positive_threshold_normalized=PARAMETERS_USED['flow.gex_positive_bin_threshold_normalized'],
+       negative_threshold_normalized=PARAMETERS_USED['flow.gex_negative_bin_threshold_normalized'],
+       dealer_sign_convention=PARAMETERS_USED['flow.gex_dealer_sign_convention'],
+       regime_flip_signal_method=PARAMETERS_USED['flow.gex_regime_flip_signal_method'],
+       rf=current_rf_decimal,
+   )
+   # gamma_result is {bin, net_gex_at_spot, normalized_gex, zero_gamma_distance_pct, dte_bucket_decomp, dealer_sign_convention, regime_flip_signal_method}
+   ```
+
+5. Call the deterministic flow classifier with the gamma_regime input:
    ```python
    from src.p9_flow_overlay.bin_classifier import classify_flow
    result = classify_flow(
        ticker_prices_adj_close=ticker_adj_close_list,
        spy_prices_adj_close=spy_adj_close_list,
+       gamma_regime=gamma_result,  # v0.2 — None when options chain unavailable
    )
    # result is {'bin', 'components', 'unavailable_reason'}
    ```
 
-   The classifier aggregates 4 votes per instrument (TSMOM 12mo sign + MA50 distance + MA200 distance + Donchian state) across ticker + SPY (max composite = 8), normalizes to [-1, +1], and bins via PARAMETERS_USED thresholds.
+   With `gamma_regime` provided, the classifier aggregates 4 votes per instrument (TSMOM + MA50 + MA200 + Donchian) across ticker + SPY + 1 gamma_regime vote (max composite = 9), normalizes to [-1, +1], and bins via PARAMETERS_USED thresholds. When `gamma_regime=None` (options chain unavailable), behavior is bit-identical to v0.1 (max composite = 8; pure CTA-proximity).
 
 ---
 
@@ -138,7 +163,17 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
   "components": {
     "ticker_score": 3,
     "market_score": 2,
-    "composite_score_normalized": 0.625
+    "gamma_score": 1,
+    "composite_score_normalized": 0.667,
+    "gamma_regime": {
+      "bin": "positive",
+      "net_gex_at_spot": 5.4e9,
+      "normalized_gex": 0.082,
+      "zero_gamma_distance_pct": -0.034,
+      "dte_bucket_decomp": {"0DTE": 1.2e9, "1-7d": 3.0e9, "8-30d": 1.2e9},
+      "dealer_sign_convention": "spotgamma",
+      "regime_flip_signal_method": "zero_gamma_inflection"
+    }
   },
   "flow_cell": {
     "conviction": "HIGH",
@@ -149,7 +184,10 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
   "frameworks_cited": [
     "moskowitz_ooi_pedersen_tsmom_2012",
     "antonacci_dual_momentum_2014",
-    "donchian_55_20_turtle"
+    "donchian_55_20_turtle",
+    "amaya_garcia_pearson_vasquez_2025_cboe_omm_gamma",
+    "squeezemetrics_dix_gex_2017",
+    "spotgamma_gex_methodology"
   ],
   "reasoning_path_taken": [
     "load_ticker_prices",
@@ -160,6 +198,11 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
     "compute_market_tsmom_12mo",
     "compute_market_ma_distance",
     "compute_market_donchian_state",
+    "load_options_chain",
+    "compute_dealer_gex_per_strike",
+    "aggregate_gex_by_dte_bucket",
+    "compute_zero_gamma_level",
+    "classify_gamma_regime",
     "aggregate_composite_score",
     "classify_flow_bin",
     "lookup_flow_cell_disposition",
@@ -168,6 +211,8 @@ Persist to `memos/envelopes/flow-overlay__<run_id>.json`:
   ]
 }
 ```
+
+When options chain is unavailable (`mcp__polygon__get_options_chain` returns `ticker_not_found: True`), omit the `components.gamma_regime` block entirely and omit the v0.2 gamma-related entries from `reasoning_path_taken`. The classifier falls back to v0.1 CTA-proximity-only behavior (max composite = 8; bin-identical to v0.1).
 
 If `conviction` is null (pm-supervisor not yet emitted at dispatch time), emit `flow_cell: null`. pm-supervisor's Stage 3 logic completes the cell using `flow_cell_size_pct + flow_disposition` calls.
 
@@ -179,6 +224,7 @@ If `conviction` is null (pm-supervisor not yet emitted at dispatch time), emit `
 
 - `mcp__market_data__get_prices` returns error for ticker → write `memos/envelopes/flow-overlay__<run_id>.degraded` sentinel; PostToolUse hook treats as valid skip (matches tactical-overlay degradation pattern).
 - `mcp__market_data__get_prices` returns error for SPY → emit envelope with `flow_signal_bin=unavailable, unavailable_reason=spy_price_history_unavailable`. NOT a halt-and-degrade — this is a valid bin classification.
+- **v0.2: `mcp__polygon__get_options_chain` returns `{"ticker_not_found": True}` or other error** → emit envelope with v0.1 components only (no `gamma_regime` block); pass `gamma_regime=None` to `classify_flow()`. The flow_signal_bin classification continues using the CTA-proximity sub-signal alone. Cite `unavailable_reason=options_chain_unavailable` only if the upstream `flow_signal_bin` itself is `unavailable` (which won't happen from missing options data — it can still classify positive/neutral/negative from prices). The gamma-regime sub-signal is OPTIONAL; its absence does NOT block the envelope.
 - Missing band params → halt and report (orchestrator bug; required parameters_active rows from migration 039).
 
 ---

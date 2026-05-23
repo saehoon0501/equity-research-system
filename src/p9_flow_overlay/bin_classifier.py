@@ -113,19 +113,54 @@ def _vote_from_donchian(price_series: list[float]) -> int:
 
 # 4 votes per instrument (TSMOM + MA50 + MA200 + Donchian); ticker + SPY → max 8.
 VOTES_PER_INSTRUMENT = 4
-MAX_COMPOSITE_SCORE = VOTES_PER_INSTRUMENT * 2
+MAX_COMPOSITE_SCORE_V01 = VOTES_PER_INSTRUMENT * 2  # ticker + SPY = 8
+
+# v0.2 extension: gamma_regime contributes 1 additional ±1 vote when present.
+# Composite max becomes 9 when gamma_regime is provided to classify_flow().
+GAMMA_REGIME_VOTE_WEIGHT = 1
+MAX_COMPOSITE_SCORE_V02 = MAX_COMPOSITE_SCORE_V01 + GAMMA_REGIME_VOTE_WEIGHT  # 9
+
+# Back-compat alias: v0.1 callers reading MAX_COMPOSITE_SCORE still get the
+# v0.1 value (8). v0.2 internal logic uses the version-specific constant per
+# the gamma_regime input presence.
+MAX_COMPOSITE_SCORE = MAX_COMPOSITE_SCORE_V01
+
+
+def _gamma_score(gamma_regime: dict | None) -> int:
+    """Map v0.2 gamma_regime.bin to a ±1 vote contribution.
+
+    Returns +1/0/-1/0 for positive/neutral/negative/anything-else.
+    None gamma_regime returns 0 (v0.1 back-compat: tickers without options chain).
+    """
+    if gamma_regime is None:
+        return 0
+    bin_ = gamma_regime.get("bin")
+    if bin_ == "positive":
+        return 1
+    if bin_ == "negative":
+        return -1
+    return 0  # neutral or any other value
 
 
 def classify_flow(
     ticker_prices_adj_close: list[float],
     spy_prices_adj_close: list[float],
+    gamma_regime: dict | None = None,
 ) -> dict:
     """CTA-proximity composite classification on already-fetched inputs.
+
+    v0.2 extension: optional `gamma_regime` kwarg from
+    `src.p9_flow_overlay.gex_aggregator.classify_gamma_regime()`. When
+    provided, contributes one additional ±1 vote to the composite score
+    (max_composite shifts from 8 to 9). When None, behavior is bit-identical
+    to v0.1 (back-compat for tickers without options chain availability).
 
     Args:
         ticker_prices_adj_close: ordered list of ticker adjusted close
             (>= LOOKBACK_TRADING_DAYS). Index [-1] = most recent.
         spy_prices_adj_close: same shape for SPY (the market-level CTA proxy).
+        gamma_regime: optional dict from gex_aggregator.classify_gamma_regime()
+            with keys including 'bin' ∈ {positive, neutral, negative}.
 
     Returns:
         {
@@ -134,6 +169,10 @@ def classify_flow(
                 'ticker_score': int (range [-4, +4]),
                 'market_score': int (range [-4, +4]),
                 'composite_score_normalized': float (range [-1.0, +1.0]),
+                # v0.2 (only when gamma_regime is not None; omitted entirely
+                # otherwise to preserve bit-identical v0.1 components dict shape):
+                'gamma_score': int (range [-1, +1]),
+                'gamma_regime': dict (verbatim from input),
             },
             'unavailable_reason': str | None,
         }
@@ -174,7 +213,27 @@ def classify_flow(
         + _vote_from_donchian(spy_prices_adj_close)
     )
 
-    composite = (ticker_score + market_score) / MAX_COMPOSITE_SCORE
+    # Bit-identical v0.1 behavior when gamma_regime is None: omit gamma_score
+    # and gamma_regime from the components dict entirely so the emitted shape
+    # matches v0.1 exactly. When gamma_regime is provided, use the v0.2 9-vote
+    # composite and emit the gamma block.
+    if gamma_regime is not None:
+        gamma_vote = _gamma_score(gamma_regime)
+        composite = (ticker_score + market_score + gamma_vote) / MAX_COMPOSITE_SCORE_V02
+        components = {
+            "ticker_score": ticker_score,
+            "market_score": market_score,
+            "composite_score_normalized": composite,
+            "gamma_score": gamma_vote,
+            "gamma_regime": gamma_regime,
+        }
+    else:
+        composite = (ticker_score + market_score) / MAX_COMPOSITE_SCORE_V01
+        components = {
+            "ticker_score": ticker_score,
+            "market_score": market_score,
+            "composite_score_normalized": composite,
+        }
 
     if composite >= POSITIVE_BIN_THRESHOLD:
         bin_ = "positive"
@@ -185,10 +244,6 @@ def classify_flow(
 
     return {
         "bin": bin_,
-        "components": {
-            "ticker_score": ticker_score,
-            "market_score": market_score,
-            "composite_score_normalized": composite,
-        },
+        "components": components,
         "unavailable_reason": None,
     }

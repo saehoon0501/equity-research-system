@@ -79,6 +79,10 @@ from src.evaluator_gates.intangibles_adjustment_shape import (
     IntangiblesAdjustmentResult,
     validate_intangibles_adjustment,
 )
+from src.evaluator_gates.catalyst_modifier_composition_check import (
+    CatalystModifierCompositionResult,
+    validate_catalyst_modifier_composition,
+)
 
 
 # Stable rule IDs used in audit rows + delta-prompts. The convention
@@ -95,6 +99,7 @@ GATE_IDS: dict[str, str] = {
     "catalyst_memo_shape":   "HG-31",
     "cdd_memo_shape":        "HG-32",
     "tactical_envelope_shape": "HG-33",
+    "catalyst_modifier_composition_check": "HG-34",
     "intangibles_adjustment_shape": "HG-38",
 }
 
@@ -356,6 +361,26 @@ def _fingerprint_intangibles(r: IntangiblesAdjustmentResult) -> str:
     return "|".join(sorted(parts)) if parts else "ok"
 
 
+def _fingerprint_catalyst_modifier_composition(r: CatalystModifierCompositionResult) -> str:
+    """Deterministic stuck-loop signature for HG-34 (catalyst+flow modifier composition).
+
+    Distinguishes:
+    - missing inputs (envelope or params absent) — caller fixes by providing the input
+    - invalid inputs (envelope present but malformed)
+    - drift_detected — pm-supervisor emitted a different audit_string than the
+      deterministic helper produces; pm-supervisor needs to invoke the helper
+      verbatim per its §6 contract.
+    """
+    parts: list[str] = []
+    for k in r.missing_inputs:
+        parts.append(f"missing:{k}")
+    for k in r.invalid_inputs:
+        parts.append(f"invalid:{k}")
+    if r.drift_detected:
+        parts.append("audit_string_drift")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
 def _fingerprint_counterfactual(r: CounterfactualCatalogResult) -> str:
     parts: list[str] = []
     if r.missing_buckets:
@@ -416,8 +441,11 @@ def _validate_pm_envelope(
     db_dsn: str | None,
     catalyst_indicators: list[dict] | None,
     strict_envelope_shape: bool,
+    catalyst_env: dict | None = None,
+    flow_env: dict | None = None,
+    params_snapshot: dict | None = None,
 ) -> tuple[list[GateOutcome], dict[str, str]]:
-    """Gate set for pm-supervisor envelopes (the original 6 gates)."""
+    """Gate set for pm-supervisor envelopes (the original 6 + HG-34 v0.2)."""
     outcomes: list[GateOutcome] = []
     summary: dict[str, str] = {}
 
@@ -464,6 +492,35 @@ def _validate_pm_envelope(
         summary["sentiment_degradation"] = "pass" if matches else "fail"
     else:
         summary["sentiment_degradation"] = "skipped"
+
+    # HG-34 (v0.2): catalyst+flow modifier composition determinism check.
+    # Requires pm-supervisor envelope (env) + upstream catalyst-scout + flow-overlay
+    # envelopes + parameters_active snapshot. Skipped if params_snapshot is None
+    # (the orchestrator may run validate_all in standalone mode without snapshot).
+    if params_snapshot is not None:
+        cmc = validate_catalyst_modifier_composition(
+            catalyst_env=catalyst_env,
+            flow_env=flow_env,
+            pm_env=env,
+            parameters_active_snapshot=params_snapshot,
+        )
+        outcomes.append(_outcome(
+            "catalyst_modifier_composition_check",
+            cmc.valid,
+            {
+                "audit_string_expected": cmc.audit_string_expected,
+                "audit_string_observed": cmc.audit_string_observed,
+                "missing_inputs": cmc.missing_inputs,
+                "invalid_inputs": cmc.invalid_inputs,
+                "drift_detected": cmc.drift_detected,
+                "drift_summary": cmc.drift_summary,
+                "notes": cmc.notes,
+            },
+            _fingerprint_catalyst_modifier_composition(cmc),
+        ))
+        summary["catalyst_modifier_composition_check"] = "pass" if cmc.valid else "fail"
+    else:
+        summary["catalyst_modifier_composition_check"] = "skipped"
 
     return outcomes, summary
 
@@ -597,6 +654,9 @@ def validate_all(
     db_dsn: str | None = None,
     catalyst_indicators: list[dict] | None = None,
     strict_envelope_shape: bool = False,
+    catalyst_env: dict | None = None,
+    flow_env: dict | None = None,
+    params_snapshot: dict | None = None,
 ) -> AggregateValidationResult:
     """Run the gate set appropriate to ``artifact_type``.
 
@@ -611,6 +671,12 @@ def validate_all(
         db_dsn: Postgres DSN passthrough.
         catalyst_indicators: HG-24 cross-check (pm_envelope only).
         strict_envelope_shape: HG-23 strict mode (pm_envelope only).
+        catalyst_env: HG-34 input — catalyst-scout envelope dict (pm_envelope only;
+            v0.2; None when catalyst-scout offline).
+        flow_env: HG-34 input — flow-overlay envelope dict (pm_envelope only;
+            v0.2; None when flow-overlay offline).
+        params_snapshot: HG-34 input — flat dict of parameters_active rows
+            (pm_envelope only; v0.2). When None, HG-34 is skipped.
 
     Returns:
         AggregateValidationResult with one GateOutcome per gate. The
@@ -645,6 +711,9 @@ def validate_all(
             db_dsn=db_dsn,
             catalyst_indicators=catalyst_indicators,
             strict_envelope_shape=strict_envelope_shape,
+            catalyst_env=catalyst_env,
+            flow_env=flow_env,
+            params_snapshot=params_snapshot,
         )
     elif artifact_type == "quant_memo":
         outcomes, summary = _validate_quant_memo(
@@ -689,8 +758,8 @@ def _cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="validate_all",
         description=(
-            "Run every Tier-1 gate (HG-23/24/25/26/27/28) against a "
-            "pm-supervisor envelope. Exit 0 valid, 1 invalid, 2 unparseable."
+            "Run every Tier-1 gate (HG-23/24/25/26/27/28/29/30/31/32/33/34/38) "
+            "against a pm-supervisor envelope. Exit 0 valid, 1 invalid, 2 unparseable."
         ),
     )
     parser.add_argument(

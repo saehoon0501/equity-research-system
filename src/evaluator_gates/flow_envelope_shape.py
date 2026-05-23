@@ -37,7 +37,14 @@ FLOW_DISPOSITION_VALUES: frozenset[str] = frozenset(
 CONVICTION_VALUES: frozenset[str] = frozenset({"HIGH", "MEDIUM", "LOW"})
 
 UNAVAILABLE_REASON_VALUES: frozenset[str] = frozenset(
-    {"insufficient_price_history", "spy_price_history_unavailable"}
+    {
+        "insufficient_price_history",
+        "spy_price_history_unavailable",
+        # v0.2 additions (gamma_regime sub-signal)
+        "options_chain_unavailable",
+        "gex_data_stale",
+        "bs_iv_unavailable",
+    }
 )
 
 REQUIRED_TOP_LEVEL: tuple[str, ...] = (

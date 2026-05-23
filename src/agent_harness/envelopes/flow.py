@@ -39,12 +39,17 @@ CONVICTION_VALUES: tuple[str, ...] = ("HIGH", "MEDIUM", "LOW")
 UNAVAILABLE_REASON_VALUES: tuple[str, ...] = (
     "insufficient_price_history",
     "spy_price_history_unavailable",
+    # v0.2 additions (gamma_regime sub-signal)
+    "options_chain_unavailable",
+    "gex_data_stale",
+    "bs_iv_unavailable",
 )
 
-# Reasoning-path enum — CTA-proximity composite decision path.
+# Reasoning-path enum — CTA-proximity composite + v0.2 gamma-regime decision path.
 # Each step is a name the agent MUST cite in reasoning_path_taken iff it
 # actually performed that step. Invented step names → HG-FLOW hard fail.
 REASONING_STEPS: tuple[str, ...] = (
+    # v0.1 CTA-proximity steps
     "load_ticker_prices",
     "load_spy_prices",
     "compute_ticker_tsmom_12mo",
@@ -58,6 +63,12 @@ REASONING_STEPS: tuple[str, ...] = (
     "lookup_flow_cell_disposition",
     "compute_flow_cell_size_pct",
     "emit_envelope",
+    # v0.2 gamma-regime steps (cited iff options chain was fetched + classified)
+    "load_options_chain",
+    "compute_dealer_gex_per_strike",
+    "aggregate_gex_by_dte_bucket",
+    "compute_zero_gamma_level",
+    "classify_gamma_regime",
 )
 
 
@@ -88,9 +99,26 @@ SCHEMA: dict[str, Any] = {
             "enum": list(UNAVAILABLE_REASON_VALUES) + [None],
         },
         "components": {
-            # Optional — present when bin != 'unavailable'. v0.1 carries
-            # ticker_score / market_score / composite_score_normalized; v0.2
-            # extends with gamma_regime sub-block; v0.3 extends with crowding.
+            # Optional — present when bin != 'unavailable'. v0.2 schema:
+            #
+            #   v0.1 keys (CTA-proximity):
+            #     ticker_score: int (-4..+4)
+            #     market_score: int (-4..+4)
+            #     composite_score_normalized: float (-1.0..+1.0)
+            #
+            #   v0.2 extension (gamma-regime sub-signal — present when options chain available):
+            #     gamma_regime: {
+            #       bin: "positive" | "neutral" | "negative",
+            #       net_gex_at_spot: float (dollar GEX),
+            #       normalized_gex: float (net_gex / (spot^2 * 100), ticker-comparable),
+            #       zero_gamma_distance_pct: float | null (signed; null if zero-gamma not in grid),
+            #       dte_bucket_decomp: {bucket_label: float, ...},
+            #       dealer_sign_convention: "spotgamma" | "squeezemetrics",
+            #       regime_flip_signal_method: "zero_gamma_inflection" | "volatility_trigger"
+            #     }
+            #
+            # Schema stays permissive (additionalProperties: True) so v0.1 envelopes
+            # without gamma_regime continue to validate cleanly (back-compat).
             "type": ["object", "null"],
             "additionalProperties": True,
         },

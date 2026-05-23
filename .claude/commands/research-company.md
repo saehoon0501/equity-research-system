@@ -165,12 +165,12 @@ Surface the violation to operator. Exit.
 
 **Step 6 — Compose per-subagent PARAMETERS_USED header blocks.** Filter `EFFECTIVE_MAP` per subagent namespace consumption:
 
-- `quantitative-analyst` consumes: `quality_gate.*`, `dcf.*`, `outside_view.*`, `wacc.*`, `reinvestment_moat.*`, `falsifier.*`
+- `quantitative-analyst` consumes: `quality_gate.*`, `dcf.*`, `outside_view.*`, `wacc.*`, `reinvestment_moat.*`, `falsifier.*`, plus **(v0.2)** `flow.erp_add_bps.gamma_<bin>` — orchestrator reads `gamma_regime.bin` from flow-overlay envelope (Stage 1) and scopes the corresponding `flow.erp_add_bps.gamma_positive|neutral|negative` value into quant-only block. Strategic-analyst PARAMETERS_USED block does NOT receive `flow.erp_add_bps.*` (architectural invariant — strategic is regime-blind per `feedback_llm_schemas_validation_not_interface.md` style).
 - `strategic-analyst` consumes: `evaluator.gate.helmer_*` (for citation-floor self-check)
 - `tactical-overlay` consumes: `tactical.*`, `tactical_disposition.*`, `tactical_cell.*`, plus `sizing.conviction_band.HIGH.{min,max}_pct` + `sizing.conviction_band.MEDIUM.{min,max}_pct` (band-position selector reads existing band params per Section 2 v3-final Plan A v3 — no new sizing rows)
 - `flow-overlay` consumes: `flow.*`, `flow_disposition.*`, `flow_cell.*`, plus `sizing.conviction_band.HIGH.{min,max}_pct` + `sizing.conviction_band.MEDIUM.{min,max}_pct` (reuses the same band params as tactical-overlay; no new sizing rows). v0.1 CTA-proximity sub-signal only — gamma/GEX inputs are v0.2, crowding inputs are v0.3.
 - `catalyst-scout` consumes: `catalyst_scout.*`
-- `pm-supervisor` consumes: `sizing.*`, `mode.*`, `dcf.thematic_growth_implied_vs_historical_cagr_cap_ratio`, plus `outside_view.divergence_alert_pp` (§2.6 stress-test routing), plus reads tactical-overlay envelope at `memos/envelopes/tactical-overlay__<run_id>.json` AND flow-overlay envelope at `memos/envelopes/flow-overlay__<run_id>.json` for tactical_signal_bin + tactical_cell + flow_signal_bin + flow_cell surfacing per Section 1 #4 soft-modulator
+- `pm-supervisor` consumes: `sizing.*`, `mode.*`, `dcf.thematic_growth_implied_vs_historical_cagr_cap_ratio`, plus `outside_view.divergence_alert_pp` (§2.6 stress-test routing), plus **(v0.2)** `sizing.tech_axis_bullish_score_min` (externalized TECH axis cutoff for 6-signal world), plus reads tactical-overlay envelope at `memos/envelopes/tactical-overlay__<run_id>.json` AND flow-overlay envelope at `memos/envelopes/flow-overlay__<run_id>.json` for tactical_signal_bin + tactical_cell + flow_signal_bin + flow_cell surfacing per Section 1 #4 soft-modulator
 - `evaluator` consumes: `evaluator.gate.*`, `quality_gate.*`, `falsifier.max_resolution_horizon_months`, `dcf.reconciliation_divergence_pct_floor`
 
 Each per-subagent header block has this exact shape (injected at the TOP of the dispatch prompt body, before `run_id: <uuid>`):
@@ -561,6 +561,7 @@ The hook reads the sidecar and forwards values to the validator. Absence is fine
 - HG-27 outside-view blend math: `corrected = intuitive*(1-r) + reference*r` consistency, including the AMZN raw==corrected signature.
 - HG-28 (RETIRED 2026-05-17 — counterfactual top-3 bucket schema check removed alongside §3.5 retrieval).
 - HG-24 sentiment_data_degraded: cross-check emitted flag vs the deterministic re-count from the catalyst-indicators path in the context sidecar.
+- **HG-34 (v0.2) catalyst+flow modifier composition determinism:** re-derive pm-supervisor's emitted `catalyst_modifier_applied` audit string from upstream catalyst-scout + flow-overlay envelopes via `src.p7_recommendation_emitter.catalyst_flow_modifier.compose_catalyst_flow_modifier()` and reject on bit-identical drift. Inputs to the gate: (a) `catalyst-scout__<run_id>.json` envelope (or None if catalyst-scout offline), (b) `flow-overlay__<run_id>.json` envelope (or None if flow-overlay offline), (c) parameters_active snapshot dict, (d) pm-supervisor envelope (required). The context sidecar at `memos/envelopes/pm-supervisor__<run_id>.context.json` MUST surface the params_snapshot path so the hook can pass it into `validate_all(..., params_snapshot=...)`.
 
 **Why before §4.5:** the LLM evaluator is expensive ($3-6) and probabilistic. The hook reserves it for the semantic checks (contamination, narrative coherence, evidence sufficiency).
 
