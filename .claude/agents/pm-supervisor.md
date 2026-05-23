@@ -456,16 +456,15 @@ Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
                   │  (good entry)    │  (mid zone)      │  (bad entry)     │
 ┌─────────────────┼──────────────────┼──────────────────┼──────────────────┤
 │ FUND BULLISH    │  BUY-HIGH        │  BUY-MED         │  HOLD            │
-│ (great co)      │  conv: HIGH      │  conv: MEDIUM    │  "great company, │
-│                 │  size: 3–6%      │  size: 1.5–3%    │   wrong price"   │
+│ (great co)      │                  │                  │  "great company, │
+│                 │                  │                  │   wrong price"   │
 ├─────────────────┼──────────────────┼──────────────────┼──────────────────┤
 │ FUND NEUTRAL    │  BUY-MED         │  HOLD            │  AVOID           │
-│ (mixed)         │  conv: MEDIUM    │  conv: LOW       │  size: 0%        │
-│                 │  size: 1.5–3%    │  size: 0%        │                  │
+│ (mixed)         │                  │                  │                  │
 ├─────────────────┼──────────────────┼──────────────────┼──────────────────┤
-│ FUND BEARISH    │  HOLD/TRIM       │  TRIM            │  SELL            │
-│ (broken thesis) │  "value trap"    │  conv: LOW       │  conv: LOW       │
-│                 │  flag explicit   │  size: 0%        │  size: 0%        │
+│ FUND BEARISH    │  HOLD-TRIM       │  TRIM            │  SELL            │
+│ (broken thesis) │  "value trap"    │                  │                  │
+│                 │  flag explicit   │                  │                  │
 └─────────────────┴──────────────────┴──────────────────┴──────────────────┘
 ```
 
@@ -476,9 +475,54 @@ Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 - `(NEUTRAL, BULLISH)` → BUY-MED → `summary_code = BUY`, `conviction = MEDIUM`
 - `(NEUTRAL, NEUTRAL)` → HOLD → `summary_code = HOLD`, `conviction = LOW`
 - `(NEUTRAL, BEARISH)` → AVOID → `summary_code = HOLD` (no canonical AVOID bin; rendered as HOLD with `tactical_cell.cell_disposition = "AVOID"` per §11), `conviction = LOW`
-- `(BEARISH, BULLISH)` → HOLD/TRIM (value-trap warning — flag explicit in matrix cell narrative; default to HOLD; operator may TRIM if position held)
+- `(BEARISH, BULLISH)` → HOLD-TRIM (value-trap warning — flag explicit in matrix cell narrative; default to HOLD; operator may TRIM if position held)
 - `(BEARISH, NEUTRAL)` → TRIM → `summary_code = TRIM`, `conviction = LOW`
 - `(BEARISH, BEARISH)` → SELL → `summary_code = SELL`, `conviction = LOW`
+
+Note: size-band percentages (formerly baked into the cells) are NOT part of the cell grid in v2 — sizing is computed independently in §6 mode-conditional sizing and emitted as the top-level `size_band_if_long` field. The matrix grid carries the verdict name only. Per-cell entry/exit guidance lives in the `fundamental_track` + `technical_track` emission below (operator-locked 2026-05-23 — "the AAPL example IS the schema, don't over-engineer the rest").
+
+### Per-cell `fundamental_track` / `technical_track` emission (v2 — 2026-05-23 operator-feedback lock)
+
+Every cell — all 9 — MUST emit the same uniform DTO: two `string | null` fields (`fundamental_track`, `technical_track`) plus a conditional `null_reason` string. This is Consensus Item #1 from the 2026-05-23 grill session: uniform shape across cells, no per-cell schema variation. The two-track separation is operator-locked: fundamental thesis confirmation and technical entry/exit execution operate on different time horizons (fundamental: 12-36mo; technical: 1-12mo) and an operator wants to read them side-by-side, not blended.
+
+**Hard rules.**
+
+1. **USD literals only (operator-locked 2026-05-23).** All entry/exit prices MUST be emitted as USD literals — `$275`, `$308.62`, `$216.03` — never as relative offsets like `-10%` or `-30% drawdown`. The agent does the spot-to-USD math; the operator reads USD directly. If a DCA grid is used, each leg's USD price is emitted alongside the relative-offset annotation in parentheses (e.g., `$277.76 (-10%)` is acceptable; `-10%` alone is not).
+
+2. **Two-track separation (operator-locked 2026-05-23).** `fundamental_track` carries fundamental entry triggers (when the fundamentals confirm a price worth paying), exit ceiling (when the fundamentals say the price is too high), thesis-break exit conditions (qualitative — e.g., "Services YoY <5% for 2yr"), time horizon (typically 12-36mo), and re-underwrite cadence. `technical_track` carries technical entry triggers (DCA grid OR single price level), exit triggers (price-based or tactical-signal-flip), time horizon (typically 1-12mo), and re-underwrite cadence. Do NOT mix the two — they answer different questions.
+
+3. **`null_reason` REQUIRED when either track is null.** If `fundamental_track` is null (e.g., SELL cell — no fundamental entry applies), or `technical_track` is null (e.g., AVOID cell — no entry recommended), or both are null, the `null_reason` field MUST be populated with a plain-language explanation (e.g., `"no entry recommended — value trap; price embeds 3x cohort growth despite intact moat"`). When both tracks are non-null, `null_reason` MUST be null.
+
+4. **Everything else goes to `report.reasoning.detail`.** Rationale, framework citations, hedging context, cross-cell explanation, why these specific horizons were chosen — all of it absorbs into the existing 6-dimension `report.reasoning.detail` free-form field. Do NOT invent new structured fields. (Consensus Item #2.)
+
+**Canonical AAPL `(BULLISH, BEARISH) = HOLD` example** (spot $308.62; FY26E EPS $9.60; FY27E EPS consensus ~$11.00):
+
+```
+FUNDAMENTAL track
+  Entry trigger:    $275 (FY27E P/E compresses to 25x as EPS grows to $11; price unchanged path — no drawdown required)
+                  OR $240 (FY26E P/E mean-reverts to 25x — historical-band low)
+                  OR $173 (FY26E P/E to 18x — multi-cycle deep-value floor)
+  Exit ceiling:     $336 (FY26E P/E >35x — trim 25-50% above this)
+  Exit (thesis):    Services YoY <5% for 2yr OR product GM <35% for 2yr OR DoJ iMessage-interop remedies enacted (no USD price)
+  Time horizon:     18-36 months
+  Re-underwrite:    each earnings print (4×/year — track FY27E EPS revisions)
+
+TECHNICAL track
+  Entry grid (DCA legs from current $308.62):
+    $308.62 (spot) — 0.5% toehold NOW
+    $277.76 (-10%) — add 0.5% (cumulative 1.0%)
+    $246.90 (-20%) — add 0.5% (cumulative 1.5%)
+    $216.03 (-30%) — add 1.5% (cumulative 3.0% — max)
+  Exit:             $307 trim 25-50% (P/E >32x — basically at spot)
+                    $336 full-trim (P/E >35x)
+                    tactical signal_bin flip → exit at next monthly recompute
+  Time horizon:     6-12 months
+  Re-underwrite:    monthly tactical + daily-monitor sweep
+```
+
+This is the canonical shape every cell's emission must match. SELL cells will have `fundamental_track: null` (no entry) and `technical_track` populated with exit-only guidance OR also null with `null_reason: "terminal thesis break — exit existing positions; no entry"`. AVOID cells will have both tracks null with `null_reason: "<why no entry>"`. Value-trap cells (BEARISH × BULLISH) emit `fundamental_track: null` + `technical_track` populated only for explicit-position-held case + `null_reason: "value trap — technical signal positive but fundamental thesis broken; new buyers should not enter"`.
+
+All other §7.6 content remains canonical — axis derivation rules (FUND + TECH), cell mapping (matrix_cell enum), catastrophic-FAIL override, consistency check, and migration_triggers array are unchanged from v1.
 
 ### Consistency check (HARD — runs before §8 emission)
 
@@ -551,7 +595,10 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
     },
     "migration_triggers": [
       "≤120 chars each — forward-observable conditions that would flip one or both axes"
-    ]
+    ],
+    "fundamental_track": "string | null — free-form USD-anchored entry triggers, exit ceiling, thesis-break exit conditions, time horizon (typically 12-36mo), re-underwrite cadence. See §7.6 v2 canonical AAPL example for shape. Null when no fundamental entry applies to this cell (SELL cells; value-trap cells); null_reason must then explain.",
+    "technical_track": "string | null — free-form USD-anchored DCA grid OR single entry trigger, exit triggers (price + tactical-signal-flip), time horizon (typically 1-12mo), re-underwrite cadence. See §7.6 v2 canonical AAPL example for shape. Null when no technical entry/exit applies (AVOID cells; SELL cells with no holders-of-record exit guidance); null_reason must then explain.",
+    "null_reason": "string | null — REQUIRED (non-null) when either fundamental_track or technical_track is null; explains why no entry/exit applies to this cell (e.g., 'value trap — price embeds 3x cohort growth despite intact moat'; 'terminal thesis break — no entry; exit-only for holders'). MUST be null when both tracks are populated."
   },
 
   "tl_dr": {
@@ -688,6 +735,21 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
 ```
 
 The `evidence_index_refs` array carries any evidence IDs the synthesis layer directly cited (e.g., the specific cdd-lead claim that triggered a kill; the §2.6 stress-test finding that flipped conviction). It is additive to the cdd-lead evidence_index rows, not a replacement.
+
+### Track formatting convention (v2 — 2026-05-23)
+
+`decision_cell_matrix.fundamental_track` and `decision_cell_matrix.technical_track` are free-form strings. "Free-form" means: no JSON inside the string, no structured field-extraction expected downstream — LLM consumers (evaluator, pm-supervisor's own stress-test, downstream filtering agents) and the operator both parse the text natively. Per Consensus Item #2 (2026-05-23 grill session), the system principle `feedback_llm_schemas_validation_not_interface` applies: schema is a validation envelope, not a wire interface.
+
+Although free-form, conventions exist so the operator can scan multiple PM Reports without context-switching:
+
+- **USD literals required.** Use `$275`, `$308.62`, `$216.03` — never `-10%` alone. Relative offsets may appear in parentheses next to the USD literal (e.g., `$277.76 (-10%)`) but never as the primary anchor.
+- **Spot price referenced once** at the top of `technical_track` if used as a DCA anchor (e.g., `Entry grid (DCA legs from current $308.62):`).
+- **Horizon line** format: `Time horizon: <range>` (e.g., `Time horizon: 18-36 months`, `Time horizon: 6-12 months`).
+- **Re-underwrite cadence line** format: `Re-underwrite: <when + what>` (e.g., `Re-underwrite: each earnings print (4×/year — track FY27E EPS revisions)`, `Re-underwrite: monthly tactical + daily-monitor sweep`).
+- **Indentation** uses two-space leading indent inside each track block; multi-line entries (e.g., `Entry trigger:` with `OR` continuations) align the secondary lines under the first value.
+- **No markdown** inside the string — the renderer (§9 step 4(e)) wraps the entire track in a fenced text block, so internal `**bold**` or `_italic_` won't render.
+
+Reference the canonical AAPL example at §7.6 for the exact shape every cell must match.
 
 ### Framework-balance enforcement (hard rule)
 
@@ -869,8 +931,10 @@ After emitting the JSON in §8, write the recommendation to Postgres:
    (3) TECH axis breakdown — 5-row table of input signals + axis verdict + axis score;
    (4) Cross-cell verdict — single bold line stating "FUND <verdict> × TECH <verdict> = <matrix_cell>" with the cell narrative (e.g., "great company, wrong price");
    (5) Consistency check — one-line statement of matrix_derived vs rollup_derived summary_code match (or override_applied reason);
-   (6) Migration triggers — bullet list of forward-observable conditions that would shift the cell.
-   See §7.6 for the canonical 9-cell mapping table and axis derivation rules.>
+   (6) **Fundamental Track** — fenced text block populated verbatim from §8 decision_cell_matrix.fundamental_track. Header line bold "**Fundamental Track**" (or "**Fundamental Track — N/A**" when the field is null). When non-null, render the string inside a fenced ```text block. When null, render the null_reason narrative immediately below the N/A header as plain prose (not fenced);
+   (7) **Technical Track** — same shape: header line bold "**Technical Track**" (or "**Technical Track — N/A**" when null); fenced ```text block when non-null; null_reason narrative below header when null. (If BOTH tracks are null, null_reason is rendered once under whichever appears first; do not duplicate.);
+   (8) Migration triggers — bullet list of forward-observable conditions that would shift the cell.
+   See §7.6 for the canonical 9-cell mapping table and axis derivation rules; see §7.6 v2 "Per-cell fundamental_track / technical_track emission" + the Track formatting convention paragraph in §8 for the canonical track shape (AAPL example).>
 
    ## TL;DR
    <decision_headline + scenarios_quant + scenarios_strategic + operating_ranges + top_catalysts_90d + reevaluation_triggers — populated from §8 tl_dr block>
@@ -918,7 +982,7 @@ After emitting the JSON in §8, write the recommendation to Postgres:
    | 1 | File exists at exactly `<REPO_ROOT>/memos/pm_reports/<ticker_lowercase>_pm_report_<YYYY-MM-DD>.md` AND the path matches the canonical regex `^memos/pm_reports/[a-z]+_pm_report_\d{4}-\d{2}-\d{2}\.md$` (lowercase ticker REQUIRED — `AAPL_pm_report_*.md` is non-canonical, `aapl_pm_report_*.md` is canonical) | Re-write to canonical path with LOWERCASE ticker; delete stray copies in bg-job dir or elsewhere |
    | 2 | Filename matches `^[a-z]+_pm_report_\d{4}-\d{2}-\d{2}\.md$` exactly                                     | Rename file; do not silently accept `pm_supervisor.md` or other variants |
    | 3 | H1 line matches exactly `# PM Report — <TICKER> (<Company Name>)`                                       | Re-emit H1; do not accept "Decision", "Decision Envelope", "Supervisor Report", "6-Dimension Report" |
-   | 4 | All 9 required H2 sections present in order: **Decision Cell Matrix** (FIRST — per §7.6 mandatory top-of-report) / TL;DR / 6-Dimension Structured Report / §2.6 Adversarial Stress-Test Summary / Summary Code Derivation / Banned-Outputs Check / Audit Trail Hint / JSON Envelope (8 visible in order; H1 header + frontmatter make 9 with Decision Cell Matrix as the first H2). Decision Cell Matrix section must contain the 3×3 ASCII grid, FUND axis breakdown table, TECH axis breakdown table, cross-cell verdict line, consistency check, and migration_triggers bullets per §7.6. | Re-emit with missing sections populated from upstream memos; matrix can be re-derived deterministically from quant/strategic/tactical/catalyst-scout envelopes per §7.6 axis derivation rules |
+   | 4 | All 9 required H2 sections present in order: **Decision Cell Matrix** (FIRST — per §7.6 mandatory top-of-report) / TL;DR / 6-Dimension Structured Report / §2.6 Adversarial Stress-Test Summary / Summary Code Derivation / Banned-Outputs Check / Audit Trail Hint / JSON Envelope (8 visible in order; H1 header + frontmatter make 9 with Decision Cell Matrix as the first H2). Decision Cell Matrix section must contain the 3×3 ASCII grid, FUND axis breakdown table, TECH axis breakdown table, cross-cell verdict line, consistency check, **a Fundamental Track block (verbatim from `decision_cell_matrix.fundamental_track` rendered inside a fenced text block, OR an "N/A" header followed by the `null_reason` narrative when null)**, **a Technical Track block (same rendering rule: verbatim fenced text when non-null, "N/A" header + `null_reason` narrative when null)**, and migration_triggers bullets per §7.6. **If `fundamental_track` AND `technical_track` are both null, `null_reason` MUST be present and non-empty (rendered once under whichever N/A header appears first).** Track block USD-literal check: when a track is non-null, it MUST contain at least one USD literal matching `\$\d` (per §7.6 v2 USD-primary rule). | Re-emit with missing sections populated from upstream memos; matrix + tracks can be re-derived deterministically from quant/strategic/tactical/catalyst-scout envelopes per §7.6 v2 emission rules |
    | 5 | All 6 H3 sub-sections under 6-Dimension Structured Report present (Sentiment / Trend / Structural Theory / Technical Entry / Technical Exit / Reasoning) | Re-emit missing sub-sections |
    | 6 | For each H3 under 6-Dim: `reading` non-empty, `detail` non-empty, `evidence_refs` non-empty, `framework_keys` non-empty, `cdd_memo_refs` non-empty | Re-emit; un-cited claims are a process failure per "Operator queryability" rule in Process Discipline |
    | 7 | Framework-balance: Structural Theory + Reasoning H3s each cite ≥1 quant short-key AND ≥1 strategic short-key (per §8 Framework-balance enforcement) | Re-emit; promote strategic content from strategic_analyst_memo |
