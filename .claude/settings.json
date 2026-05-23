@@ -12,5 +12,14 @@
         ]
       }
     ]
+  },
+  "env": {
+    "AUDIT_HMAC_KEY_FILE": "/Users/sehoonbyun/Documents/equity-research-system/.env"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh",
+    "padding": 0,
+    "refreshInterval": 2
   }
 }
