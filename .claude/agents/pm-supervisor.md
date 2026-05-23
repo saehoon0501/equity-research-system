@@ -495,7 +495,9 @@ Every cell — all 9 — MUST emit the same uniform DTO: two `string | null` fie
 
 4. **Everything else goes to `report.reasoning.detail`.** Rationale, framework citations, hedging context, cross-cell explanation, why these specific horizons were chosen — all of it absorbs into the existing 6-dimension `report.reasoning.detail` free-form field. Do NOT invent new structured fields. (Consensus Item #2.)
 
-**Canonical AAPL `(BULLISH, BEARISH) = HOLD` example** (spot $308.62; FY26E EPS $9.60; FY27E EPS consensus ~$11.00):
+5. **DCA grids in `technical_track` are RISK-MANAGEMENT framing, not return-optimal entry.** Per `vanguard_lsi_vs_dca_2023` (canonical-frameworks.md), lump-sum investing outperforms DCA on expected-return basis ~68% of the time; DCA is the operator's hedge against being wrong about entry timing, not a mathematically optimal strategy. Frame DCA grids accordingly in the `technical_track` text (e.g., "DCA grid — drawdown insurance under uncertain timing," not "DCA grid — optimal entry path").
+
+**Canonical AAPL `(BULLISH, BEARISH) = HOLD` example** (spot $308.62; FY26E EPS $9.60; FY27E EPS consensus ~$11.00). This illustrates the `core_fundamental` tier shape — leads with forward P/E compression as PRIMARY anchor. See "Tier-conditional anchor guidance" below for `thematic_growth` and `speculative_optionality` adaptations.
 
 ```
 FUNDAMENTAL track
@@ -523,6 +525,16 @@ TECHNICAL track
 This is the canonical shape every cell's emission must match. SELL cells will have `fundamental_track: null` (no entry) and `technical_track` populated with exit-only guidance OR also null with `null_reason: "terminal thesis break — exit existing positions; no entry"`. AVOID cells will have both tracks null with `null_reason: "<why no entry>"`. Value-trap cells (BEARISH × BULLISH) emit `fundamental_track: null` + `technical_track` populated only for explicit-position-held case + `null_reason: "value trap — technical signal positive but fundamental thesis broken; new buyers should not enter"`.
 
 All other §7.6 content remains canonical — axis derivation rules (FUND + TECH), cell mapping (matrix_cell enum), catastrophic-FAIL override, consistency check, and migration_triggers array are unchanged from v1.
+
+### Tier-conditional anchor guidance (v2.1 — 2026-05-23)
+
+Schema-shape and the AAPL canonical example above are operator-locked per the 2026-05-23 grill-session feedback ("the AAPL example IS the schema, don't over-engineer the rest"). This sub-section is a content-composition prior layered ON TOP of the locked schema — same `string | null` two-track DTO across all 9 cells, same USD-primary rule, same `null_reason` conditional enforcement. What changes per tier is which anchor type the agent should lead with INSIDE the `fundamental_track` text. Read the top-level `tier` field (one of `core_fundamental` / `thematic_growth` / `speculative_optionality`) and apply the guidance below conditionally. Cite anchor frameworks by short-key from canonical-frameworks.md using the existing `framework_keys[]` channel — do NOT invent a new citation channel.
+
+**core_fundamental.** PRIMARY: forward P/E compression via EPS growth (`FY+1 EPS × historical 5y median P/E = realistic entry zone`) per `aqr_buffetts_alpha`. SECONDARY: historical P/E band as rich/cheap rail per `aqr_factor_timing_is_hard` — use to inform sizing discipline, NOT as primary entry trigger. FLOOR-REFERENCE only: Damodaran / austere DCF intrinsic. Mega-cap quality compounders reach DCF intrinsic via drawdown in ≤20% of 1-5y windows (only META 2022 cleanly hit); surface intrinsic for context but do NOT set entry triggers at intrinsic unless the name is a META-2022-class clean drawdown episode.
+
+**thematic_growth.** PRIMARY: EV/Sales bands relative to peer-cohort + reverse-DCF (`mauboussin_reverse_dcf`) + path-to-profitability gating + tier-appropriate sector addendum (e.g., `bessemer_cloud_100`, `skok_saas_metrics`). BANNED: PEG anchor for negative-earnings names per `easton_peg_2004` — if FY+1 or FY+2 EPS consensus is negative or near-zero, do NOT emit PEG-based entry triggers. DCA legs sized via AQR vol-scaling formula `position_size = (target_vol / realized_vol) × baseline` per `aqr_vol_targeting_2020`, NOT equal-weight (equal-weight over-allocated into the 2021-2022 high-growth-cohort -77% drawdowns).
+
+**speculative_optionality.** USD-price triggers EMPIRICALLY INVALID as primary entry framework per `damodaran_young_growth`. Canonical emission: `fundamental_track = null` + `null_reason = "milestone-tree gated — see report.reasoning.detail"`. The agent SHOULD populate `report.reasoning.detail` with the milestone-tree narrative (phase POS factors, real-options framing, Hall steady-state EV adaptation). This is a soft expectation — the envelope_shape validator does not parse free-form text, but a speculative cell with `fundamental_track = null` and no milestone-tree content in `report.reasoning.detail` is an incomplete emission. Sizing framed via Kelly-binary (option-premium framing), NOT vol-scaling (which assumes return continuity that does not hold for binary outcomes). `technical_track` is optional — speculative names may emit `technical_track` populated with technical-momentum exit guidance (for existing holders) but `fundamental_track = null`; if both tracks null, `null_reason` covers both per existing v2 conditional enforcement.
 
 ### Consistency check (HARD — runs before §8 emission)
 
