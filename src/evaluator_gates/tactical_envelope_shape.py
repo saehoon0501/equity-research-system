@@ -124,8 +124,13 @@ def validate_tactical_envelope_shape(env: object) -> TacticalEnvelopeShapeResult
         result.rf_degenerate_not_bool = True
         result.valid = False
 
-    # tactical_cell sub-keys
+    # tactical_cell: null is valid during Stage 1 parallel dispatch
+    # (pm-supervisor completes the cell at Stage 3 once conviction is available).
+    # Otherwise, tactical_cell must be a dict with all required sub-keys.
     cell = env["tactical_cell"]
+    if cell is None:
+        # Valid state: Stage 1 emission before pm-supervisor conviction is available.
+        return result
     if not isinstance(cell, dict):
         result.tactical_cell_not_dict = True
         result.valid = False

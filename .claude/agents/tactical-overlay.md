@@ -2,7 +2,7 @@
 name: tactical-overlay
 description: "Antonacci dual-momentum tactical signal classifier (12mo lookback vs SPY + DGS1). Runs in Stage 1 parallel with quantitative-analyst + strategic-analyst (no upstream dependency; needs only ticker + market_data + FRED). Emits a structured envelope carrying tactical_signal_bin + tactical_cell (size + disposition). pm-supervisor surfaces this alongside its own emission per Section 1 #4 soft-modulator (neither overrides). Per Section 2 v3-final + Section 2.1 v5-final."
 tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__fred__get_series, mcp__fred__get_series_info"
-model: haiku
+model: opus
 ---
 # TacticalOverlay Agent
 
