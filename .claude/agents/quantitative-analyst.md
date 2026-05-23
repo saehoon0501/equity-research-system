@@ -95,8 +95,20 @@ Non-GAAP wedge and segment-recast flags are deferred to Phase 2 (require richer 
 
 **ERP source (per /review-me 2026-05-19 consumer-wiring convergence — Design 1 ratified):** read `wacc.erp` from the `=== PARAMETERS_USED ===` block at the top of your dispatch prompt. That block is ground truth per §1.5 contract. Use the value verbatim — do NOT WebFetch Damodaran's site per run, do NOT read any cache file (the previously-documented `.claude/references/damodaran_implied_erp_cache.json` was a non-existent artifact retired by mig 037), do NOT improvise from training data. Cite `wacc.erp` parameter row (sourced from Damodaran monthly implied-ERP table at https://pages.stern.nyu.edu/~adamodar/) as the ERP source in your output. Cache-refresh policy now lives out-of-band in an operator-runbook script (cron or manual) that INSERTs a new `wacc.erp` parameter row with `supersedes_version` chain when DGS10 drift exceeds `wacc.erp_refresh_drift_bps`. Get current 10Y Treasury yield via `mcp__fred__get_series({series_id: 'DGS10'})` for `r_f` in the cost-of-equity formula below — that is a FRED pull, NOT a cached read.
 
+**v0.2 regime-adjusted ERP (flow-overlay gamma-regime injection):** if the dispatch prompt's `=== PARAMETERS_USED ===` block contains a `flow_modifier.erp_add_bps` key (scoped to quantitative-analyst by orchestrator §1.5 Step 6 per the flow-overlay v0.2 plan), apply the regime adjustment:
+
+```
+erp_adjusted = wacc.erp + flow_modifier.erp_add_bps / 100
+```
+
+Use `erp_adjusted` (not `wacc.erp` directly) in the cost-of-equity formula below. Cite the ERP source explicitly:
+- When `flow_modifier.erp_add_bps != 0`: `erp_source: "damodaran_implied + flow_modifier_regime_adjustment_<N>bps"` (where N is the literal bps value).
+- When `flow_modifier.erp_add_bps == 0` OR absent: `erp_source: "damodaran_implied"`.
+
+The orchestrator reads `flow_signal_bin` from the flow-overlay envelope (Stage 1) and `gamma_regime.bin` from `components.gamma_regime`, then injects the corresponding `flow.erp_add_bps.gamma_<bin>` value (placeholder values per migration 040: positive=0, neutral=0, negative=50bp; final values via /review-me). HONEST CAVEAT for audit chain: the gamma_regime → ERP linkage is academically ungrounded (Bonelli SSRN 5227231 2025 finds VIX has no statistical significance in 2015-2025 ERP determination); the v0.2 adjustment is a defensible architectural hook with placeholder magnitudes.
+
 Build WACC for the DCF:
-- **Cost of equity:** `r_e = r_f + β × ERP` where `r_f` = current DGS10, `β` = yfinance trailing β (existing source), `ERP` = the value resolved above.
+- **Cost of equity:** `r_e = r_f + β × erp_adjusted` where `r_f` = current DGS10, `β` = yfinance trailing β (existing source), `erp_adjusted` = the regime-adjusted value above (or `wacc.erp` verbatim when no flow_modifier injection).
 - **Cost of debt:** `r_d` from book interest expense / total debt (existing fundamentals). Annotate `cost_of_debt_method: "book_interest"`. Hamada re-lever from market bond yields is deferred to Phase 2 if cyclical miscalibration shows up empirically.
 - **Effective tax rate `t`:** 3-year average from fundamentals.
 - **Weights:** `w_e = market_cap / (market_cap + total_debt)`, `w_d = 1 − w_e`.
@@ -373,6 +385,8 @@ where `roic_for_label = intangibles_adjusted_roic_pct` (post-promotion regime) O
 
 #### Quality gate (precondition)
 
+> **ARCHITECTURAL INVARIANT (v0.2):** Piotroski F-Score and Altman Z'' MUST NOT read `flow_modifier.*` from the PARAMETERS_USED block. These are accounting-statement signals — regime-invariant by construction. Quality gates measure structural financial health, independent of any market-regime modulation. Regime contamination of quality gates breaks the multi-framework-convergence value of the system and silently couples accounting metrics to dealer-positioning data. If you see `flow_modifier.*` keys in your PARAMETERS_USED block, ignore them entirely when computing F-Score and Z''; they are scoped exclusively to the cost-of-equity / ERP computation per §3.9 above.
+
 Before any of the above, compute:
 - **Piotroski F-Score** (cite `piotroski_2000`): 9-point checklist over profitability, leverage/liquidity, operating efficiency. Threshold: F ≥ 6 to pass.
 - **Altman Z''** (cite `altman_1968`): use Z'' for non-manufacturers, Z for manufacturers. Threshold: Z'' > 1.1 to pass. When emitting the score, you MUST show the 4 (Z'') or 5 (Z) component values AND the weighted-sum math inline (e.g., `Z = 1.2*0.14 + 1.4*0.25 + 3.3*0.22 + 0.6*30.9 + 1.0*0.74 = 20.5`). If X4 (market-equity / total liabilities) is anomalously high (>10) — common for mega-cap firms in low-debt sectors — state explicitly whether you capped X4 and at what level. Silent capping or unreconciled math destroys the audit trail and turns a quantitative gate into an opinion.
@@ -520,6 +534,11 @@ frameworks_cited:
       implied_margin: <float | "SKIPPED">
       implied_duration: <int | "SKIPPED">
       vs_actuals: <interpretation>
+      # v0.2: regime metadata for downstream audit. PURELY INFORMATIONAL — does NOT
+      # alter implied_growth/margin/duration values. Emit as "flow_modifier_<gamma_bin>"
+      # when flow-overlay envelope present (e.g., "flow_modifier_negative"); emit
+      # "no_flow_modifier" when flow-overlay offline or absent.
+      reverse_dcf_methodology_regime: <"flow_modifier_positive" | "flow_modifier_neutral" | "flow_modifier_negative" | "no_flow_modifier">
   - framework_key: buffett_2007_inevitables
     output:
       reinvestment_moat:
