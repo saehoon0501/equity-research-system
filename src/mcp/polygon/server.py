@@ -559,5 +559,81 @@ def get_unusual_activity(ticker: str, lookback_days: int = 5) -> dict:
     }
 
 
+@mcp.tool()
+def get_short_interest(ticker: str, limit: int = 1) -> dict:
+    """Return most-recent short-interest record for `ticker`.
+
+    Wraps Polygon /stocks/v1/short-interest. FINRA reports settle bi-weekly;
+    the endpoint returns one record per settlement_date.
+
+    Schema (success):
+        {
+            "ticker": str,
+            "short_interest": int,
+            "days_to_cover": float,
+            "settlement_date": str,        # YYYY-MM-DD
+            "avg_daily_volume": int,
+            "retrieved_at": str,            # ISO 8601 UTC
+            "source": "polygon_short_interest_v1",
+        }
+
+    Failure modes (same contract as sibling polygon tools):
+        - Unknown ticker / no SI record  -> {"ticker_not_found": True}
+        - Tier insufficient              -> _tier_insufficient_payload()
+        - Auth / transport error         -> {"ticker_not_found": True, "error_class": "<cls>"}
+
+    Per v0.3 flow-overlay plan: crowding-warning fail-safe is to treat
+    any non-success response as "no warning" (asymmetric signal must not
+    false-fire on missing data).
+    """
+    try:
+        client = _client()
+    except Exception as e:
+        return {"ticker_not_found": True, "error_class": type(e).__name__}
+
+    if _is_ticker_unknown(ticker, client):
+        return {"ticker_not_found": True}
+
+    sym = ticker.upper()
+    list_method = getattr(client, "list_short_interest", None)
+    if list_method is None:
+        return {
+            "ticker_not_found": True,
+            "error_class": "polygon_sdk_missing_short_interest",
+            "note": "polygon-api-client SDK does not expose list_short_interest; upgrade to a version that includes /stocks/v1/short-interest support.",
+        }
+
+    try:
+        records_iter = list_method(ticker=sym, limit=max(1, int(limit)))
+        records = _safe_iter(records_iter, cap=max(1, int(limit)))
+    except Exception as e:
+        msg = str(e).lower()
+        if "not_authorized" in msg or "upgrade your plan" in msg or "entitled" in msg:
+            return _tier_insufficient_payload({"note": "Short-interest endpoint requires a Polygon Stocks plan tier that includes /stocks/v1/short-interest."})
+        return {"ticker_not_found": True, "error_class": "short_interest_transport_error", "detail": str(e)[:300]}
+
+    if not records:
+        return {"ticker_not_found": True}
+
+    most_recent = records[0]
+    short_interest = getattr(most_recent, "short_interest", None)
+    days_to_cover = getattr(most_recent, "days_to_cover", None)
+    settlement_date = getattr(most_recent, "settlement_date", None)
+    avg_daily_volume = getattr(most_recent, "avg_daily_volume", None)
+
+    if short_interest is None or days_to_cover is None or settlement_date is None:
+        return {"ticker_not_found": True, "error_class": "short_interest_malformed_record"}
+
+    return {
+        "ticker": sym,
+        "short_interest": int(short_interest),
+        "days_to_cover": float(days_to_cover),
+        "settlement_date": str(settlement_date),
+        "avg_daily_volume": int(avg_daily_volume) if avg_daily_volume is not None else None,
+        "retrieved_at": _now_iso(),
+        "source": "polygon_short_interest_v1",
+    }
+
+
 if __name__ == "__main__":
     mcp.run()
