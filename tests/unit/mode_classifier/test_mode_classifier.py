@@ -25,7 +25,7 @@ import pytest
 
 # Mirror the sys.path trick used by tests/test_edgar.py et al.: the
 # package lives at src/mode_classifier/ and tests run from repo root.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from mode_classifier import (

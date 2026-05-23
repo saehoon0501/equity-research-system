@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 # Mirror the sys.path trick used by tests/test_mode_classifier.py.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from p4_debate import (  # noqa: E402

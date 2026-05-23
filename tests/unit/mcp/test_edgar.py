@@ -30,7 +30,7 @@ import pytest
 # `sys.modules` when pytest collects multiple MCP test files in one session
 # (only the first `server` ever loaded sticks). Load this MCP's `server.py`
 # directly by file path under a unique module name to avoid the collision.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SERVER_PATH = _REPO_ROOT / "src/mcp/edgar/server.py"
 _spec = importlib.util.spec_from_file_location("edgar_mcp_server", _SERVER_PATH)
 _module = importlib.util.module_from_spec(_spec)

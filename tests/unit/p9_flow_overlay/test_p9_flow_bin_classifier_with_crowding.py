@@ -17,7 +17,7 @@ from src.p9_flow_overlay.bin_classifier import (
     classify_flow,
     _crowding_score,
 )
-from tests.test_p9_flow_bin_classifier import _series_with_trend  # noqa: F401
+from tests.unit.p9_flow_overlay.test_p9_flow_bin_classifier import _series_with_trend  # noqa: F401
 
 
 # ---------- _crowding_score helper ----------

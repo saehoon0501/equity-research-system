@@ -25,7 +25,7 @@ from unittest import mock
 import pytest
 
 # Make broker_mcp importable from tests/.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "src" / "mcp" / "broker_mcp"))
 sys.path.insert(0, str(_REPO_ROOT / "src" / "mcp"))
 

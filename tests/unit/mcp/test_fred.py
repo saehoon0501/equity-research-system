@@ -28,7 +28,7 @@ import pytest
 # Load this MCP's `server.py` directly by file path under a unique module
 # name; bare `from server import X` collides across MCP test files because
 # every MCP module is named `server` and Python caches by module name.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _SERVER_PATH = _REPO_ROOT / "src/mcp/fred/server.py"
 _spec = importlib.util.spec_from_file_location("fred_mcp_server", _SERVER_PATH)
 _module = importlib.util.module_from_spec(_spec)

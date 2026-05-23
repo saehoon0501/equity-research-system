@@ -29,7 +29,7 @@ from typing import Any, Optional
 import pytest
 
 # Mirror sys.path trick used by other test modules.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from alert_channels import (  # noqa: E402

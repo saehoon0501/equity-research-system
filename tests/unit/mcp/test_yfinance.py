@@ -20,7 +20,7 @@ import pytest
 # from repo root (where the env vars aren't shell-exported).
 from dotenv import load_dotenv
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
 
 # Load the MCP server module by path; bare `from server import X` collides

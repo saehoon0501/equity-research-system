@@ -38,7 +38,7 @@ from uuid import UUID, uuid4
 import pytest
 
 # Ensure src/ is importable for tests that use bare-package imports.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))

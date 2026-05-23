@@ -355,7 +355,7 @@ def test_p7_emitter_persist_uses_json_default_not_str() -> None:
     """
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[1] / "src" / "p7_recommendation_emitter" / "emitter.py"
+    src = Path(__file__).resolve().parents[2] / "src" / "p7_recommendation_emitter" / "emitter.py"
     text = src.read_text()
     # The fix: every json.dumps for JSONB-bound fields uses _json_default.
     assert "default=_json_default" in text
@@ -371,7 +371,7 @@ def test_premortem_recorder_persist_uses_json_default_not_str() -> None:
     """Direct check on the fixed persist callsite: no `default=str` remains."""
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[1] / "src" / "premortem_scheduler" / "recorder.py"
+    src = Path(__file__).resolve().parents[2] / "src" / "premortem_scheduler" / "recorder.py"
     text = src.read_text()
     assert "default=_json_default" in text
     assert "default=str" not in text, (

@@ -25,7 +25,7 @@ import pytest
 
 # Add repo root to sys.path so `from src.backtesting import ...` works under
 # uv-managed venvs that don't include the project root automatically.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from src.backtesting import (  # noqa: E402  (after sys.path mutation)
     BacktestingFramework,

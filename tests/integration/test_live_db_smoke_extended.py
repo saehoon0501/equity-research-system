@@ -47,7 +47,7 @@ import pytest
 # imports like `from p5_watchlist import ...`) are on sys.path. Mirrors
 # the path-manipulation discipline of test_live_db_smoke.py — the latter
 # uses `from src.X` because it relies on the rootdir being on sys.path.
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _REPO_ROOT / "src"
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))

@@ -44,7 +44,7 @@ import pytest
 
 
 # Repo-relative paths
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ENVELOPES_DIR = REPO_ROOT / "memos" / "envelopes"
 PM_REPORTS_DIR = REPO_ROOT / "memos" / "pm_reports"
 

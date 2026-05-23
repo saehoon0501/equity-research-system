@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 # Load .env so POLYGON_API_KEY is available when pytest is invoked outside the
 # `set -a && source .env && set +a` shell-wrapper convention.
 load_dotenv(_REPO_ROOT / ".env")
