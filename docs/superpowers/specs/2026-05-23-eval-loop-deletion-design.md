@@ -298,7 +298,7 @@ grep -rn "from src.outcomes\|from src.calibration\|from src.counterfactual_veto\
 
 **To create:**
 
-- `db/migrations/041_eval_loop_dead_path_removal.sql`
+- `db/migrations/044_eval_loop_dead_path_removal.sql` (originally created as 041; renamed to resolve collision with `041_flow_overlay_v03_crowding.sql`)
 
 **Reference (not modified):**
 
