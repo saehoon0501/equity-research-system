@@ -336,6 +336,62 @@ Magnitude scaling:
 
 Otherwise.
 
+### Multi-source confirmation requirement (post-AMZN-2026-05-24 fix — anti-single-source modifier discipline)
+
+**Motivation:** the prior modifier criteria above (`+1` and `-1` ANY-of / ALL-of patterns) permit single-source attribution to drive the modifier — e.g., one named manager's 13F ADD framed as "informed chase" could anchor a `-1 LOW` direction without any other independent positioning signal concurring. Case evidence: AMZN 2026-05-24 — Ackman Q1 13F ADD was the load-bearing observation behind `direction = -1 LOW`, framed as "informed-flow chase reinforcing consensus narrative," even though IV positioning, sell-side consensus, and retail-call-skew did not independently concur in the same crowded-consensus direction (the bull-thesis-is-consensus inference relied principally on the single-manager flow event). Single-manager flow events are HIGH-noise — concentrated value managers regularly add to names for fundamentals reasons, and the post-hoc "chase vs informed addition" framing is rhetorically convenient but analytically thin.
+
+**Hard rule (applies to BOTH `+1` AND `-1` directions; not applicable for `0`):**
+
+Before emitting `direction != 0`, you MUST identify ≥2 INDEPENDENT positioning signals concurring in the same direction. "Independent" means the signals come from distinct data-generating processes (not multiple slices of the same underlying observation). The acceptable signal taxonomy is:
+
+| Signal class | Examples that count as ONE signal |
+|---|---|
+| Catalyst-density | ≥2 high-conviction same-direction catalysts within 30d window |
+| Options-positioning (IV) | IV term inversion or normalization ≥5pp away from baseline |
+| Options-positioning (P/C) | P/C ratio outside [0.7, 1.5] band (call-heavy OR put-heavy) |
+| Options-positioning (unusual activity) | Vol/OI ≥1 with vol-spike ≥3x in named strikes |
+| Sentiment indicator extreme | AAII bull-bear spread outside ±30%, OR BofA FMS specific-trade-crowding extreme, OR NAAIM percentile ≤10 or ≥90, OR Investors Intelligence bull/bear ratio extreme |
+| Sell-side consensus | Sell-side rating distribution at >75th or <25th percentile of trailing 1y, OR mean target distance from spot at percentile extreme |
+| Institutional flow (broad) | ≥2 distinct active managers' 13F deltas in same direction within the most-recent 13F window (NOT a single manager) |
+
+**What counts as a signal — explicit exclusions:**
+
+- A SINGLE named manager's 13F event is NOT a standalone positioning signal. It is informational context only. Two or more independent active managers moving in the same direction within the same 13F window count as ONE institutional-flow signal.
+- A single dated catalyst is NOT a catalyst-density signal — the criterion requires ≥2 same-direction catalysts.
+- A single sell-side rating change is NOT a consensus signal — the criterion is the distribution-percentile metric.
+- Pricing-only momentum (ticker is up/down N% YTD) is NOT a positioning signal. Use the tactical-overlay envelope's `tactical_signal_bin` for trend-following weight; do not duplicate via modifier direction.
+
+**When the ≥2-signal threshold is NOT met:**
+
+- Set `direction = 0`.
+- Emit `single_source_attribution_caveat` field with the single observation that would have driven a non-zero modifier under the prior pattern, plus the reason it's insufficient on its own.
+- pm-supervisor §6 catalyst+flow modifier composition will then compute the modifier with `direction = 0` (no net catalyst contribution), with the caveat surfaced in the audit string for transparency.
+
+**Schema — modifier_concurring_signals[] (REQUIRED when direction != 0):**
+
+For every non-zero direction, emit `modifier_concurring_signals[]` with ≥2 entries. Each entry contains:
+
+- `signal_class` (enum from the table above)
+- `observation` (1-2 sentences describing the specific reading — e.g., "AAII bull-bear spread +38% on 2026-05-21, above +30% extreme-bullish threshold")
+- `direction_contribution` (+1 or -1 — confirming which direction this signal supports)
+- `evidence_id` (citation for the underlying reading)
+
+The validator (HG-31 successor, when wired) and pm-supervisor §2.6 audit will cross-check: (a) `len(modifier_concurring_signals) >= 2` when `direction != 0`, (b) all entries have `direction_contribution` matching the emitted `direction`, (c) `signal_class` values are distinct across entries (no two entries from the same signal class).
+
+**Magnitude scaling (REVISED — anchored on signal count):**
+
+- `low` — exactly 2 concurring signals
+- `medium` — 3 concurring signals
+- `high` — ≥4 concurring signals AND at least one signal is in the "extreme" tail (e.g., AAII >35pp, P/C <0.5 or >1.5, sell-side consensus at >90th or <10th percentile)
+
+This replaces the prior magnitude scaling logic. The change is intentional: tying magnitude to signal-count concurrence (not narrative confidence) makes the modifier mechanically auditable.
+
+**Anti-gaming guards:**
+
+- (a) Same observation cannot be split across two `modifier_concurring_signals[]` entries to clear the ≥2 threshold (e.g., "P/C is 0.45" and "low P/C is call-heavy" are the SAME observation, ONE signal).
+- (b) Cross-validating signals (e.g., AAII bull-bear extreme + BofA FMS crowded-trade extreme) DO count as independent signals IF they were measured from distinct surveys/datasets with distinct collection methodologies, even though both are "sentiment" — the signal_class field captures this distinction; choose the most-specific signal_class for each.
+- (c) When `sentiment_data_degraded = true` (3+ of 4 canonical sentiment indicators unavailable per §4), the available indicator universe shrinks; if you cannot reach ≥2 INDEPENDENT signals after accounting for the degradation, the only valid emission is `direction = 0` with `single_source_attribution_caveat` surfaced. This is symmetric with the existing shrunk-bound logic at pm-supervisor §6 — the data-quality regime cannot be papered over by direction-confidence prose.
+
 ### PMSupervisor consumption
 
 PMSupervisor consumes the `conviction_modifier` per its §6 catalyst-modifier-applied logic: it's an **additive notch shift on the size-band midpoint, bounded to ±25%**. NOT a hard override. Your modifier never flips a SELL/TRIM/HOLD to BUY (canonical 4-bin per HIGH-4 consensus 2026-05-16); it only nudges WITHIN a tier's band on names already destined for BUY. Adversarial pressure is provided by pm-supervisor's §2.6 internal stress-test pass + the counterfactual-veto retrieval (§3.5), not by your output.
@@ -386,12 +442,26 @@ PMSupervisor consumes the `conviction_modifier` per its §6 catalyst-modifier-ap
   "conviction_modifier": {
     "direction": "+1 | 0 | -1",
     "magnitude": "low | medium | high",
-    "reason": "..."
+    "reason": "...",
+    "modifier_concurring_signals": [
+      {
+        "signal_class": "catalyst_density | options_iv | options_pc | options_unusual_activity | sentiment_extreme | sell_side_consensus | institutional_flow_broad",
+        "observation": "1-2 sentence description of specific reading",
+        "direction_contribution": "+1 | -1",
+        "evidence_id": "uuid"
+      }
+    ],
+    "single_source_attribution_caveat": "string | null"
   },
   "evidence_index_refs": [],
   "banned_outputs_check": "PASS | <restructured>"
 }
 ```
+
+**Field semantics for the additions (post-AMZN-2026-05-24 fix):**
+
+- `modifier_concurring_signals[]` — REQUIRED when `direction != 0`. Must contain ≥2 entries, each from a DISTINCT `signal_class`, each with `direction_contribution` matching the emitted `direction`. Empty array `[]` is REQUIRED when `direction = 0` (asserts no concurring signals reached the threshold). Omitting the field entirely is REJECTED.
+- `single_source_attribution_caveat` — populated as a string when a single observation would have triggered a non-zero modifier under the prior pattern but did not meet the ≥2-signal threshold. Surfaces the dampened observation for pm-supervisor §6 audit transparency. `null` when no such observation exists (i.e., direction = 0 because no observations at all, OR direction != 0 because ≥2 signals concurred cleanly).
 
 ---
 
