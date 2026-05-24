@@ -379,8 +379,32 @@ where `roic_for_label = intangibles_adjusted_roic_pct` (post-promotion regime) O
 
 **Capital-light skip rule:** if `current_reinvestment_rate_pct < 3%`, emit `quality_label: "N/A capital-light"` and skip incremental_roic computation. The framework applies only where reinvestment economics meaningfully drive value (capex-heavy + acquisitive compounders).
 
+**Cycle-normalized label (post-AMZN-2026-05-24 fix — phase-aware reinvestment scoring):**
+
+The label computed above is the *current-snapshot* label — it reflects today's spread between ROIC and WACC, which is mechanically depressed at the peak of a capex cycle and inflated at the trough. Comparing two compounders at different points in their capex cycles using current-snapshot labels alone produces phase-vs-quality confusion (AMZN at AI-capex peak labeled C while MSFT at mid-cycle labeled B, even though the through-cycle reinvestment economics may be comparable). To prevent this, also compute and emit a **cycle-normalized label**.
+
+**Procedure:**
+
+1. **Compute `capex_cycle_position`** — classify the trailing 12mo capex/sales ratio against the trailing 5y rolling average:
+   - `peak` if trailing 12mo capex/sales > 1.25 × trailing-5y-avg capex/sales
+   - `trough` if trailing 12mo capex/sales < 0.75 × trailing-5y-avg capex/sales
+   - `mid` otherwise
+
+2. **Compute `cycle_normalized_roic_pct`** — use one of these methods, in priority order:
+   - **Method A (preferred when ≥5y of clean operating history):** trailing 5y average of annual incremental_roic (apply the same `incremental_roic_3y_trailing_pct` formula to each year-pair t and t-3 for the last 5 years; arithmetic mean).
+   - **Method B (forward-normalized, when capex cycle is clearly anomalous):** project incremental_roic assuming capex/sales reverts to the trailing-5y-average ratio over years 1-3, holding segment incremental margins constant. Cite the segment-margin assumptions inline.
+   - **Method C (skip):** for newly-public names (<5y history) or recent material business mix shift, emit `cycle_normalized_roic_pct: "INSUFFICIENT_HISTORY"` and `quality_label_cycle_normalized: "N/A insufficient history"`.
+
+3. **Compute `quality_label_cycle_normalized`** by re-running the same A/B/C/D threshold logic above against `cycle_normalized_roic_pct` (using the same WACC).
+
+4. **Emit BOTH labels** in §5 output. Keep the original `quality_label` (now mirrored as `quality_label_current`) for transparency on the snapshot value.
+
+**Mandatory rationale field when labels diverge:** if `quality_label_current` differs from `quality_label_cycle_normalized` (e.g., current=C but cycle-normalized=B), emit `quality_label_divergence_rationale` explaining which method was used (A/B/C) and why the cycle position is producing the divergence. This is load-bearing for the structural_inflection_check (§4.8 below) — phase-vs-quality confusion is one of the primary failure modes the inflection check is designed to catch.
+
+**Downstream contract:** the pm-supervisor §7.6 Decision Cell Matrix FUND-axis consumption should be updated to weight `quality_label_cycle_normalized` (where emitted) rather than `quality_label` directly. This is a coordinated change tracked separately — for now, both labels are emitted and pm-supervisor decides which to consume per its own spec evolution.
+
 **Tier conditional:**
-- core_fundamental + thematic_growth: required (unless capital-light per skip rule)
+- core_fundamental + thematic_growth: required (unless capital-light per skip rule, or insufficient history per Method C)
 - speculative_optionality: SKIP entirely. Output: `quality_label: "SKIPPED — speculative (no trailing reinvestment history)"`.
 
 #### Quality gate (precondition)
@@ -480,6 +504,86 @@ This rule applies to (but is not limited to): revenue/op-income/FCF/cash/debt fi
 
 **Cross-references:** HG-21 (downstream backstop) catches pointer summaries; HG-19/HG-20 depend on full-content persistence. Strategic mirror: strategic-analyst.md §4.7.
 
+### 4.8. Structural Inflection Check + disposition_recommendation_hint (post-AMZN-2026-05-24 fix — phase-aware CDD ceiling)
+
+**Motivation:** the integrated CDD memo's `disposition_recommendation` is a candidate-intent ceiling consumed by pm-supervisor (per /research-company §2.5 step 6 + P7). Without an inflection-aware override, a company at a *fresh structural inflection* (segment reacceleration with customer-backed forward visibility) that trades materially above its narrative DCF base will always be ceilinged at HOLD, even when the DCF base itself is lagging the new operating trajectory (case evidence: AMZN 2026-05-24 — AWS reaccelerated 17%→28% over 3 quarters with OpenAI 2 GW + Anthropic 5 GW Trainium contracts, but CDD ceilinged HOLD on a DCF base that hadn't internalized the reacceleration). This section adds a **mechanical (not narrative) inflection check** that, when triggered, raises the disposition_recommendation_hint by one notch.
+
+**Tier conditional:** applies to `core_fundamental` + `thematic_growth` only. SKIPPED for `speculative_optionality` (the milestone-tree framework already carries inflection signal).
+
+**Procedure — emit `structural_inflection_check` block in §5 output with these fields:**
+
+1. **Identify the highest-OM segment** (or the dominant revenue segment if OM-by-segment isn't disclosed). For multi-segment companies use the segment with the largest YoY contribution to consolidated OI.
+
+2. **Compute `segment_yoy_reacceleration_pp`** — for that segment, compute YoY growth rate for each of the trailing N consecutive quarterly prints (N typically 4-6, anchored on the brief's KPI-anchor disclosure depth). Then compute the difference between the most-recent quarter's YoY rate and the lowest YoY rate in the trailing window. Express as percentage points.
+   - Example AMZN: AWS YoY ex-FX went 19→17→17→20→24→28 over 6 quarters; most-recent 28, lowest in window 17, reacceleration = +11pp.
+
+3. **Compute `consecutive_quarters_reaccelerating`** — count consecutive quarters of YoY rate strictly higher than the prior quarter's YoY rate, starting from most-recent.
+   - Example AMZN: 17→17→20→24→28: 4 consecutive quarters of acceleration (excluding the flat 17→17).
+
+4. **Identify `customer_backed_forward_visibility_years`** — count named, dated, primary-source-cited customer contracts or capacity commitments that anchor forward demand for ≥1 year out. Cite each via `evidence_id`. Examples that count: signed multi-year cloud contracts with disclosed total contract value or capacity (GW, EFLOPS); long-term-contract backlog with weighted-average remaining life; binding off-take agreements. Examples that do NOT count: marketing-deck pipeline language, "$X billion TAM" claims, sell-side estimate citations.
+
+5. **Threshold check — `inflection_triggered`** = true iff ALL of:
+   - `segment_yoy_reacceleration_pp ≥ 8` (segment reaccelerated by ≥8 percentage points across the lookback window — i.e., a *material* not a *marginal* reacceleration)
+   - `consecutive_quarters_reaccelerating ≥ 3` (sustained pattern, not single-quarter spike)
+   - `customer_backed_forward_visibility_years ≥ 2` (forward demand has primary-source anchoring)
+   - Segment in question is in the company's *highest-OM* tier (concentrating value-creation, not a fading legacy segment)
+
+6. **Compute `disposition_recommendation_hint`** — emit one of:
+   - `"HOLD-eligible"` (default) — when `inflection_triggered = false`. CDD integration applies its standard valuation-driven ceiling.
+   - `"BUY-eligible_via_inflection_override"` — when `inflection_triggered = true`. CDD integration MAY raise the disposition_recommendation ceiling from HOLD to BUY-eligible **only when** the override criteria are explicitly cited inline alongside the disposition_recommendation. The override does NOT force BUY; it only opens BUY as a permitted ceiling. The valuation-discipline default remains HOLD if the integrator chooses not to invoke the override.
+
+7. **Emit `inflection_override_rationale`** — when `inflection_triggered = true`, emit a 2-4 sentence rationale citing the segment, the reacceleration magnitude, the consecutive-quarter count, and the customer-backed visibility evidence_ids. This is the load-bearing audit trail that CDD integration consumes when deciding whether to honor the override.
+
+**Anti-gaming guards (hard rules — evaluator HG-29 may scan these for compliance once a successor validator is wired):**
+
+- (a) The `customer_backed_forward_visibility_years` count MUST be backed by ≥1 `evidence_id` per contract/commitment cited. Marketing-language anchors are REJECTED.
+- (b) The `consecutive_quarters_reaccelerating` count MUST be derivable from the brief's §2.0 KPI Anchors block (or from primary-source 8-K Ex 99.1 segment trend tables you pull directly). Analyst-asserted trajectories without primary-source segment-trend backing are REJECTED.
+- (c) The override does NOT exempt the memo from the falsifier-construction rules in §4 (`Falsifier Threshold Construction Rule`). The bull case still needs a forward-anchored falsifier with primary-source baseline citation.
+- (d) The override applies once-and-mechanically per dispatch — you may NOT chain multiple "almost-triggered" near-misses into a single override. If `inflection_triggered = false`, emit HOLD-eligible and let the operator override at /research-company integration time with explicit rationale (P9 escalation path).
+
+**Failure-mode reminder:** the inflection override is structural-narrative-aware but valuation-blind. If `inflection_triggered = true` AND the inherited DCF MoS is deeply negative (e.g., spot > 2x inherited bull case), surface this tension explicitly in `inflection_override_rationale` so CDD integration and pm-supervisor §2.6 stress-test can weigh the structural inflection against extreme valuation premium. The override is permission, not endorsement.
+
+### 4.9. Base-case calibration check (post-AMZN-2026-05-24 fix — DCF base-case anti-lag discipline)
+
+**Motivation:** the narrative DCF `base_case` revenue growth path is constructed by the analyst from segment trend extrapolation. If the analyst's assumed path is materially behind the *trailing-N-quarter consensus revision direction* OR behind the *realized segment trend in the highest-OM segment*, the base case is *lagging* — and the resulting DCF base value will mechanically understate fair value, deepening the apparent valuation premium when in fact the DCF model is the one that hasn't caught up. AMZN 2026-05-24 case evidence: analyst used 14% year-1 base-case growth while consensus FY26 revenue revisions had been steadily upward through Q1 FY26 print and AWS segment was running +24-28% YoY ex-FX. The resulting inherited DCF base of $168 against spot $265 produced a -58% MoS that drove the HOLD ceiling — but a base-case path that internalized the Q1 reacceleration would have produced a base value closer to $200-220 and a less-stretched apparent MoS.
+
+**Tier conditional:** applies to `core_fundamental` + `thematic_growth` only. SKIPPED for `speculative_optionality` (no DCF, no base case).
+
+**Procedure — emit `base_case_calibration_check` block within the `damodaran_narrative_dcf` framework output (or at memo top-level if schema convenience prefers it):**
+
+1. **Pull trailing-N-quarter consensus revision direction** (N = 4 typical, 6 for slow-reporting names):
+   - Via `mcp__yfinance__get_consensus_estimates({ticker})` repeated at N trailing intervals OR via existing cached revision-history if available.
+   - Compute `consensus_revision_direction_4q` as one of: `up_steady` (≥3 of 4 quarters revised upward in fy_eps_mean or fy_revenue_mean), `down_steady` (≥3 of 4 quarters revised downward), `mixed` (no steady direction).
+   - If `consensus_estimates` history is unavailable (yfinance cache cold), emit `consensus_revision_direction_4q: "UNAVAILABLE — no revision history"` and skip the consensus-side check (the segment-trend check below still runs).
+
+2. **Pull realized segment trend in the highest-OM segment** — re-use the data from §4.8 step 1-3 if already computed; otherwise compute trailing-K-quarter YoY growth in the dominant segment from primary-source 8-K Ex 99.1 segment trend tables.
+   - Compute `segment_yoy_recent_4q_avg` (most-recent 4 quarters' average YoY growth in the dominant segment).
+
+3. **Pull analyst's base-case year-1 and year-3 revenue growth assumptions** from the DCF you just constructed (the `assumptions.base.growth_y1_y10[0]` and `[2]` fields, or the explicit year-1/year-3 growth from your assumption path).
+
+4. **Run the lag check — `base_case_lag_flag`** = true iff EITHER of:
+   - `analyst_base_y1_growth_pct < (segment_yoy_recent_4q_avg × segment_revenue_share) - 2pp` (analyst base-year-1 path is materially behind realized segment momentum, prorated by segment weight in consolidated revenue), OR
+   - `consensus_revision_direction_4q == "up_steady"` AND `analyst_base_y1_growth_pct ≤ trailing_4q_realized_consolidated_yoy_growth_pct` (analyst is assuming flat-to-decel into year 1 while consensus is revising up — directionally inconsistent)
+
+5. **Emit `base_case_calibration_check` block** with:
+   - `consensus_revision_direction_4q` (string per step 1)
+   - `segment_yoy_recent_4q_avg_pct` (float)
+   - `analyst_base_y1_growth_pct` (float)
+   - `analyst_base_y3_growth_pct` (float)
+   - `base_case_lag_flag` (bool)
+   - `base_case_lag_rationale` (string, 1-3 sentences when flag=true; concise note when flag=false)
+
+6. **If `base_case_lag_flag = true`, you MUST either:**
+   - (a) **Update the base-case growth path** to internalize the realized segment momentum and/or upward consensus revisions, re-run the inherited DCF, and re-emit `inherited_dcf_base` accordingly. The updated assumptions should be cited in `assumptions.base.narrative` with a note that the path was calibrated against the lag check. OR
+   - (b) **Justify the divergence inline** in `base_case_lag_rationale` with specific reasons why the analyst's lower path is more accurate than the realized/consensus signal — e.g., a structural mix shift, a one-time pull-forward, a known tough comp coming. The justification must be falsifiable (cite the specific catalyst expected to validate the slower path within ≤12 months).
+
+   Option (a) is preferred for routine lag-detection (the DCF is supposed to be a coherent narrative, not a defensive baseline). Option (b) is acceptable only when the analyst has a specific contrarian thesis with a near-term resolution date. Silent acceptance of the lag flag without either updating the path or justifying the divergence is a process failure — the evaluator gate may flag this in a future revision once a successor HG validator is wired.
+
+**Anti-gaming guards:**
+
+- The `analyst_base_y1_growth_pct` value MUST be the actual value used in the DCF computation, not a re-stated value tuned to pass the check. The DCF assumptions block in `frameworks_cited[damodaran_narrative_dcf].assumptions.base` is the source of truth.
+- The `segment_yoy_recent_4q_avg_pct` MUST be computed from primary-source 8-K Ex 99.1 segment trend tables, not from sell-side research or industry commentary.
+
 ### 5. Emit memo
 
 Output schema:
@@ -547,7 +651,14 @@ frameworks_cited:
         current_reinvestment_rate_pct: <float>
         deployable_runway_years_est: <int | "SKIPPED">
         runway_evidence: [<evidence_id>, <evidence_id>, ...]
-        quality_label: "A | B | C | D | N/A capital-light | SKIPPED — speculative"
+        quality_label: "A | B | C | D | N/A capital-light | SKIPPED — speculative"  # legacy name = current-snapshot label; kept for HG-29 backward compatibility
+        # Cycle-normalized label (post-AMZN-2026-05-24 fix — phase-aware reinvestment scoring per §4 reinvestment_moat block):
+        quality_label_current: "A | B | C | D | N/A capital-light | SKIPPED — speculative"  # mirror of quality_label for explicit naming
+        quality_label_cycle_normalized: "A | B | C | D | N/A insufficient history | N/A capital-light | SKIPPED — speculative"
+        capex_cycle_position: "peak | mid | trough"  # trailing 12mo capex/sales vs trailing-5y rolling avg
+        cycle_normalized_roic_pct: <float | "INSUFFICIENT_HISTORY" | "N/A capital-light" | "SKIPPED — speculative">
+        cycle_normalized_method: "A_trailing_5y_avg | B_forward_normalized | C_insufficient_history"
+        quality_label_divergence_rationale: <string | null>  # required when quality_label_current != quality_label_cycle_normalized
         math_inline: <"ΔOp_income_3y $XB / Σreinvestment_3y $YB = Z%">
         wacc_pct: <float — copied from wacc_regime.wacc_pct for A/B/C/D threshold computation>  # M-2 fix: standardized field name to wacc_pct
 data_freshness:
@@ -606,6 +717,26 @@ outside_view:
 banned_outputs_check:
   peg_only_ranking_used: false
   fed_commentary_without_hfi_used: false
+# Post-AMZN-2026-05-24 fix — phase-aware CDD-ceiling signal (§4.8 structural_inflection_check). Mandatory for core_fundamental + thematic_growth; absent for speculative_optionality.
+structural_inflection_check:
+  highest_om_segment: <string — segment name, e.g. "AWS" | "Microsoft Cloud" | "Azure">
+  segment_yoy_reacceleration_pp: <float — most-recent YoY minus lowest YoY in trailing N-quarter window>
+  consecutive_quarters_reaccelerating: <int>
+  customer_backed_forward_visibility_years: <int>
+  customer_visibility_evidence_refs: [<uuid>, <uuid>, ...]  # evidence_ids for each contract/commitment
+  inflection_triggered: <bool>
+  inflection_override_rationale: <string | null>  # 2-4 sentences when triggered=true; null when false
+# Post-AMZN-2026-05-24 fix — phase-aware CDD ceiling. Read by CDD integration §2.5 step 6 + pm-supervisor §7.6 matrix consumption (downstream wiring tracked separately). The hint OPENS BUY-eligibility when inflection_triggered=true; it does NOT force BUY.
+disposition_recommendation_hint: "HOLD-eligible | BUY-eligible_via_inflection_override | SELL-via-quality-gate-fail"
+base_case_calibration_check:  # §4.9 — DCF base-case anti-lag discipline; emitted for core_fundamental + thematic_growth
+  consensus_revision_direction_4q: "up_steady | down_steady | mixed | UNAVAILABLE — no revision history"
+  segment_yoy_recent_4q_avg_pct: <float | "N/A">
+  analyst_base_y1_growth_pct: <float>
+  analyst_base_y3_growth_pct: <float>
+  trailing_4q_realized_consolidated_yoy_growth_pct: <float>
+  base_case_lag_flag: <bool>
+  base_case_lag_rationale: <string>  # 1-3 sentences; concise note when flag=false; required justification or update-citation when flag=true
+  base_case_path_updated_in_this_revision: <bool>  # true if §4.9 step 6(a) was invoked and the inherited DCF was re-emitted; false if step 6(b) inline justification was used or flag=false
 evidence_index_refs: [<uuid>, <uuid>, ...]  # HG-4 prerequisite (post-audit Bug 3 fix); every numerical/dated/named-fact claim must trace to one of these UUIDs via the corresponding output-field-level evidence_refs sub-arrays
 ```
 

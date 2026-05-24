@@ -115,6 +115,39 @@ For each Power claimed, populate `helmer_powers_evidence[]` in §5 output with:
 
 **Hard rule (Overlay 1 / v0.2):** if you cannot produce ≥2 primary-source citations at tier ≤ 2 for a Power, you do NOT hold that Power. Move it to `powers_assessed_not_held` with a one-line evidence-gap note. This is consumed mechanically by pm-supervisor's §2.6 Helmer-Power gate — un-evidenced Powers cannot justify above-base-rate growth divergence.
 
+**Power durability + erosion-vector schema (post-MSFT-2026-05-24 fix — erosion-aware Power scoring):**
+
+The 2-citation evidence floor above checks whether a Power EXISTS today. It does NOT check whether the Power is DURABLE forward — i.e., whether named structural threats with falsifying observables are already eroding it. A Power that meets the citation floor today but has visible erosion vectors (regulatory action, contract restructuring, technology substitution) is fundamentally weaker for forward valuation than a Power without such vectors. Case evidence: MSFT 2026-05-23 — `cornered_resource` claimed via OpenAI exclusivity, met the 2-citation floor, but pm-supervisor's own thesis-break trigger explicitly named "OpenAI 8-K amending Azure exclusivity" + the PBC restructuring + multi-cloud strategy as known erosion vectors. The Power should have counted as contingent, not full, in the FUND-axis Power count.
+
+For EACH Power you place in `helmer_powers_evidence[]`, you MUST also emit:
+
+- `durability_horizon_years` (int) — your analyst-asserted estimate of how many years the Power remains structurally intact before erosion would force a re-rate. Anchor on at least one cited mechanism (contract life, regulatory horizon, patent expiry, technology cycle). Cite the anchor via evidence_id in `durability_anchor_evidence_refs[]`. Typical ranges: 10+ for entrenched scale_economies on capex-barrier industries; 5-10 for switching_costs with maturing technology; 3-5 for cornered_resource tied to single counterparty; <3 → likely should not be claimed as held.
+
+- `known_erosion_vectors[]` — list of NAMED structural threats. Each entry MUST contain:
+  - `vector_name` (string — short name, e.g., "openai_pbc_restructuring", "regulatory_unbundling_eu_dma", "tpu_silicon_parity_2028")
+  - `mechanism` (1-2 sentences — what specifically would erode the Power)
+  - `falsifying_observable` (specific, measurable; same discipline as bull/bear case falsifiers in quant memo §4)
+  - `resolution_date` (calendar date ≤36 months forward when the erosion vector becomes observable)
+  - `evidence_id` for the citation anchoring the threat (regulatory filing, 8-K disclosure, public statement)
+
+  Empty list `[]` is acceptable AND meaningful — it asserts that you assessed and found no structural erosion vectors within the 36-month falsifier horizon. Omitting the field is NOT acceptable — emit the empty list explicitly.
+
+- `power_durability_classification` (enum) — emit one of:
+  - `"full"` — Power meets the 2-citation floor AND `durability_horizon_years >= 5` AND `known_erosion_vectors[]` is empty
+  - `"contingent"` — Power meets the 2-citation floor BUT `durability_horizon_years < 5` OR `known_erosion_vectors[]` is non-empty
+  - `"contingent"` is NOT a downgrade to `powers_assessed_not_held`; the Power IS held today, with explicit forward erosion risk surfaced
+
+**Downstream contract (FUND-axis scoring):** the pm-supervisor §7.6 Decision Cell Matrix FUND-axis Power-count signal MUST be updated to count `full` Powers at weight 1.0 and `contingent` Powers at weight 0.5. The `powers_assessed_not_held[]` array continues to weight 0. Until that downstream wiring lands, both the count and the classification breakdown are emitted; pm-supervisor's existing consumption is unchanged, and the contingent-classification surface is informational. Coordinated change tracked separately.
+
+**Anti-gaming guards:**
+
+- (a) The `durability_horizon_years` value MUST be anchored on at least one citation (contract term, regulatory deadline, patent expiry, technology-cycle benchmark). Round-number anchors without primary-source citation (e.g., "10y because it's a wide moat") are REJECTED.
+- (b) The `known_erosion_vectors[].falsifying_observable` MUST follow the same discipline as quant memo §4 bull/bear falsifier construction — forward-anchored, primary-source-cited baseline, specific threshold. Vague language ("regulatory pressure", "competition") is REJECTED.
+- (c) You may NOT assert `power_durability_classification: "full"` while citing `known_erosion_vectors[]` with non-empty entries. The classification must be mechanically derivable from the two emitted fields — internal inconsistency is REJECTED.
+- (d) The MSFT `cornered_resource` (OpenAI exclusivity) is the canonical case study for `contingent` classification: 2-citation floor met today, but the pm-supervisor envelope explicitly cites "OpenAI 8-K amending Azure exclusivity" as a thesis-break trigger — that fact alone forces contingent.
+
+**Symmetry note:** this schema is downgrade-only. It does NOT introduce a notion of "ascending Power" (a Power not yet at evidence floor but trending toward held). Helmer's framework does not support that direction; ascending-Power-style narratives belong in the bull-case narrative arc of the quant memo (which has its own evidence floor via helmer_power_anchor), not in this Power-holding schema.
+
 Common confusions to resolve:
 - Don't conflate Network Economies with Switching Costs
 - Don't claim Branding without quantified gross-margin premium
@@ -219,9 +252,25 @@ frameworks_cited:
           benefit_cashflow_effect: <string — concrete cash-flow mechanism>
           barrier_to_arbitrage: <string — specific mechanic, not vague claim>
           primary_source_citations: [<evidence_id>, <evidence_id>, ...]  # ≥2 required, all at source_quality_tier ≤ 2
+          # Post-MSFT-2026-05-24 fix — Power durability + erosion-vector schema (REQUIRED per §helmer_7_powers Power durability sub-section):
+          durability_horizon_years: <int — anchored on cited mechanism (contract life / regulatory horizon / patent expiry / tech cycle)>
+          durability_anchor_evidence_refs: [<evidence_id>, ...]  # citation(s) anchoring the durability_horizon_years estimate
+          known_erosion_vectors:  # list (possibly empty); each entry follows the schema below
+            - vector_name: <short snake_case identifier, e.g., "openai_pbc_restructuring">
+              mechanism: <1-2 sentences on what would erode the Power>
+              falsifying_observable: <specific, measurable, primary-source-cited; same discipline as quant §4 bull/bear falsifiers>
+              resolution_date: <YYYY-MM-DD, ≤36 months forward>
+              evidence_id: <evidence_id anchoring the threat>
+          power_durability_classification: "full | contingent"  # full = 2-cite floor met AND horizon≥5y AND no known_erosion_vectors; contingent otherwise
       powers_assessed_not_held:
         - power_name: <one of 7>
           evidence_gap_note: <one-line note on what evidence would be required>
+      # Post-MSFT-2026-05-24 fix — top-level Power-count breakdown for downstream FUND-axis scoring
+      helmer_powers_count_breakdown:
+        n_full: <int — count of helmer_powers_evidence[] entries with power_durability_classification="full">
+        n_contingent: <int — count of helmer_powers_evidence[] entries with power_durability_classification="contingent">
+        n_assessed_not_held: <int — count of powers_assessed_not_held[]>
+        n_effective_for_fund_axis: <float — n_full × 1.0 + n_contingent × 0.5; rounded to 1dp>
       # Note: pre-Overlay-1 schema used flat `powers_held` with `power/benefit/barrier`; replaced 2026-05 with structured helmer_powers_evidence for mechanical Helmer-gate consumption by pm-supervisor §2.6.
   - framework_key: mauboussin_capital_allocation_2024
     output:
