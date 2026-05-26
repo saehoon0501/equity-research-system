@@ -598,3 +598,39 @@ The PIT dimensions (`ARY`/`ARQ`) and full history are gated to the paid SF1 subs
 - Phase 2 calibration workstream needs explicit owner — `/calibrate-forensics` skill not yet drafted; surfacing here so it doesn't disappear into "we'll calibrate later" rot.
 
 **Next:** integration test on a watchlist ticker (likely MU — recurring test case across design) to verify quant emits all five schema blocks and pm-supervisor's outside-view check fires correctly. No further file edits expected pre-test; if test surfaces a gap, address as a follow-on edit, not a redesign.
+
+---
+
+## Plugin restructure + decision-7 archive (2026-05-26)
+
+Packaged the repo as a single Claude Code plugin (`equity-research`, `.claude-plugin/plugin.json`)
+and **executed** decision 7's long-documented-but-never-run scope collapse — as a reversible
+`git mv` to `archive/_retired/` (operator chose archive over decision 7's original `git rm`).
+
+**What changed:**
+1. **`.claude-plugin/plugin.json`** — new single-plugin manifest. Declares the two keep-set commands
+   (`research-company`, `evaluate`), the `agents/` dir (8 agents), and `mcpServers: ./.mcp.json`.
+   Files were **not moved**: command/agent `.md` stay in `.claude/`, so they auto-load as project
+   scope (today's behavior) and the manifest is dormant until the plugin is explicitly loaded
+   (`claude --plugin-dir ./`) or installed. `research-company.md` and all agent specs are byte-identical.
+2. **Archived to `archive/_retired/`** (see `docs/decision-7-sweep-set.md` for the full derived sweep):
+   16 `src/` modules (incl. `mcp/broker_mcp`), 22 commands, 16 `tests/unit/<module>` dirs + 7
+   integration/regression tests exercising retired pipelines, 2 dead one-off scripts, and off-path
+   UI (`dashboard/`, `provider_verification/`, root `LivePanel.tsx`).
+3. **`.mcp.json`** — dropped the `broker` server (impl archived). 9 servers remain.
+
+**Decision-7 retire-set corrections (the literal list was stale).** The mandated grep-trace of the
+`/research-company` keep-set found decision 7 would have deleted modules the pipeline depends on.
+KEPT against the literal retire-set: `regime_sidecar` (imported by p8 tactical `bin_classifier`),
+`audit_trail` (imported by p7 `emitter`), `mode_classifier` (evaluator HG-26 Check 3), plus
+`eval/` and `p10_reversion_overlay`/`mean-reversion-overlay` which post-date decision 7. The keep-set
+is therefore 12 `src/` modules + the 9 MCP servers, not decision 7's narrower literal list.
+
+**Deferred (NOT done this run):** DB-migration retirement (moving numbered `.sql` breaks replay
+ordering; `system_errors` mig 014 is still used — decision 7's "drop 014" is wrong; needs DB-state
+analysis). And the research-company flow's internal protocol/boilerplate consolidation — operator
+chose "reorg only," so the orchestration spec is left byte-identical; consolidation remains a future
+refactor.
+
+**Reversal:** `git mv archive/_retired/<path> <original>`; history preserved via `git log --follow`.
+Re-add `broker` to `.mcp.json` if `broker_mcp` is restored.

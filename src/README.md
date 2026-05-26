@@ -4,6 +4,14 @@ Supporting Python infrastructure for the equity research system.
 
 Per Path A (BUILD_LOG.md Day 1 architectural decisions), agent definitions live in `.claude/agents/` (Claude Code subagent infrastructure), not in `src/agents/`. The Python modules in this directory are the substrate that agents read from and write to.
 
+> **2026-05-26 — decision-7 scope collapse.** The `/research-company` keep-set now is:
+> `p8_tactical_overlay`, `p9_flow_overlay`, `p10_reversion_overlay`, `evaluator_gates`,
+> `p7_recommendation_emitter`, `agent_harness`, `data_layer`, `regime_sidecar`, `audit_trail`,
+> `evidence_index`, `mode_classifier`, `eval`, and `mcp/` (9 servers). Modules below that no longer
+> appear in this directory — including `backtesting/` — were archived to `archive/_retired/src/`
+> (reversible). The build-sequence table and dependency graph below are **historical**; see
+> [`docs/decision-7-sweep-set.md`](../docs/decision-7-sweep-set.md) for the authoritative keep/retire list.
+
 ---
 
 ## Build sequence (per implementation-sequencing.md §4 — FTE track)

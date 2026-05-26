@@ -1,0 +1,23 @@
+{
+  "name": "equity-research",
+  "version": "0.1.0",
+  "description": "Slow-layer equity research as a Claude Code plugin: the /research-company orchestrator (2-stage CDD + quant/strategic/tactical/flow overlays + catalyst-scout + pm-supervisor + single evaluator gate) emitting a BUY/HOLD/TRIM/SELL execution recommendation, plus /evaluate. US equities, multi-month horizon, paper-only (v0.1).",
+  "author": {
+    "name": "saehoon0501"
+  },
+  "commands": [
+    "./.claude/commands/research-company.md",
+    "./.claude/commands/evaluate.md"
+  ],
+  "agents": [
+    "./.claude/agents/quantitative-analyst.md",
+    "./.claude/agents/strategic-analyst.md",
+    "./.claude/agents/tactical-overlay.md",
+    "./.claude/agents/flow-overlay.md",
+    "./.claude/agents/mean-reversion-overlay.md",
+    "./.claude/agents/catalyst-scout.md",
+    "./.claude/agents/pm-supervisor.md",
+    "./.claude/agents/evaluator.md"
+  ],
+  "mcpServers": "./.mcp.json"
+}
