@@ -3,7 +3,7 @@
 Outer-ring Eval surface per CLAUDE.md P14.
 
 **Status:** Layer 1 (scorer) only. Layers 2 (resolver) and 3 (model_health)
-deferred to `docs/superpowers/specs/2026-05-23-eval-loop-creation-design.md`
+deferred to `archive/_retired/docs/superpowers/specs/2026-05-23-eval-loop-creation-design.md`
 (DRAFT, not approved as of 2026-05-23).
 
 ## Layers

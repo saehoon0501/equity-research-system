@@ -70,6 +70,38 @@ plus two that **post-date** decision 7 and are deliberate recent work. All five 
   / PARAMETERS_USED / terminal-status / context-sidecar boilerplate). Operator chose "reorg only" —
   the flow spec is left byte-identical. This remains an available future refactor.
 
+## Docs trim (2026-05-27)
+
+Followed up by trimming `docs/` from 60 → 17 files (the other 43 `git mv`'d to
+`archive/_retired/docs/`). The trim was driven by a reference trace, not by date: a doc was KEPT
+only if a **live** consumer cites it — CLAUDE.md's reading order, a `.claude/agents/*` or
+`research-company.md` authority citation, or a `src/`/`scripts/` provenance pointer.
+
+**Kept (17, load-bearing):** `v2-final-spec.md`, `phasing-plan.md` (C3 thresholds), `v2-orchestrator-refactor-consensus.md`,
+`high-4-enum-drift-consensus.md`, `implementation-sequencing.md`, `phase_gates.md`, `big-finance-comparison.md`,
+`decision-7-sweep-set.md`, and under `superpowers/`: `specs/2026-04-29-empirical-foundation-design-v3.md`,
+`specs/v3.1-stress-subtest-enum.md`, `specs/v3.1-signoff-attestation.md`, `specs/2026-05-07-flow-b-v1…-design.md`,
+`specs/2026-05-23-ring-architecture….md`, `audits/2026-05-18-parameter-externalization…checklist.md`,
+`consensus/2026-05-21-section2.1-label-vocabulary.md`, `plans/2026-05-21-section2-tactical-overlay-v3-final.md`,
+`research/2026-05-22-step3…promotion.md`.
+
+**Archived (43):** the section-1..8 consensus drafts + `phase_1_acceptance_spec`, all 10 launch-walkthroughs,
+launch-readiness-log + operator-reference + v0.1-launch-readiness-audit, superseded plans/specs
+(eval-loop create/delete designs, v3.0-signoff, v3.1-frameworks-cited-migration, two superseded plans),
+the phase5a postmortem, two research notes, two GOOGL sweep docs, `constitution.md`, `ecosystem-patterns`,
+`g_check_4_verification_spec`, `parameter-review-queue`, `harness-reference`, `tier4-deferred-work*`,
+and the two bug3/calibration-overlay consensus notes.
+
+**Why not "remove all of docs/" (operator's initial hypothesis):** BUILD_LOG *points to* `docs/` for
+canonical substance (C3 thresholds in `phasing-plan.md §2.5`, DDL/gate-criteria in `v2-final-spec.md`,
+the v3 design spec) rather than reproducing it, and CLAUDE.md + ~40 live agent/`src` citations resolve
+into the kept subset — so a wholesale removal would break the documented authority chain.
+
+Residual cosmetic dangling pointers (content preserved in `archive/`): BUILD_LOG/README historical-narrative
+mentions of `harness-reference`/`tier4-deferred-work`/`operator-reference`/`launch-readiness-log` (left as
+written-time-accurate history). The two *current* module READMEs (`src/eval/`, `src/mcp/fundamentals/`)
+were repointed to their `archive/_retired/docs/…` locations.
+
 ## Reversal
 
 `git mv archive/_retired/<path> <original-path>` restores any item; `git log --follow` preserves

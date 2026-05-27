@@ -10,7 +10,7 @@ Sharadar Core Fundamentals subscription is deliberately deferred per
 `BUILD_LOG.md` decision 2. v0.1 is paper-only and does not require
 point-in-time fundamentals or survivorship-bias-free delisting data to ship a
 sample memo. Full deferral rationale and unblocking criteria live in
-`docs/tier4-deferred-work.md`.
+`archive/_retired/docs/tier4-deferred-work.md`.
 
 ## Operator unblocking
 
