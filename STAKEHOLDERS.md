@@ -19,6 +19,13 @@ from the repo root.
 | **eval** | `eval/evaluator.md` | `src/eval/` (`scorer.py` outer-ring + `gates/` = HG-* envelope/shape validators), `src/mcp/contamination_check/` | `tests/unit/eval/gates/` |
 | **shared infra** | — | `src/shared/{agent_harness,data_layer,evidence_index,audit_trail,regime_sidecar,mode_classifier}/` | `tests/unit/shared/*`, `tests/unit/mcp/` |
 | **external adapters** | — | `src/mcp/{postgres,contamination_check,edgar,market_data,yfinance,fundamentals,fred,polygon,macro_stack}/` | `tests/unit/mcp/` |
+| **operator UI** | — | `dashboard/` (Vite `research-dashboard`; `npm run dev` → `:5173`) | — |
+
+`dashboard/` is the operator's read view across all stakeholders: its Vite dev-server plugin
+(`dashboard/vite.config.ts`) serves `/__api/*` by reading `memos/`+`memos/envelopes/`,
+`.claude/agents/` (recursively), `logs/validation_attempts.jsonl`, and the DB via
+`docker exec equity-research-db psql`. It imports no `src/` Python, so the stakeholder regroup
+doesn't touch it. Requires the DB container up + `npm install` in `dashboard/`.
 
 ## Pipeline flow (who runs when)
 

@@ -54,8 +54,14 @@ plus two that **post-date** decision 7 and are deliberate recent work. All five 
   premortem / alert pipelines) — none cover a kept module's only test path.
 - **2 one-off data scripts** importing retired modules: persist_watchlist_2026_05_06.py,
   update_scenario_a_canonical.py
-- **Off-path UI/scaffolding:** dashboard/ (Vite research-dashboard), provider_verification/,
-  root LivePanel.tsx
+- **Off-path scaffolding:** provider_verification/, and root `LivePanel.tsx` (an identical stray
+  duplicate of `dashboard/src/LivePanel.tsx`).
+- **CORRECTION (2026-05-27):** `dashboard/` (Vite `research-dashboard`) was initially archived here
+  as "off-path UI," but that was wrong — it is the operator UI in active use. It reads
+  `memos/`+`memos/envelopes/`, `.claude/agents/` (recursively), `logs/validation_attempts.jsonl`,
+  and the DB (via `docker exec … psql`) to render runs / gates / live panels. It imports **no**
+  `src/` Python and reads `.claude/agents/` recursively, so neither the stakeholder regroup nor the
+  agent-subdir move affects it. **Restored to repo root `dashboard/`.**
 
 **Config side-effect:** the `broker` server was removed from `.mcp.json` (and from the gitignored
 `.claude/settings.local.json` enable-list) because its implementation `src/mcp/broker_mcp/` is archived.
