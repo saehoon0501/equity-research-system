@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.evaluator_gates._frameworks_cited_shim import (
+from src.eval.gates._frameworks_cited_shim import (
     find_framework,
     get_framework_keys,
     is_keyed_object_form,

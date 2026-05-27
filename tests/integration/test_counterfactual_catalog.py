@@ -1,10 +1,10 @@
-"""Unit tests for src.evaluator_gates.counterfactual_catalog (Group E)."""
+"""Unit tests for src.eval.gates.counterfactual_catalog (Group E)."""
 
 from __future__ import annotations
 
 import pytest
 
-from src.evaluator_gates.counterfactual_catalog import (
+from src.eval.gates.counterfactual_catalog import (
     ALLOWED_BUCKETS,
     EXPECTED_TOP_K,
     REQUIRED_BUCKETS,

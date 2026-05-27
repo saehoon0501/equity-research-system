@@ -60,16 +60,6 @@
         "src/mcp/fred/server.py"
       ]
     },
-    "broker": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--project",
-        "src/mcp/broker_mcp",
-        "python",
-        "src/mcp/broker_mcp/server.py"
-      ]
-    },
     "yfinance": {
       "command": "uv",
       "args": [

@@ -1,6 +1,6 @@
 # Process Rubric (Universal)
 
-Per v2-final §3.1, every LLM agent output is graded against this rubric. The Evaluator subagent (`.claude/agents/evaluator.md`) applies this. Hard gates listed below block output release.
+Per v2-final §3.1, every LLM agent output is graded against this rubric. The Evaluator subagent (`.claude/agents/eval/evaluator.md`) applies this. Hard gates listed below block output release.
 
 ## Universal criteria
 
@@ -77,7 +77,7 @@ Outputs that pass hard gates but score low overall are released downstream with 
 Each agent has additional rubric criteria beyond the universal set. See:
 - CompanyDeepDive: success criteria in `.claude/agents/company-deep-dive.md`
 - BearCase: success criteria in `.claude/agents/bear-case.md`
-- Evaluator (self-evaluation): success criteria in `.claude/agents/evaluator.md`
+- Evaluator (self-evaluation): success criteria in `.claude/agents/eval/evaluator.md`
 
 The Evaluator applies both universal + agent-specific.
 

@@ -1,4 +1,4 @@
-"""Unit tests for src.evaluator_gates.catalyst_memo_shape (HG-31)."""
+"""Unit tests for src.eval.gates.catalyst_memo_shape (HG-31)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from src.evaluator_gates.catalyst_memo_shape import (
+from src.eval.gates.catalyst_memo_shape import (
     VALID_ACTIVE_MANAGER_READS,
     VALID_CATALYST_TYPES,
     VALID_KPI_IMPACTS,

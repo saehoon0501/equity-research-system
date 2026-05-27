@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.evaluator_gates.reversion_envelope_shape import (
+from src.eval.gates.reversion_envelope_shape import (
     validate_reversion_envelope_shape,
 )
 

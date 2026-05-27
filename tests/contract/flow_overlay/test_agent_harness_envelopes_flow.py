@@ -1,8 +1,8 @@
-"""Tests for src/agent_harness/envelopes/flow.py validate() — covers cross-field
+"""Tests for src/shared/agent_harness/envelopes/flow.py validate() — covers cross-field
 predicates that the HG envelope shape validator does not enforce.
 """
 
-from src.agent_harness.envelopes.flow import (
+from src.shared.agent_harness.envelopes.flow import (
     FLOW_BIN_VALUES,
     FLOW_DISPOSITION_VALUES,
     REASONING_STEPS,
@@ -96,7 +96,7 @@ def test_schema_required_keys():
 
 def test_enum_surfaces_match_validator():
     """envelope/flow.py enums must match evaluator_gates/flow_envelope_shape.py."""
-    from src.evaluator_gates.flow_envelope_shape import (
+    from src.eval.gates.flow_envelope_shape import (
         FLOW_BIN_VALUES as HG_BIN,
         FLOW_DISPOSITION_VALUES as HG_DISP,
     )

@@ -1,4 +1,4 @@
-"""Unit tests for src.evaluator_gates.cdd_memo_shape (HG-32)."""
+"""Unit tests for src.eval.gates.cdd_memo_shape (HG-32)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from src.evaluator_gates.cdd_memo_shape import (
+from src.eval.gates.cdd_memo_shape import (
     REQUIRED_BANNED_OUTPUTS_KEYS,
     VALID_DISPOSITIONS,
     VALID_TIERS,

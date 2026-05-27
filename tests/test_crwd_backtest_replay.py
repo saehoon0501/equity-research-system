@@ -27,7 +27,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.p10_reversion_overlay.bin_classifier import classify_reversion
+from src.overlays.reversion.bin_classifier import classify_reversion
 from scripts.backtest_reversion import _replay, _monthly_anchors
 
 FIXTURE_PATH = ROOT / "tests" / "fixtures" / "crwd_prices_2025-03_2026-05.json"

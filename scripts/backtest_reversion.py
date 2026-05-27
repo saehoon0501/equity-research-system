@@ -21,7 +21,7 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-from src.p10_reversion_overlay.bin_classifier import (
+from src.overlays.reversion.bin_classifier import (
     classify_reversion,
     first_trading_day_of_month,
 )

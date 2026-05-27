@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import sys
 
-from src.agent_harness.dispatch_template import (
+from src.shared.agent_harness.dispatch_template import (
     EvidenceRef,
     lint_dispatch_prompt,
     render_dispatch_prompt,
 )
-from src.agent_harness.envelopes import quantitative as quant_envelope
+from src.shared.agent_harness.envelopes import quantitative as quant_envelope
 
 
 _RUN_ID = "44444444-5555-4666-8777-888888888888"

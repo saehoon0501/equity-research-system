@@ -1,15 +1,15 @@
 """Tests for resolve_latest_value_in_window — the shared FRED walker utility.
 
 Single source of truth for "latest valid value at/before target_date" used by:
-- src.regime_sidecar.fred_client.latest_value (regime sidecar)
-- src.p8_tactical_overlay.bin_classifier.resolve_rf_at (tactical overlay)
+- src.shared.regime_sidecar.fred_client.latest_value (regime sidecar)
+- src.overlays.tactical.bin_classifier.resolve_rf_at (tactical overlay)
 
 Per Section 3 integration debt consolidation (was deferred by /simplify).
 """
 
 from datetime import date
 
-from src.regime_sidecar.fred_client import resolve_latest_value_in_window
+from src.shared.regime_sidecar.fred_client import resolve_latest_value_in_window
 
 
 def _obs(d: str, v: float | None) -> dict:
@@ -83,7 +83,7 @@ def test_walks_backward_through_nd_cluster():
 
 def test_legacy_latest_value_unchanged_signature():
     """Backward-compat: regime_sidecar.latest_value still returns ('', None) sentinel."""
-    from src.regime_sidecar.fred_client import resolve_latest_value_in_window as _walker
+    from src.shared.regime_sidecar.fred_client import resolve_latest_value_in_window as _walker
 
     # Confirm the new utility returns None,None for empty (not '',None)
     assert _walker([], target_date=None) == (None, None)
@@ -93,7 +93,7 @@ def test_legacy_latest_value_unchanged_signature():
 
 def test_consolidation_bin_classifier_adapter_matches_walker():
     """bin_classifier.resolve_rf_at must delegate to resolve_latest_value_in_window."""
-    from src.p8_tactical_overlay.bin_classifier import resolve_rf_at
+    from src.overlays.tactical.bin_classifier import resolve_rf_at
 
     fred_window = [
         (date(2026, 5, 18), 4.61),

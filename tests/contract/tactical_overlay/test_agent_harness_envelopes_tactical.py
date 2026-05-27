@@ -18,16 +18,16 @@ import json
 import sys
 from copy import deepcopy
 
-from src.agent_harness.delta_prompt import build_delta_prompt
-from src.agent_harness.dispatch_template import (
+from src.shared.agent_harness.delta_prompt import build_delta_prompt
+from src.shared.agent_harness.dispatch_template import (
     EvidenceRef,
     lint_dispatch_prompt,
     render_dispatch_prompt,
 )
-from src.agent_harness.envelopes import to_gate_outcome
-from src.agent_harness.envelopes import tactical as tactical_envelope
-from src.evaluator_gates import AggregateValidationResult
-from src.evaluator_gates.tactical_envelope_shape import (
+from src.shared.agent_harness.envelopes import to_gate_outcome
+from src.shared.agent_harness.envelopes import tactical as tactical_envelope
+from src.eval.gates import AggregateValidationResult
+from src.eval.gates.tactical_envelope_shape import (
     validate_tactical_envelope_shape,
 )
 

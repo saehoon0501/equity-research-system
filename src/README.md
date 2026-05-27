@@ -4,6 +4,19 @@ Supporting Python infrastructure for the equity research system.
 
 Per Path A (BUILD_LOG.md Day 1 architectural decisions), agent definitions live in `.claude/agents/` (Claude Code subagent infrastructure), not in `src/agents/`. The Python modules in this directory are the substrate that agents read from and write to.
 
+> **2026-05-27 — regrouped by stakeholder.** `src/` is now organized by pipeline stakeholder
+> (see [`../STAKEHOLDERS.md`](../STAKEHOLDERS.md)):
+> - `overlays/{tactical,flow,reversion}/` — the three overlay engines (was `p8`/`p9`/`p10_*`)
+> - `supervisor/` — recommendation emitter + conviction rollup + sizing (was `p7_recommendation_emitter`)
+> - `eval/` — `scorer.py` (outer-ring) + `gates/` (HG-* validators, was `evaluator_gates`)
+> - `shared/{agent_harness,data_layer,evidence_index,audit_trail,regime_sidecar,mode_classifier}/` — cross-cutting infra
+> - `mcp/` — 9 external-service adapters (unchanged)
+>
+> Per the earlier decision-7 scope collapse, off-critical-path modules (incl. `backtesting/`) were
+> removed (recoverable via git history). `overlays/` and `shared/` are namespace dirs (no
+> `__init__.py`). The build-sequence table and dependency graph below are **historical**; see
+> [`docs/decision-7-sweep-set.md`](../docs/decision-7-sweep-set.md) for the keep/retire list.
+
 ---
 
 ## Build sequence (per implementation-sequencing.md §4 — FTE track)

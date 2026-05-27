@@ -164,7 +164,7 @@ Trace through `/research-company`:
 - `src/mcp/contamination_check/pyproject.toml` — same deps as postgres MCP plus nothing new.
 - `src/mcp/contamination_check/README.md` — bring-up doc.
 - Update repo-root `.mcp.json` to launch `mcp__contamination_check` alongside `mcp__postgres`.
-- Update `.claude/agents/evaluator.md` `tools:` line to add `mcp__contamination_check`.
+- Update `.claude/agents/eval/evaluator.md` `tools:` line to add `mcp__contamination_check`.
 
 **Smoke test (matches `contamination-check.md` §"Test cases for week 6 implementation"):**
 
