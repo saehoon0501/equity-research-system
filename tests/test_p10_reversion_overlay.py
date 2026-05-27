@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.p10_reversion_overlay.bin_classifier import (
+from src.overlays.reversion.bin_classifier import (
     classify_reversion,
     _rsi_wilder,
     _bollinger_band_position,

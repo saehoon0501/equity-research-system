@@ -19,10 +19,12 @@ off-critical-path machinery was archived to `archive/_retired/` (reversible).
 ├── commands/                # operator entry points
 │   ├── research-company.md  # 🎯 the orchestrator — full slow-layer run → BUY/HOLD/TRIM/SELL
 │   └── evaluate.md          # Evaluator process-rubric grading of an output
-├── agents/                  # subagents (isolated context), dispatched BY NAME via Agent()
-│   ├── quantitative-analyst.md   strategic-analyst.md
-│   ├── tactical-overlay.md       flow-overlay.md        mean-reversion-overlay.md
-│   ├── catalyst-scout.md         pm-supervisor.md       evaluator.md
+├── agents/                  # subagents, grouped by stakeholder; dispatched BY NAME via Agent()
+│   ├── analysts/            # quantitative-analyst.md, strategic-analyst.md
+│   ├── overlays/           # tactical-overlay.md, flow-overlay.md, mean-reversion-overlay.md
+│   ├── catalyst/           # catalyst-scout.md
+│   ├── supervisor/         # pm-supervisor.md
+│   └── eval/               # evaluator.md   (subdir path is cosmetic — identity = name: frontmatter)
 ├── references/              # cross-cutting procedural content, loaded via `Read` by path
 ├── settings.json            # tracked governance hooks (P8 — never move to settings.local.json)
 └── settings.local.json      # local, gitignored (MCP enable-list, local perms)
@@ -64,7 +66,7 @@ claim-to-row resolution, attached inside `evaluator`), `edgar` (filings), `marke
 
 - **PreToolUse** (`scripts/research_company_as_of_tag_gate.sh`, in tracked `settings.json`) —
   HMAC-validates `--as-of-tag` sweep args before the orchestrator runs.
-- **PostToolUse** (`scripts/post_agent_validate.sh` → `src/agent_harness/orchestrator_step.py`) —
+- **PostToolUse** (`scripts/post_agent_validate.sh` → `src/shared/agent_harness/orchestrator_step.py`) —
   locates each subagent envelope by `run_id`, runs the HG-* shape/math gates, and drives the
   fingerprint-dedup + cost-ledger + 3-strike retry/escalate state machine.
 

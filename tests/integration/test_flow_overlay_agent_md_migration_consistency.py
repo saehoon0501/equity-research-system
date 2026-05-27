@@ -1,4 +1,4 @@
-"""Cross-validates that the PARAMETERS_USED list in .claude/agents/flow-overlay.md
+"""Cross-validates that the PARAMETERS_USED list in .claude/agents/overlays/flow-overlay.md
 matches the rows inserted by db/migrations/039_flow_overlay_parameters.sql.
 
 Per /review-me iteration 1 finding #5: agent .md and migration are independent
@@ -22,7 +22,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-AGENT_MD = REPO_ROOT / ".claude" / "agents" / "flow-overlay.md"
+AGENT_MD = REPO_ROOT / ".claude" / "agents" / "overlays" / "flow-overlay.md"
 MIGRATION_SQL = REPO_ROOT / "db" / "migrations" / "039_flow_overlay_parameters.sql"
 
 # Migration 039 also seeds sizing.* rows consumed by pm-supervisor (not flow-overlay).

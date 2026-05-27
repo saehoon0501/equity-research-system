@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from src.evaluator_gates import VALID_ARTIFACT_TYPES, validate_all
+from src.eval.gates import VALID_ARTIFACT_TYPES, validate_all
 
 
 def _u() -> str:
@@ -87,7 +87,7 @@ def test_artifact_type_via_cli_quant_memo(tmp_path) -> None:
     repo_root = Path(__file__).resolve().parent.parent.parent
     proc = subprocess.run(
         [
-            sys.executable, "-m", "src.evaluator_gates",
+            sys.executable, "-m", "src.eval.gates",
             "--envelope", str(memo_path),
             "--artifact-type", "quant_memo",
         ],
@@ -115,7 +115,7 @@ def test_artifact_type_via_orchestrator_step_cli(tmp_path) -> None:
     repo_root = Path(__file__).resolve().parent.parent.parent
     proc = subprocess.run(
         [
-            sys.executable, "-m", "src.agent_harness.orchestrator_step",
+            sys.executable, "-m", "src.shared.agent_harness.orchestrator_step",
             "--envelope", str(memo_path),
             "--run-id", "art-type-test",
             "--agent-type", "strategic-analyst",

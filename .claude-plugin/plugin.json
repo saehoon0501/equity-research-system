@@ -10,14 +10,14 @@
     "./.claude/commands/evaluate.md"
   ],
   "agents": [
-    "./.claude/agents/quantitative-analyst.md",
-    "./.claude/agents/strategic-analyst.md",
-    "./.claude/agents/tactical-overlay.md",
-    "./.claude/agents/flow-overlay.md",
-    "./.claude/agents/mean-reversion-overlay.md",
-    "./.claude/agents/catalyst-scout.md",
-    "./.claude/agents/pm-supervisor.md",
-    "./.claude/agents/evaluator.md"
+    "./.claude/agents/analysts/quantitative-analyst.md",
+    "./.claude/agents/analysts/strategic-analyst.md",
+    "./.claude/agents/overlays/tactical-overlay.md",
+    "./.claude/agents/overlays/flow-overlay.md",
+    "./.claude/agents/overlays/mean-reversion-overlay.md",
+    "./.claude/agents/catalyst/catalyst-scout.md",
+    "./.claude/agents/supervisor/pm-supervisor.md",
+    "./.claude/agents/eval/evaluator.md"
   ],
   "mcpServers": "./.mcp.json"
 }

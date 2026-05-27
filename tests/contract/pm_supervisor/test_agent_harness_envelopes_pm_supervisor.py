@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import sys
 
-from src.agent_harness.dispatch_template import (
+from src.shared.agent_harness.dispatch_template import (
     EvidenceRef,
     lint_dispatch_prompt,
     render_dispatch_prompt,
 )
-from src.agent_harness.envelopes import pm_supervisor as pm_envelope
+from src.shared.agent_harness.envelopes import pm_supervisor as pm_envelope
 
 
 _RUN_ID = "55555555-6666-4777-8888-999999999999"

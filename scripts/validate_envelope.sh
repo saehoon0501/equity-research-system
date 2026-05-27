@@ -2,7 +2,7 @@
 # validate_envelope.sh — orchestrator-side per-attempt validation hook.
 #
 # The /research-company orchestrator calls this script after every
-# subagent dispatch. The script wraps src.agent_harness.orchestrator_step
+# subagent dispatch. The script wraps src.shared.agent_harness.orchestrator_step
 # with thin shell ergonomics:
 #
 #   - Ensures logs/ + logs/validation_state/ exist.
@@ -60,7 +60,7 @@ TMP_OUT="$(mktemp -t validate_envelope.XXXXXX.json)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
 set +e
-"$PY" -m src.agent_harness.orchestrator_step "$@" > "$TMP_OUT"
+"$PY" -m src.shared.agent_harness.orchestrator_step "$@" > "$TMP_OUT"
 PY_EXIT=$?
 set -e
 

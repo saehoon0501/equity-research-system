@@ -1,4 +1,4 @@
-"""Unit tests for src.evaluator_gates.strategic_memo_shape (HG-30)."""
+"""Unit tests for src.eval.gates.strategic_memo_shape (HG-30)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from src.evaluator_gates.strategic_memo_shape import (
+from src.eval.gates.strategic_memo_shape import (
     CANONICAL_HELMER_POWERS,
     CAPITAL_ALLOCATION_BUCKETS,
     HELD_POWER_MIN_CITATIONS,

@@ -1,4 +1,4 @@
-"""Unit tests for src.data_layer.print_date_lookup (Bug 12 fix).
+"""Unit tests for src.shared.data_layer.print_date_lookup (Bug 12 fix).
 
 Tests the pure-math layer only — the HTTP fetchers are smoke-tested
 manually via the CLI (network-dependent, not in CI).
@@ -10,7 +10,7 @@ import datetime as dt
 
 import pytest
 
-from src.data_layer.print_date_lookup import (
+from src.shared.data_layer.print_date_lookup import (
     PrintProjection,
     project_print_date,
 )

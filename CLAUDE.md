@@ -48,7 +48,7 @@ These are the load-bearing rules of the system. Read them before changing anythi
 
 Slash-command specs in `.claude/commands/` hold control flow. Python lives in two places only: **MCP server implementations** (`src/mcp/<server>/`, each with its own `pyproject.toml`, launched via `uv` per `.mcp.json`) and **skill helpers** (`src/skills/<command>/`, created when first needed). Agent prompts are markdown in `.claude/agents/`, versioned via git. If you find yourself writing a Python file that makes routing decisions or dispatches subagents, step back — it likely shouldn't exist.
 
-`src/agent_harness/` is **not** an orchestrator despite the name. It is the per-attempt retry state machine consumed by the PostToolUse hook (see P5). Do not extend it with orchestration logic.
+`src/shared/agent_harness/` is **not** an orchestrator despite the name. It is the per-attempt retry state machine consumed by the PostToolUse hook (see P5). Do not extend it with orchestration logic.
 
 ### P2 — Pin ground truth at the boundary; propagate by value
 
@@ -64,7 +64,7 @@ Subagent output → JSON envelope on disk **before return**. Cross-stage communi
 
 ### P5 — PostToolUse hooks enforce what the spec only asks for
 
-If a contract matters (envelope persisted, `run_id` present, shape valid, cost under ceiling), enforce it at the hook seam — the orchestrator cannot forget. `scripts/post_agent_validate.sh` fires after every `Agent` dispatch, locates the envelope by `run_id`, invokes `src/agent_harness/orchestrator_step.py` (deterministic state machine: fingerprint dedup + cost ledger + 3-strike cap; per-(run_id, agent) cumulative ceiling $60 default), exits 0 PASS / 10 RETRY (with delta-prompt on stderr) / 11 ESCALATE.
+If a contract matters (envelope persisted, `run_id` present, shape valid, cost under ceiling), enforce it at the hook seam — the orchestrator cannot forget. `scripts/post_agent_validate.sh` fires after every `Agent` dispatch, locates the envelope by `run_id`, invokes `src/shared/agent_harness/orchestrator_step.py` (deterministic state machine: fingerprint dedup + cost ledger + 3-strike cap; per-(run_id, agent) cumulative ceiling $60 default), exits 0 PASS / 10 RETRY (with delta-prompt on stderr) / 11 ESCALATE.
 
 This is the canonical place for "logic too deterministic for LLM prose, but too small for a service": push it to Python, leave the re-dispatch decision in Claude Code.
 
@@ -90,7 +90,7 @@ Main session has no `Agent()` to hook into when it emits its own artifact (e.g.,
 
 ### P11 — Each agent owns its envelope schema and its own HG validator
 
-Do not propose a shared base envelope interface for multi-agent communication. LLM consumers read heterogeneous shapes natively; cross-agent persistent state goes through DB tables, not envelope inheritance. Each agent: own spec → own envelope → own HG validator in `src/evaluator_gates/`.
+Do not propose a shared base envelope interface for multi-agent communication. LLM consumers read heterogeneous shapes natively; cross-agent persistent state goes through DB tables, not envelope inheritance. Each agent: own spec → own envelope → own HG validator in `src/eval/gates/`.
 
 ### P12 — Spec changes touching agent emission require a smoke test
 
