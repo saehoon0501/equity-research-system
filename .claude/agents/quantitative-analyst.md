@@ -768,3 +768,61 @@ memos/envelopes/quantitative-analyst__<run_id>.json
 3. Then return your normal output to the orchestrator.
 
 **Why this is load-bearing:** Claude Code's PostToolUse hook fires automatically after your return and runs the Tier-1 quant_memo validator (HG-29 quant_memo_shape + HG-26 evidence UUIDs + HG-27 outside-view blend) against the file at the canonical path. Missing file → hook blocks the orchestrator. Failed validation → hook returns delta_prompt for targeted re-emission of only the failed fields (reuse the rest of your prior artifact verbatim — do NOT re-fetch MCP data).
+
+---
+
+## OPTIONAL envelope block: `credit_stress` (WS-7.3, additive)
+
+> Phase 3 (OPTIONAL coverage gap) per
+> `docs/superpowers/plans/2026-05-27-insight-quality-enhancement-parallel-plan.md`.
+> Additive and backward-compatible: the quant envelope schema is
+> `additionalProperties: True`, so this block is **never required** and adds
+> no new validation gate. Emit it when EDGAR financials + a FRED rate curve
+> are available; omit silently otherwise.
+
+A balance-sheet / credit-stress sidecar covering three sub-metrics plus an
+overall qualitative flag. Computed by the pure module
+`src/credit_stress/credit_stress.py` (`compute_credit_stress(...)`). The
+module makes **NO network calls** — you (the agent layer) own the live
+EDGAR + FRED fetch and inject the data via the seams below.
+
+**Inputs (injectable seams — `src/credit_stress/contracts.py`):**
+- `Financials`: `ebit`, `interest_expense`, `cash`, `quarterly_burn`
+  (positive = cash consumed/quarter; ≤0 = cash-generative), and
+  `debt_maturities: tuple[DebtMaturity, ...]` where each `DebtMaturity` has
+  `years_to_maturity`, `amount`, `coupon_rate_pct`. All EDGAR-sourced; every
+  field Optional for graceful degradation.
+- `RateCurve`: `points: {tenor_years: rate_pct}` from FRED (e.g. Treasury
+  par curve). `rate_at(years)` reads the nearest tenor.
+- Live path: pass `financials_fetcher(ticker)` / `curve_fetcher()` callables
+  (default `None`). Direct dataclass inputs take precedence; with neither, the
+  block degrades to `overall_flag="unavailable"` and never raises.
+
+**Sub-metrics:**
+1. `interest_coverage` — `base_coverage_x = EBIT/interest`, plus
+   `stressed_coverage_x` (interest re-priced to the current curve at the
+   near-term maturity tenor; multiplier floored at 1.0). `interest ≤ 0` →
+   `not_applicable`.
+2. `maturity_wall` — near-term (≤2y) debt share vs the current-curve refi
+   gap (`curve_rate − weighted near-term coupon`, in bps). `risk ∈
+   {low, elevated, high, not_applicable, unavailable}`. `risk="high"` when
+   near-term share ≥30% **and** rate gap ≥150bps. No debt → `not_applicable`;
+   debt but no curve/coupon → priced on concentration alone (capped at
+   `elevated`).
+3. `cash_runway` — `cash / quarterly_burn` (quarters). Cash-generative
+   (`burn ≤ 0`) → `not_applicable`.
+
+Each sub-metric is a dict with `{value, status, inputs_used, reasoning, ...}`,
+`status ∈ {ok, unavailable, not_applicable}`. Missing inputs →
+`status="unavailable"`, `value=None`.
+
+**Overall `credit_stress.overall_flag` (documented thresholds):**
+- `"high"` if ANY hard trip: stressed coverage < 1.5x, OR maturity risk
+  `"high"`, OR runway < 2 quarters.
+- `"low"` if every **available** leg is healthy (base coverage ≥ 3.0x,
+  maturity risk `low`, runway ≥ 8 quarters or not_applicable).
+- `"elevated"` otherwise.
+- `"unavailable"` only when no leg produced a usable (`ok`) signal.
+
+`flag_reasons`, `thresholds`, and `methodology` accompany the flag for
+auditability. Surface the dict under a `credit_stress` key on your envelope.

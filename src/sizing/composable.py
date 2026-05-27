@@ -82,6 +82,12 @@ class CalibratedWeights:
     regime: float = 1.0
     drawdown: float = 1.0
     cash: float = 1.0
+    # WS-7 (Phase 3) risk dimensions. Default 1.0 == no-op exponent, so the
+    # extension is backward-compatible: a v0.5 caller that supplies neither a
+    # liquidity nor a correlation multiplier gets the identical net_multiplier
+    # it did before these slots existed.
+    liquidity: float = 1.0
+    correlation: float = 1.0
 
     def as_dict(self) -> dict[str, float]:
         return {
@@ -89,6 +95,8 @@ class CalibratedWeights:
             "regime": self.regime,
             "drawdown": self.drawdown,
             "cash": self.cash,
+            "liquidity": self.liquidity,
+            "correlation": self.correlation,
         }
 
 
@@ -180,6 +188,8 @@ def composable_size(
     portfolio_underperformance_pp: Optional[float] = None,
     s0_vol_z: Optional[float] = None,
     available_cash_pct: Optional[float] = None,
+    liquidity_multiplier: float = 1.0,
+    correlation_multiplier: float = 1.0,
     weights: Optional[CalibratedWeights] = None,
 ) -> SizingResult:
     """Compute v0.5 composable sizing.
@@ -214,6 +224,11 @@ def composable_size(
     conv_mult = max(conv_mult, _MULT_FLOOR)
     regime_mult = max(regime_mult, _MULT_FLOOR)
     dd_mult = max(dd_mult, _MULT_FLOOR)
+    # WS-7 risk multipliers (Phase 3). Both default to 1.0 (no-op). They apply
+    # like the other pre-cash overlays (NOT subject to the cash fence): a
+    # liquidity haircut or correlation/portfolio-fit haircut scales the band.
+    liq_mult = max(liquidity_multiplier, _MULT_FLOOR)
+    corr_mult = max(correlation_multiplier, _MULT_FLOOR)
 
     # Cash applies as a fence on initial_pct; we represent it as a multiplier
     # that scales [0, 1] so it composes cleanly into net_multiplier.
@@ -223,6 +238,8 @@ def composable_size(
         * (conv_mult ** weights.conviction)
         * (regime_mult ** weights.regime)
         * (dd_mult ** weights.drawdown)
+        * (liq_mult ** weights.liquidity)
+        * (corr_mult ** weights.correlation)
     )
     if available_cash_pct is None or available_cash_pct >= pre_cash_initial:
         cash_mult = 1.0
@@ -243,12 +260,16 @@ def composable_size(
         * (conv_mult ** weights.conviction)
         * (regime_mult ** weights.regime)
         * (dd_mult ** weights.drawdown)
+        * (liq_mult ** weights.liquidity)
+        * (corr_mult ** weights.correlation)
     )
 
     net_multiplier = (
         (conv_mult ** weights.conviction)
         * (regime_mult ** weights.regime)
         * (dd_mult ** weights.drawdown)
+        * (liq_mult ** weights.liquidity)
+        * (corr_mult ** weights.correlation)
         * (cash_mult ** weights.cash)
     )
 
@@ -261,6 +282,8 @@ def composable_size(
             "regime": regime_mult,
             "drawdown": dd_mult,
             "cash": cash_mult,
+            "liquidity": liq_mult,
+            "correlation": corr_mult,
         },
         weights=weights.as_dict(),
         net_multiplier=net_multiplier,
@@ -307,12 +330,28 @@ def recalibrate_weights(samples: Iterable[dict]) -> CalibratedWeights:
     # Build matrices.
     # X is N×4 (one column per dimension; intercept handled separately).
     # y is the realized log-return.
-    dims = ("conviction", "regime", "drawdown", "cash")
+    # Required dims stay strict (a missing multiplier is a malformed sample).
+    # WS-7 optional dims default to 1.0 when absent: log(1.0)=0 => that column
+    # is all-zero for legacy samples => den~0 => slope falls through to the
+    # 1.0 guard below, so old (4-dim) sample sets recalibrate identically.
+    required_dims = ("conviction", "regime", "drawdown", "cash")
+    optional_dims = ("liquidity", "correlation")
+    dims = required_dims + optional_dims
     X: list[list[float]] = []
     y: list[float] = []
     for s in sample_list:
         try:
-            row = [math.log(max(s[f"{d}_mult"], _MULT_FLOOR)) for d in dims]
+            row = [
+                math.log(
+                    max(
+                        s[f"{d}_mult"]
+                        if d in required_dims
+                        else s.get(f"{d}_mult", 1.0),
+                        _MULT_FLOOR,
+                    )
+                )
+                for d in dims
+            ]
             alpha = s["delta_vs_benchmark_90d"]
         except KeyError as e:
             raise ValueError(f"sample missing key: {e}") from e
@@ -352,4 +391,6 @@ def recalibrate_weights(samples: Iterable[dict]) -> CalibratedWeights:
         regime=weights[1],
         drawdown=weights[2],
         cash=weights[3],
+        liquidity=weights[4],
+        correlation=weights[5],
     )
