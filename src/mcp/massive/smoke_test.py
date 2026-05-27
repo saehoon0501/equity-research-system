@@ -36,7 +36,7 @@ def main(ticker: str) -> int:
     summary["sample_bar"] = (bars.get("bars") or [None])[-1]
     print(json.dumps(summary, indent=2, default=str))
 
-    bad = {"config_error", "auth_failed", "connection_error", "http_error"}
+    bad = {"config_error", "auth_failed", "connection_error", "http_error", "not_entitled"}
     ok = live.get("status") not in bad and bars.get("status") not in bad
     print(f"\nSMOKE {'PASS' if ok else 'FAIL'}: "
           f"ws={live.get('status')} rest={bars.get('status')}")

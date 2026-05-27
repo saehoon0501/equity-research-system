@@ -130,7 +130,12 @@ def _softmax3(long_l: float, short_l: float, hold_l: float) -> dict[str, float]:
     m = max(logits.values())
     exps = {k: math.exp((v - m) / _TEMP) for k, v in logits.items()}
     z = sum(exps.values())
-    return {k: round(v / z, 4) for k, v in exps.items()}
+    # Round long/short, then set hold = 1 - long - short so the three always sum
+    # to exactly 1.0 (independent rounding would leave 0.9999 / 1.0001).
+    p_long = round(exps["long"] / z, 4)
+    p_short = round(exps["short"] / z, 4)
+    p_hold = round(1.0 - p_long - p_short, 4)
+    return {"long": p_long, "short": p_short, "hold": p_hold}
 
 
 def _price_ranges(
@@ -288,7 +293,9 @@ def compute_signal(
     hold_l = (1.0 - conviction) * (1.0 if liquidity_ok else 1.4)
     probs = _softmax3(long_l, short_l, hold_l)
 
-    primary = max(probs, key=probs.get).upper()
+    # Highest-probability bucket; break exact ties toward HOLD (the conservative
+    # call) rather than letting dict insertion order silently pick LONG.
+    primary = max(probs, key=lambda k: (probs[k], k == "hold")).upper()
 
     atr_v = ind.atr(bars, 14)
     vwap = ind.session_vwap(bars)
@@ -374,6 +381,7 @@ def _round(v: Any, n: int = 4) -> Any:
 def _horizon_label(minutes: float) -> str:
     if minutes >= _SESSION_MINUTES:
         return "1 trading day"
-    if minutes % 60 == 0:
-        return f"{int(minutes // 60)}h"
-    return f"{int(minutes)}m"
+    hours = minutes / 60.0
+    if abs(hours - round(hours)) < 1e-6:  # whole hours, robust to float dust
+        return f"{round(hours)}h"
+    return f"{int(round(minutes))}m"

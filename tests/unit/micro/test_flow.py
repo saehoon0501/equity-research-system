@@ -43,6 +43,21 @@ def test_flow_pressure_bounds_and_blend():
     assert fp > 0  # rising on volume -> positive flow pressure
 
 
+def test_bvc_survives_missing_close_without_misalignment():
+    # A data gap (None close) must not shift volumes against the wrong delta.
+    # Strong up-moves on big volume, one bar with a missing close: result stays
+    # clearly positive (not flipped negative by misalignment).
+    bars = [
+        {"open": 100, "high": 100.5, "low": 99.8, "close": 100.0, "volume": 1000},
+        {"open": 100, "high": 101.0, "low": 100.0, "close": 101.0, "volume": 5000},
+        {"open": 101, "high": 102.0, "low": 101.0, "close": None, "volume": 9999},  # gap
+        {"open": 101, "high": 102.5, "low": 101.5, "close": 102.0, "volume": 6000},
+        {"open": 102, "high": 103.0, "low": 102.0, "close": 103.0, "volume": 7000},
+    ]
+    bvc = ind.bvc_imbalance(bars, 20)
+    assert bvc is not None and bvc > 0  # up-moves on volume -> positive, not corrupted
+
+
 def test_flow_pressure_none_only_when_no_data():
     # CMF computes on a single bar, so flow_pressure is available (not None);
     # only an empty series yields None (both components unavailable).

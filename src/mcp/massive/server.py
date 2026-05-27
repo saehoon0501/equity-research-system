@@ -45,6 +45,7 @@ import datetime as _dt
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -104,14 +105,14 @@ def _accumulate(frame: dict[str, Any], acc: dict[str, Any]) -> None:
     ev = frame.get("ev")
     if ev == "T":  # trade
         price = frame.get("p")
-        size = frame.get("s") or 0
+        size = float(frame.get("s") or 0)  # keep fractional size (matches VWAP weighting)
         if isinstance(price, (int, float)):
             acc["trade_count"] += 1
             acc["last_trade_price"] = float(price)
             acc["last_trade_ts"] = frame.get("t")
-            acc["volume"] += int(size or 0)
-            acc["px_sz_sum"] += float(price) * float(size or 0)
-            acc["sz_sum"] += float(size or 0)
+            acc["volume"] += size
+            acc["px_sz_sum"] += float(price) * size
+            acc["sz_sum"] += size
             acc["high"] = price if acc["high"] is None else max(acc["high"], price)
             acc["low"] = price if acc["low"] is None else min(acc["low"], price)
     elif ev == "Q":  # quote
@@ -122,12 +123,21 @@ def _accumulate(frame: dict[str, Any], acc: dict[str, Any]) -> None:
             acc["last_ask"] = float(ap)
             acc["last_bid_size"] = frame.get("bs")
             acc["last_ask_size"] = frame.get("as")
-    elif ev == "A":  # per-second aggregate (fallback hi/lo/last when no raw trades)
+    elif ev in ("A", "AM"):  # per-second / per-minute aggregate bar
         acc["agg_count"] += 1
         for k_src, k_dst in (("h", "agg_high"), ("l", "agg_low"), ("c", "agg_close")):
             v = frame.get(k_src)
             if isinstance(v, (int, float)):
                 acc[k_dst] = float(v)
+        # Aggregate volume + VWAP, kept in a SEPARATE accumulator so they don't
+        # double-count trades when both T and A stream; _summarize prefers the
+        # trade-derived values and falls back to these (e.g. aggregates-only plan).
+        vol = frame.get("v")
+        vw = frame.get("vw")
+        if isinstance(vol, (int, float)):
+            acc["agg_volume"] += float(vol)
+            if isinstance(vw, (int, float)):
+                acc["agg_px_vol"] += float(vw) * float(vol)
 
 
 async def _collect_window(
@@ -154,9 +164,11 @@ async def _collect_window(
         "trade_count": 0,
         "quote_count": 0,
         "agg_count": 0,
-        "volume": 0,
+        "volume": 0.0,
         "px_sz_sum": 0.0,
         "sz_sum": 0.0,
+        "agg_volume": 0.0,
+        "agg_px_vol": 0.0,
         "last_trade_price": None,
         "last_trade_ts": None,
         "high": None,
@@ -192,6 +204,7 @@ async def _collect_window(
             deadline = loop.time() + window_s
             authorized: set[str] = set()  # channels the plan accepted
             sub_errors: list[str] = []  # subscribe-rejection messages (entitlement)
+            dropped = False  # connection closed mid-drain
             while True:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
@@ -201,6 +214,7 @@ async def _collect_window(
                 except asyncio.TimeoutError:
                     break
                 except ConnectionClosed:
+                    dropped = True
                     break
                 for frame in _as_frames(raw):
                     if frame.get("ev") == "status":
@@ -222,10 +236,11 @@ async def _collect_window(
         }
 
     requested = set(channels)
-    rejected = sorted(requested - authorized)
-    # Entitlement: every requested channel was rejected (e.g. a delayed plan hit
-    # with real-time channels, or real-time channels on the delayed cluster).
-    if authorized == set() and sub_errors:
+    has_data = bool(acc["trade_count"] or acc["quote_count"] or acc["agg_count"])
+    # Entitlement: every requested channel was rejected AND nothing arrived (e.g.
+    # real-time channels on a delayed key). Don't trip this when data DID flow —
+    # a success ack can straggle past the window while data is already coming in.
+    if not authorized and sub_errors and not has_data:
         return {
             "ticker": sym,
             "status": "not_entitled",
@@ -234,19 +249,38 @@ async def _collect_window(
             "ws_url": uri,
             "as_of": _now_iso(),
         }
+    # Connection dropped mid-drain with nothing collected -> surface it, rather
+    # than a misleading no_ticks ("market closed?").
+    if dropped and not has_data and not sub_errors:
+        return {
+            "ticker": sym,
+            "status": "connection_error",
+            "message": "connection closed mid-stream before any data",
+            "ws_url": uri,
+            "as_of": _now_iso(),
+        }
+    # Report channel accounting only from explicit success acks. If we got acks,
+    # the unacked channels were rejected/unknown; if we got NO parseable acks,
+    # report unknown (None) rather than falsely claiming everything was rejected.
+    if authorized:
+        auth_list: list[str] | None = sorted(authorized)
+        rej_list: list[str] | None = sorted(requested - authorized)
+    else:
+        auth_list = None
+        rej_list = None
     return _summarize(
-        sym, window_s, channels, acc, sorted(authorized), rejected
+        sym, window_s, channels, acc, auth_list, rej_list
     )
 
 
 def _channels_in(message: str) -> set[str]:
-    """Parse channel prefixes from a subscribe-ack like 'subscribed to: A.MU,Q.MU'."""
-    out: set[str] = set()
-    for token in message.replace("subscribed to:", "").split(","):
-        token = token.strip()
-        if "." in token:
-            out.add(token.split(".", 1)[0].upper())
-    return out
+    """Parse channel prefixes from a subscribe-ack, e.g. 'subscribed to: A.MU,Q.MU'.
+
+    Extracts every ``<prefix>.<symbol>`` token anywhere in the message,
+    case-insensitively, so it survives wording/case variations
+    ('Subscribed to A.MU', 'success: A.MU', etc.).
+    """
+    return {m.group(1).upper() for m in re.finditer(r"\b([A-Za-z]{1,3})\.[A-Za-z0-9._-]+", message)}
 
 
 async def _await_auth(ws: Any) -> bool | str:
@@ -267,11 +301,19 @@ async def _await_auth(ws: Any) -> bool | str:
             if frame.get("ev") != "status":
                 continue
             status = (frame.get("status") or "").lower()
+            msg = frame.get("message") or ""
             if status == "auth_success":
                 return True
-            if status in ("auth_failed", "error", "max_connections"):
-                return frame.get("message") or status
-            # "connected" and other interim statuses: keep reading until auth resolves.
+            if status in ("auth_failed", "max_connections"):
+                return msg or status
+            # A generic `error` frame is only an auth failure if it's about auth;
+            # otherwise (a transient/benign error) keep reading until auth_success
+            # or the timeout, rather than aborting a valid session.
+            if status == "error" and (
+                "auth" in msg.lower() or "not authorized" in msg.lower()
+            ):
+                return msg or status
+            # "connected" / interim / unrelated errors: keep reading.
 
 
 def _as_frames(raw: Any) -> list[dict[str, Any]]:
@@ -296,7 +338,17 @@ def _summarize(
     rejected_channels: list[str] | None = None,
 ) -> dict[str, Any]:
     trade_count = acc["trade_count"]
-    vwap = (acc["px_sz_sum"] / acc["sz_sum"]) if acc["sz_sum"] > 0 else None
+    # Prefer trade-derived VWAP/volume; fall back to aggregate-derived (e.g. an
+    # aggregates-only delayed plan, where only A/AM frames arrive).
+    if acc["sz_sum"] > 0:
+        vwap = acc["px_sz_sum"] / acc["sz_sum"]
+        volume = acc["volume"]
+    elif acc["agg_volume"] > 0:
+        vwap = acc["agg_px_vol"] / acc["agg_volume"] if acc["agg_px_vol"] > 0 else None
+        volume = acc["agg_volume"]
+    else:
+        vwap = None
+        volume = acc["volume"]
     last = acc["last_trade_price"]
     high = acc["high"] if acc["high"] is not None else acc["agg_high"]
     low = acc["low"] if acc["low"] is not None else acc["agg_low"]
@@ -326,7 +378,7 @@ def _summarize(
         "vwap_window": round(vwap, 6) if vwap is not None else None,
         "trade_count": trade_count,
         "tick_velocity_per_s": round(trade_count / window_s, 3) if window_s else None,
-        "window_volume": acc["volume"],
+        "window_volume": volume,
         "window_high": high,
         "window_low": low,
         "bid": bid,

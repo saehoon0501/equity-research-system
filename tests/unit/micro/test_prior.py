@@ -25,6 +25,17 @@ def test_from_report_markdown_labelled_line():
 def test_from_report_ignores_prose_mentions_without_label():
     # A bare "buy" in prose with no labelled recommendation -> no false positive.
     assert from_report("Investors may want to buy on weakness, but we are cautious.") is None
+    # A labelled token buried MID-LINE in prose must not match (line-anchored).
+    assert from_report("As noted, see recommendation - BUY below for details.") is None
+    # A real labelled line still matches even amid surrounding prose.
+    assert from_report("Intro paragraph.\n## Recommendation: SELL\nmore text") == "SELL"
+
+
+def test_from_report_json_blob_prose_not_matched():
+    # A parsed JSON object with no recognized key must NOT be regex-scanned for a
+    # BUY/SELL mention inside a narrative field.
+    envelope = '{"thesis": "we recommend: BUY only if margins recover", "conviction": "LOW"}'
+    assert from_report(envelope) is None
 
 
 def test_resolve_prefers_pm_recommendation():

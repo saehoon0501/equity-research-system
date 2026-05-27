@@ -25,10 +25,14 @@ from typing import Any
 CANONICAL = ("BUY", "HOLD", "TRIM", "SELL")
 
 # "recommendation: HOLD", "summary_code = SELL", "PM call — BUY", "## Recommendation: TRIM"
+# Anchored to the start of a line (after optional markdown markers) with a
+# MANDATORY separator, so a "...see recommendation - BUY below" mention buried
+# mid-prose does NOT match — only a genuine labelled line like "## Recommendation: BUY".
 _LABELLED = re.compile(
+    r"^[ \t]*[#>*\-]*[ \t]*"
     r"(?:recommendation|summary[_\s]?code|pm[\s_]*(?:call|decision|rec)|decision)"
-    r"\s*[:=—\-]?\s*\*{0,2}\b(BUY|HOLD|TRIM|SELL)\b",
-    re.IGNORECASE,
+    r"\s*[:=—\-]\s*\*{0,2}\b(BUY|HOLD|TRIM|SELL)\b",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -64,8 +68,12 @@ def from_report(text: Any) -> str | None:
                 hit = from_code(obj.get(key))
                 if hit:
                     return hit
+            # Parsed JSON object with no recognized key: trust the keys only —
+            # do NOT regex-scan the raw JSON blob (a BUY/SELL mention inside some
+            # narrative string field would be a false positive).
+            return None
 
-    # Labelled line in narrative text (preferred — disambiguates from prose).
+    # Non-JSON narrative text: labelled-line search (anchored, see _LABELLED).
     m = _LABELLED.search(text)
     if m:
         return m.group(1).upper()

@@ -233,10 +233,24 @@ def bvc_imbalance(bars: Sequence[dict], window: int = 20) -> float | None:
     (true OFI lives at a seconds horizon and needs full book depth).
     """
     rows = bars[-(window + 1):]
-    closes = _floats(b.get("close") for b in rows)
-    vols = [b.get("volume") for b in rows]
-    if len(closes) < 3:
+    # Build (close, volume) pairs in lockstep, dropping bars without a numeric
+    # close. Keeping close and its own volume together is essential: filtering
+    # closes and volumes into separate lists would misalign delta[i] with
+    # volume[i] on any data gap (a None close), corrupting the imbalance.
+    pairs: list[tuple[float, float]] = []
+    for b in rows:
+        try:
+            c = float(b.get("close"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            v = float(b.get("volume"))
+        except (TypeError, ValueError):
+            v = 0.0
+        pairs.append((c, v))
+    if len(pairs) < 3:
         return None
+    closes = [p[0] for p in pairs]
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
     n = len(deltas)
     mean_d = sum(deltas) / n
@@ -247,14 +261,10 @@ def bvc_imbalance(bars: Sequence[dict], window: int = 20) -> float | None:
     use_sign = sigma <= 0
     signed = 0.0
     total = 0.0
-    # deltas[i] corresponds to bar rows[i+1]
+    # deltas[i] is the move INTO bar pairs[i+1]; weight it by that bar's volume.
     for i, d in enumerate(deltas):
-        vol = vols[i + 1]
-        try:
-            vol = float(vol)
-        except (TypeError, ValueError):
-            continue
-        if vol is None or vol <= 0:
+        vol = pairs[i + 1][1]
+        if vol <= 0:
             continue
         if use_sign:
             buy_frac = 1.0 if d > 0 else (0.0 if d < 0 else 0.5)

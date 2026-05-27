@@ -46,9 +46,8 @@ def test_probabilities_sum_to_one():
     bars = [_bar(c=100.0 + i * 0.1) for i in range(60)]
     out = compute_signal(bars, live=None, prior={"summary_code": "BUY"})
     probs = out["probabilities"]
-    # Probabilities are rounded to 4 dp for display, so the sum is 1 within
-    # rounding (3 values * 5e-5 max drift).
-    assert abs(sum(probs.values()) - 1.0) < 1e-3
+    # hold is derived as 1 - long - short, so the three sum to exactly 1.0.
+    assert abs(sum(probs.values()) - 1.0) < 1e-9
 
 
 def test_uptrend_plus_buy_prior_favors_long():
