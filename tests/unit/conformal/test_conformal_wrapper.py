@@ -2,17 +2,19 @@
 
 Identity + abstain + degrade tests run with NO network (the wrapped classifiers
 are pure compute on in-memory price lists). The long-run coverage criterion
-(acceptance criterion 3) depends on WS-4 and is landed as a run=False xfail —
-a durable, discoverable record, not deleted.
+(acceptance criterion 3) is the WS-3 x WS-4 join: now that WS-4
+(src/calibration/) has landed it is PROMOTED from a deferred xfail to a real,
+seeded, deterministic replay test (see ``test_long_run_coverage_within_band``).
 
 Run:
-    PYTHONPATH="$PWD" uv run --with pytest --python 3.13 \
+    PYTHONPATH="$PWD" uv run --with pytest --with numpy --python 3.13 \
         pytest tests/unit/conformal/
 """
 from __future__ import annotations
 
 import copy
 
+import numpy as np
 import pytest
 
 from src.conformal import (
@@ -275,29 +277,90 @@ def test_disabled_ignores_buffer_state():
 
 
 # --------------------------------------------------------------------------
-# Criterion 3 — DEFERRED to PHASE 2 integration. Durable, discoverable xfail.
+# Criterion 3 — PHASE-2: WS-3 x WS-4 long-run coverage replay (PROMOTED).
 # --------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    reason="Phase-2 integration: wire WS-4 resolver (now landed in src/calibration/) "
-    "into a time-ordered replay through ConformalWrapper.observe()",
-    strict=False,
-    run=False,
-)
-def test_long_run_coverage_within_band():
-    """Long-run realized coverage within 90% +- 5% over a time-ordered replay,
-    logged to a rolling monitor.
+# Coverage target = 1 - alpha = 0.90; acceptance band per WS-3 criterion 3.
+COVERAGE_TARGET = 0.90
+COVERAGE_BAND = (0.85, 0.95)
 
-    STATUS (updated post-WS-4): WS-4's calibration buffer/resolver HAS landed
-    (src/calibration/resolver.py + metrics.py), so the original "pending WS-4"
-    blocker is CLOSED. What remains is a PHASE-2 INTEGRATION task: feed the
-    WS-4 resolver's realized labels through a time-ordered replay into
-    ConformalWrapper.observe() and assert realized coverage in [0.85, 0.95].
-    This is the WS-3 x WS-4 join that the plan schedules for Phase 2, not a
-    Phase-1 unit test (no single-WS owner can write it). Kept as run=False so
-    it stays a discoverable acceptance record; tracked in the plan's Phase-2
-    checklist.
+# Replay shape. The seed mirrors the codebase convention
+# (src/calibration/metrics.py DEFAULT_BOOTSTRAP_SEED = 20260527) so a re-run is
+# bit-reproducible. >= several hundred ordered observations warm the buffer well
+# past ABSTAIN_MIN_POINTS (100) and let the adaptive (PID) alpha stabilise.
+REPLAY_SEED = 20260527
+REPLAY_N = 1200
+# Fraction of the replay whose realised label MATCHES the just-emitted
+# prediction. The exact value is intentionally NOT 0.90 — the whole point of
+# Adaptive Conformal Inference is that the PID adapts the per-step alpha so
+# realised coverage converges on the 90% TARGET regardless of base hit-rate.
+REPLAY_HIT_RATE = 0.70
+# Overlay label vocabulary actually emitted in the stream (p8/p9 directional
+# space minus the degenerate "unavailable" sentinel). A discrete, >1-element
+# space is what makes the conformal prediction set non-trivial.
+REPLAY_LABELS = ["positive", "neutral", "negative"]
 
-    See: src/calibration/resolver.py, src/calibration/metrics.py (WS-4, landed).
+
+def _replay_stream(rng: np.random.Generator, n: int, hit_rate: float):
+    """Yield a time-ordered (predicted, realised-label) replay.
+
+    Models the WS-4 resolver's output: each step has a model prediction and a
+    realised outcome (the resolver's ``label_binary``-style decision, here
+    lifted onto the overlay's directional label space so the conformal set is
+    non-trivial). With probability ``hit_rate`` the realised label equals the
+    prediction; otherwise it is a uniformly-drawn DIFFERENT label. Deterministic
+    given ``rng`` (a seeded ``numpy.random.default_rng``), so empirical coverage
+    is reproducible. No network, no live resolver, no DB — pure compute.
     """
-    raise AssertionError("not implemented until WS-4 lands (src/calibration/)")
+    for _ in range(n):
+        predicted = REPLAY_LABELS[int(rng.integers(0, len(REPLAY_LABELS)))]
+        if rng.random() < hit_rate:
+            label = predicted
+        else:
+            others = [lbl for lbl in REPLAY_LABELS if lbl != predicted]
+            label = others[int(rng.integers(0, len(others)))]
+        yield predicted, label
+
+
+def test_long_run_coverage_within_band():
+    """WS-3 criterion 3: realized coverage within 90% +- 5% over an ordered replay.
+
+    PROMOTED post-WS-4 (src/calibration/ landed). Drives a deterministic, SEEDED
+    time-ordered stream of (prediction, realized-label) pairs through
+    ``ConformalWrapper.observe()`` — the same join WS-4's resolver feeds in
+    production (its ``label_binary`` realized outcomes). The buffer warms past
+    ABSTAIN_MIN_POINTS (100), the adaptive (Conformal-PID) alpha stabilises, and
+    realized coverage — the fraction of post-warmup observations whose realized
+    label fell inside the wrapper's prediction set — must land in [0.85, 0.95].
+
+    Coverage is computed exactly as ``observe()`` does internally (membership of
+    the realized label in ``predict_set(predicted)``, evaluated on the buffer
+    state BEFORE the observation is added), over the post-warmup window.
+    """
+    rng = np.random.default_rng(REPLAY_SEED)
+    buffer = CalibrationBuffer(alpha_target=0.10, current_alpha=0.10)
+    wrapper = ConformalWrapper(classify, PN_LABELS, buffer=buffer, enabled=True)
+
+    covered = 0
+    measured = 0
+    for predicted, label in _replay_stream(rng, REPLAY_N, REPLAY_HIT_RATE):
+        # Only score once the buffer has left abstain-wholesale mode (>=100 pts);
+        # this is the post-warmup window over which coverage must hold. Compute
+        # membership on the PRE-add prediction set, mirroring observe()'s own
+        # coverage logic, then feed the outcome in (which adapts alpha).
+        if buffer.is_ready:
+            in_set = label in wrapper.predict_set(predicted)
+            measured += 1
+            covered += 1 if in_set else 0
+        wrapper.observe(predicted, label)
+
+    assert measured >= 1000, f"warmup window too small to be stable: {measured}"
+
+    empirical_coverage = covered / measured
+    lo, hi = COVERAGE_BAND
+    assert lo <= empirical_coverage <= hi, (
+        f"realized coverage {empirical_coverage:.4f} outside acceptance band "
+        f"[{lo}, {hi}] (target {COVERAGE_TARGET}); measured over {measured} "
+        f"post-warmup observations, seed={REPLAY_SEED}, final "
+        f"alpha={buffer.current_alpha:.4f}"
+    )

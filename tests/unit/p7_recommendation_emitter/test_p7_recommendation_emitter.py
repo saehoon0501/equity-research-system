@@ -661,15 +661,26 @@ def test_emit_persists_via_fake_conn(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(AUDIT_HMAC_ENV, "test-audit-key")
     conn = _FakeConn()
     out = emit_recommendation(_baseline_inputs(), conn=conn)
-    # 1 main row + 5 audit rows = 6 SQL executes.
-    assert len(conn.cur.executed) == 6
+    # 1 main row + 1 calibration snapshot + 5 audit rows = 7 SQL executes.
+    assert len(conn.cur.executed) == 7
     # First INSERT is execution_recommendations.
     sql0, params0 = conn.cur.executed[0]
     assert "INSERT INTO execution_recommendations" in sql0
     assert params0[1] == "NVDA"  # ticker
-    # Audit rows follow.
-    for sql, _ in conn.cur.executed[1:]:
-        assert "INSERT INTO audit_provenance" in sql
+    # Exactly one calibration_emission_snapshot INSERT and five
+    # audit_provenance INSERTs follow (filter by SQL prefix, not index).
+    snapshot_inserts = [
+        (sql, p)
+        for sql, p in conn.cur.executed
+        if "INSERT INTO calibration_emission_snapshot" in sql
+    ]
+    audit_inserts = [
+        (sql, p)
+        for sql, p in conn.cur.executed
+        if "INSERT INTO audit_provenance" in sql
+    ]
+    assert len(snapshot_inserts) == 1
+    assert len(audit_inserts) == 5
     assert conn.committed is True
 
 

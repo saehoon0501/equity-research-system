@@ -741,3 +741,232 @@ def test_replay_cost_independent_of_stale_last_response(tmp_path, monkeypatch):
     for cand in res2.candidates:
         assert cand.usage.input_tokens == 1000
         assert cand.usage.output_tokens == 500
+
+
+# --------------------------------------------------------------------------- #
+# Phase-2 — live-scorer wiring via the enrichment adapter                     #
+#                                                                             #
+# These exercise the score_candidates path: each candidate's {axis_a,axis_b}  #
+# is COMPUTED live through src.scoring.enrichment.enrich_axes (which runs the  #
+# injected WS-1/WS-2 scorers) instead of being injected as pre-baked          #
+# candidate_axes fixtures. All offline; the scorers are mocked, no network.   #
+# --------------------------------------------------------------------------- #
+
+
+class _MockArticulationScorer:
+    """WS-1 (axis_a) test double. Returns a flat scores block per call.
+
+    Mirrors the real ``ArticulationScorer.score(envelope, *, grounding,
+    supported_frameworks) -> ScoreResult`` shape: a dict carrying ``scores``.
+    ``faithfulness_by_index`` lets each candidate (keyed by its envelope's
+    ``sample_index`` echo, see _synth_payload below) get a distinct value;
+    otherwise a constant ``faithfulness`` is returned.
+    """
+
+    def __init__(self, *, faithfulness=0.9, by_answer=None, degraded=False):
+        self._faith = faithfulness
+        self._by_answer = by_answer or {}
+        self._degraded = degraded
+        self.calls = []
+
+    def score(self, envelope, *, grounding="", supported_frameworks=None):
+        self.calls.append({"grounding": grounding, "frameworks": supported_frameworks})
+        if self._degraded:
+            return {
+                "block_name": "axis_a",
+                "mode": "advisory",
+                "scores": {"mode": "advisory", "degraded": True, "faithfulness": None},
+            }
+        ans = str(envelope.get("answer", ""))
+        faith = self._by_answer.get(ans, self._faith)
+        return {
+            "block_name": "axis_a",
+            "mode": "advisory",
+            "scores": {"faithfulness": faith, "answer_relevancy": 0.8},
+        }
+
+
+class _MockSophisticationScorer:
+    """WS-2 (axis_b) test double. Emits the real flat keys (roscoe,
+    novelty_percentile, ...). ``composite_quality`` reads ``roscoe``."""
+
+    def __init__(self, *, roscoe=0.7, by_answer=None, degraded=False):
+        self._roscoe = roscoe
+        self._by_answer = by_answer or {}
+        self._degraded = degraded
+        self.calls = []
+
+    def score(self, envelope):
+        self.calls.append(dict(envelope))
+        if self._degraded:
+            return {
+                "block_name": "axis_b",
+                "mode": "advisory",
+                "scores": {"mode": "advisory", "degraded": True, "roscoe": None,
+                           "novelty_percentile": None},
+            }
+        ans = str(envelope.get("answer", ""))
+        roscoe = self._by_answer.get(ans, self._roscoe)
+        return {
+            "block_name": "axis_b",
+            "mode": "advisory",
+            "scores": {"roscoe": roscoe, "novelty_percentile": 0.6, "receval": 0.5},
+        }
+
+
+def _synth_payload_tagged(decision: str, conviction: float, tag: str) -> str:
+    """A synthesis payload carrying a unique ``answer`` tag so a mock scorer
+    can return a per-candidate value keyed on the envelope's answer text."""
+    obj = json.loads(_synth_payload(decision, conviction))
+    obj["answer"] = tag
+    return json.dumps(obj)
+
+
+def test_score_candidates_consumes_adapter_output_not_fixtures():
+    """Phase-2: with score_candidates enabled and NO candidate_axes fixtures,
+    composite_quality must be computed from the enrichment adapter's output of
+    the mocked WS-1/WS-2 scorers (not from any fixture)."""
+    art = _MockArticulationScorer(faithfulness=0.9)
+    soph = _MockSophisticationScorer(roscoe=0.7)
+    client = FakeClient(
+        synth_responses=[_synth_payload(VERDICT_ADD, 0.7)] * 5,
+        verifier_response='{"selected_index": 0}',
+    )
+    res = run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client,
+        score_candidates=True, articulation=art, sophistication=soph,
+    )
+    # Each candidate's axes were COMPUTED live (mean of 0.9 and 0.7 = 0.8).
+    assert len(res.candidates) == 5
+    for cand in res.candidates:
+        assert cand.axes.get("axis_a", {}).get("faithfulness") == 0.9
+        assert cand.axes.get("axis_b", {}).get("roscoe") == 0.7
+        assert cand.composite_quality == pytest.approx((0.9 + 0.7) / 2.0)
+    # The mocked scorers were actually invoked once per candidate.
+    assert len(art.calls) == 5
+    assert len(soph.calls) == 5
+
+
+def test_score_candidates_quality_lift_ge_baseline_with_live_scorers():
+    """Phase-2 acceptance (>= baseline) on the LIVE-scoring path: candidate 0
+    is the degraded single-pass (N=1) draft and the verifier selects a stronger
+    live-scored candidate, so selected composite_quality >= baseline, <= $15."""
+    # Candidate 0 (the N=1 baseline draft) scores low; candidates 1..4 high.
+    degraded_tag = "draft-0"
+    by_a = {degraded_tag: 0.40}
+    by_b = {degraded_tag: 0.30}
+    art = _MockArticulationScorer(faithfulness=0.9, by_answer=by_a)
+    soph = _MockSophisticationScorer(roscoe=0.7, by_answer=by_b)
+    responses = [_synth_payload_tagged(VERDICT_ADD, 0.7, degraded_tag)] + [
+        _synth_payload_tagged(VERDICT_ADD, 0.7, f"strong-{i}") for i in range(1, 5)
+    ]
+    client = FakeClient(
+        synth_responses=responses,
+        verifier_response='{"selected_index": 1}',  # verifier picks a strong one
+    )
+    res = run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client,
+        score_candidates=True, articulation=art, sophistication=soph,
+    )
+    baseline = res.candidates[0].composite_quality  # degraded N=1 draft
+    selected = res.candidates[res.verifier_pick.selected_index]
+    assert baseline == pytest.approx((0.40 + 0.30) / 2.0)
+    assert selected.composite_quality >= baseline
+    assert selected.composite_quality > baseline  # strict lift for these mocks
+    assert res.attempt_cost_usd <= bon.COST_CAP_USD
+    assert res.cost_within_cap is True
+
+
+def test_fixtures_take_precedence_over_live_scoring():
+    """Backward-compat precedence: when candidate_axes fixtures are supplied,
+    they WIN even if score_candidates=True — the scorers are not consulted for
+    a covered index, so behavior matches the pre-Phase-2 fixture path."""
+    fixtures = [{"axis_a": {"faithfulness": 0.95}, "axis_b": {"roscoe": 0.85}}] * 5
+    art = _MockArticulationScorer(faithfulness=0.1)  # would lower the score
+    soph = _MockSophisticationScorer(roscoe=0.1)
+    client = FakeClient(
+        synth_responses=[_synth_payload(VERDICT_ADD, 0.7)] * 5,
+        verifier_response='{"selected_index": 0}',
+    )
+    res = run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client, candidate_axes=fixtures,
+        score_candidates=True, articulation=art, sophistication=soph,
+    )
+    for cand in res.candidates:
+        assert cand.composite_quality == pytest.approx((0.95 + 0.85) / 2.0)
+    # Scorers never consulted because every index had a fixture.
+    assert art.calls == []
+    assert soph.calls == []
+
+
+def test_disabled_scoring_is_byte_identical_to_before():
+    """Backward-compat: score_candidates defaulting OFF (and no fixtures) is
+    byte-identical to the pre-Phase-2 path — axes are {} and composite_quality
+    is 0.0, exactly as before."""
+    client = FakeClient(
+        synth_responses=[_synth_payload(VERDICT_ADD, 0.7)] * 5,
+        verifier_response='{"selected_index": 0}',
+    )
+    res = run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client,  # score_candidates defaults False
+    )
+    for cand in res.candidates:
+        assert cand.axes == {}
+        assert cand.composite_quality == 0.0
+
+
+def test_live_scorers_degrade_returns_number_no_fabricated_lift():
+    """Degrade path: when BOTH scorers degrade (advisory-null axis blocks),
+    composite_quality must still return a number (no crash) and MUST NOT
+    fabricate a quality lift — every candidate's composite_quality is 0.0 (the
+    null metrics contribute 0), so the verifier-selected candidate is == the
+    baseline (no spurious lift)."""
+    art = _MockArticulationScorer(degraded=True)
+    soph = _MockSophisticationScorer(degraded=True)
+    client = FakeClient(
+        synth_responses=[_synth_payload(VERDICT_ADD, 0.7)] * 5,
+        verifier_response='{"selected_index": 1}',
+    )
+    res = run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client,
+        score_candidates=True, articulation=art, sophistication=soph,
+    )
+    for cand in res.candidates:
+        # Advisory-null faithfulness/roscoe -> each contributes 0.0; no crash.
+        assert isinstance(cand.composite_quality, float)
+        assert cand.composite_quality == 0.0
+    baseline = res.candidates[0].composite_quality
+    selected = res.candidates[res.verifier_pick.selected_index]
+    # No fabricated lift: degraded scoring yields equal (zero) quality.
+    assert selected.composite_quality == baseline
+
+
+def test_grounding_resolver_feeds_grounding_into_axis_a_scorer():
+    """The optional grounding_resolver (the live evidence_documents seam) is
+    passed through to the WS-1 scorer per candidate. Offline we mock it; the
+    mock axis_a scorer records the grounding text it received."""
+    art = _MockArticulationScorer(faithfulness=0.9)
+    soph = _MockSophisticationScorer(roscoe=0.7)
+
+    def resolver(envelope):
+        return ("grounding-text-XYZ", {"DCF", "SOTP"})
+
+    client = FakeClient(
+        synth_responses=[_synth_payload(VERDICT_ADD, 0.7)] * 5,
+        verifier_response='{"selected_index": 0}',
+    )
+    run_phase_d_bon(
+        phase_a=_phase_a(), locked=_locked_all(VERDICT_ADD), judge_result=_judge(),
+        mode=MODE_B, client=client,
+        score_candidates=True, articulation=art, sophistication=soph,
+        grounding_resolver=resolver,
+    )
+    assert len(art.calls) == 5
+    for call in art.calls:
+        assert call["grounding"] == "grounding-text-XYZ"
+        assert call["frameworks"] == {"DCF", "SOTP"}

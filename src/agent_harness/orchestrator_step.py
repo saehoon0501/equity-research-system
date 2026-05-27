@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -49,6 +51,90 @@ from typing import Any, Literal
 
 from src.agent_harness.delta_prompt import build_delta_prompt
 from src.evaluator_gates import VALID_ARTIFACT_TYPES, validate_all
+
+logger = logging.getLogger(__name__)
+
+# WS-6 hybrid gate id whose result_dict carries the canonical gate_decision
+# block ({verdict, deterministic, advisory, escalated}). Kept as a literal so
+# this module has no import dependency on the hybrid-gate module.
+_HYBRID_GATE_ID = "HG-40"
+
+# Phase-2 axis enrichment (P2-A) is opt-in and default-OFF — it can hit LLMs,
+# so the hot validation path stays cheap unless explicitly enabled. Mirrors
+# the llm_cache LLM_CACHE_ENABLED truthy convention (1/true/yes/on).
+_INSIGHT_SCORING_FLAG = "INSIGHT_SCORING_ENABLED"
+
+
+def _flag_enabled(name: str, env: dict[str, str] | None = None) -> bool:
+    """Default-OFF env flag parse (mirrors llm_cache convention)."""
+    env = os.environ if env is None else env
+    return str(env.get(name, "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _extract_gate_decision(validation: Any) -> dict[str, Any] | None:
+    """Pull the hybrid gate's result_dict['gate_decision'], or None.
+
+    Locates the HG-40 outcome in the AggregateValidationResult and returns its
+    canonical gate_decision block. Returns None when the hybrid gate did not
+    run or did not emit a gate_decision (caller then skips silently).
+    """
+    for g in getattr(validation, "gates", []) or []:
+        if getattr(g, "gate_id", None) == _HYBRID_GATE_ID:
+            rd = getattr(g, "result_dict", None)
+            if isinstance(rd, dict):
+                gd = rd.get("gate_decision")
+                if isinstance(gd, dict):
+                    return gd
+            return None
+    return None
+
+
+def _enrich_envelope_poststep(
+    *,
+    envelope: dict[str, Any],
+    envelope_path: Path,
+    validation: Any,
+    insight_scoring_enabled: bool,
+) -> None:
+    """Best-effort, decision-preserving envelope-file enrichment (P2-A).
+
+    A PURE SIDE-EFFECT run AFTER the PASS/RETRY/ESCALATE decision is fixed:
+      1. Persist the hybrid gate's gate_decision onto the envelope file
+         (always on, cheap). Skipped silently when absent.
+      2. When ``insight_scoring_enabled`` (default OFF), splice the advisory
+         axis_a/axis_b blocks via the enrichment adapter.
+
+    NEVER raises and NEVER changes the decision: any failure is logged and
+    swallowed; the only effect is the envelope-file writeback. Returns early
+    without touching the file when there is nothing to write.
+    """
+    try:
+        out = dict(envelope)
+        mutated = False
+
+        gate_decision = _extract_gate_decision(validation)
+        if gate_decision is not None:
+            out["gate_decision"] = gate_decision
+            mutated = True
+
+        if insight_scoring_enabled:
+            # Import lazily so the default-OFF hot path never imports the
+            # scoring stack (which may pull heavier deps).
+            from src.scoring.enrichment import enrich_envelope
+
+            out = enrich_envelope(out)
+            mutated = True
+
+        if not mutated:
+            return
+
+        with open(envelope_path, "w", encoding="utf-8") as f:
+            json.dump(out, f, indent=2, default=str)
+    except Exception as exc:  # noqa: BLE001 - never break the decision path
+        logger.warning(
+            "envelope enrichment post-step failed (decision unaffected): %s",
+            exc,
+        )
 
 
 # Exit codes — keep stable; the orchestrator pattern-matches on these.
@@ -232,6 +318,18 @@ def run_step(
         "cumulative_cost_usd": state.cumulative_cost_usd,
         "envelope_path": str(envelope_path),
     }
+
+    # ----- Phase-2 envelope-enrichment post-step (P2-A) ----------------
+    # Pure side-effect on the envelope FILE, run after the decision inputs
+    # (validation.valid + escalation guards below) are finalized. It writes
+    # gate_decision (always) and — opt-in, default OFF — advisory axis_a/
+    # axis_b. It never raises and never participates in the decision below.
+    _enrich_envelope_poststep(
+        envelope=envelope,
+        envelope_path=envelope_path,
+        validation=validation,
+        insight_scoring_enabled=_flag_enabled(_INSIGHT_SCORING_FLAG),
+    )
 
     # ----- PASS branch -------------------------------------------------
     if validation.valid:

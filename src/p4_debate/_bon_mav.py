@@ -212,6 +212,71 @@ def _identity_percentile(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
 
+def candidate_envelope(
+    *, raw_text: str, payload: Optional[dict]
+) -> dict[str, Any]:
+    """Build the minimal envelope the enrichment adapter scores per candidate.
+
+    Phase-2 wiring: when ``run_phase_d_bon`` is asked to score candidates live,
+    each generated synthesis candidate must be turned into an *envelope* the
+    WS-1/WS-2 scorers can read. The parsed synthesis ``payload`` IS that
+    envelope when available (it carries ``decision`` / ``dissent_trace`` etc.);
+    if the candidate failed JSON parse we fall back to a thin envelope that
+    still carries the raw model output as ``answer`` so the scorers degrade
+    gracefully rather than seeing nothing.
+
+    Pure: returns a NEW dict; never mutates ``payload``.
+    """
+    if isinstance(payload, dict):
+        env = dict(payload)
+        # Ensure an ``answer`` text is present for scorers that read it; do not
+        # clobber an answer the payload already carries.
+        env.setdefault("answer", raw_text)
+        return env
+    return {"answer": raw_text or ""}
+
+
+#: Per-candidate enrichment seam: ``(envelope) -> {"axis_a": .., "axis_b": ..}``.
+#: ``run_phase_d_bon`` injects an adapter bound to its (articulation,
+#: sophistication, grounding) seams; default-None means "no live scoring".
+EnrichFn = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def resolve_candidate_axes(
+    *,
+    sample_index: int,
+    raw_text: str,
+    payload: Optional[dict],
+    candidate_axes: Optional[Sequence[dict]],
+    enrich_fn: Optional[EnrichFn],
+) -> dict[str, Any]:
+    """Resolve ONE candidate's ``{axis_a, axis_b}`` block (precedence-ordered).
+
+    Precedence (backward-compatible by construction):
+
+      1. **Pre-baked fixtures win.** If ``candidate_axes`` supplies a non-empty
+         block for ``sample_index``, return it verbatim — this is exactly the
+         pre-Phase-2 behavior, so fixture-driven runs are byte-identical.
+      2. **Live scoring** (Phase-2). Else, if an ``enrich_fn`` is supplied,
+         build the candidate envelope and run the enrichment adapter to compute
+         the axes live. The adapter never raises and degrades to advisory-null
+         blocks offline.
+      3. **Neither.** Return ``{}`` (scoring disabled and no fixtures) — the
+         caller maps this to ``composite_quality == 0.0``, as before.
+    """
+    fixture = (
+        candidate_axes[sample_index]
+        if candidate_axes is not None and sample_index < len(candidate_axes)
+        else None
+    ) or None
+    if fixture:
+        return fixture
+    if enrich_fn is not None:
+        env = candidate_envelope(raw_text=raw_text, payload=payload)
+        return enrich_fn(env) or {}
+    return {}
+
+
 def composite_quality(
     candidate_axes: dict[str, Any],
     *,
@@ -536,6 +601,9 @@ __all__ = [
     "aggregate_conviction_inputs",
     "PercentileFn",
     "composite_quality",
+    "EnrichFn",
+    "candidate_envelope",
+    "resolve_candidate_axes",
     "BoNCandidate",
     "VerifierPick",
     "mad_allowed",

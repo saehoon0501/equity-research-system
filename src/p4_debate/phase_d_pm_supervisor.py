@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from . import (
     ALL_VERDICTS,
@@ -69,6 +69,7 @@ from ._bon_mav import (
     bon_input_sha,
     composite_quality,
     deserialize_bon_result,
+    resolve_candidate_axes,
     extract_usage,
     mad_allowed,
     self_consistency_pick,
@@ -696,6 +697,10 @@ def run_phase_d_bon(
     n: int = BON_N,
     temperature: float = SELF_CONSISTENCY_TEMPERATURE,
     candidate_axes: Optional[list[dict]] = None,
+    score_candidates: bool = False,
+    articulation: Any = None,
+    sophistication: Any = None,
+    grounding_resolver: Optional[Callable[[dict], "tuple[str, set]"]] = None,
     heterogeneous_models: bool = False,
     verifiable_step: bool = False,
 ) -> PhaseDBoNResult:
@@ -715,6 +720,27 @@ def run_phase_d_bon(
 
     The MAD path is gated: it runs only when BOTH ``heterogeneous_models`` AND
     ``verifiable_step`` are set; otherwise this is pure self-consistency BoN.
+
+    Per-candidate axis resolution (Phase-2 live-scorer wiring)
+    ----------------------------------------------------------
+    Each candidate's ``{axis_a, axis_b}`` block (which feeds
+    ``composite_quality``) is resolved with this precedence:
+
+      1. ``candidate_axes[i]`` (pre-baked golden fixtures) — wins when present,
+         so fixture-driven runs are byte-identical to the pre-Phase-2 behavior.
+      2. **Live scoring** — when ``score_candidates=True`` and no fixture covers
+         index ``i``, the WS-1 ``articulation`` (axis_a) + WS-2 ``sophistication``
+         (axis_b) scorers are run on the candidate's envelope via
+         ``src.scoring.enrichment.enrich_axes``. Both scorers degrade to an
+         advisory-null block offline (never raise), so ``composite_quality``
+         still returns a number and no quality lift is fabricated.
+      3. Otherwise ``{}`` → ``composite_quality == 0.0`` (as before).
+
+    The ``grounding_resolver`` ``(envelope) -> (grounding_text, frameworks)`` is
+    the LIVE seam that fetches WS-1's grounding from ``evidence_documents``;
+    offline it is ``None`` and WS-1's faithfulness degrades to advisory-null
+    (it will NOT fabricate a 0.0). DEFAULT (``score_candidates=False`` or a
+    fixture supplied) preserves the existing behavior exactly.
     """
     if client is None:
         client = build_default_client()
@@ -744,6 +770,43 @@ def run_phase_d_bon(
     mad_path = mad_allowed(
         heterogeneous_models=heterogeneous_models, verifiable_step=verifiable_step
     )
+
+    # --- Phase-2 per-candidate enrichment seam ---------------------------- #
+    # When live scoring is enabled, bind an enrich_fn that runs the WS-1/WS-2
+    # scorers (via the enrichment adapter) on a candidate envelope. The adapter
+    # is imported lazily so the module has no hard dependency on src.scoring at
+    # import time, and the import failure path can never break runtime synthesis
+    # (it degrades to "no live scoring"). enrich_fn stays None unless
+    # score_candidates is set, so the DEFAULT path is unchanged.
+    enrich_fn = None
+    if score_candidates:
+        try:
+            from src.scoring.enrichment import enrich_axes  # noqa: WPS433
+        except Exception:  # pragma: no cover - import guard; degrade silently
+            enrich_axes = None  # type: ignore[assignment]
+            _LOG.warning(
+                "score_candidates=True but enrichment adapter unimportable; "
+                "falling back to no live scoring"
+            )
+        if enrich_axes is not None:
+
+            def enrich_fn(envelope: dict) -> dict:  # noqa: WPS430
+                grounding_text = ""
+                frameworks: Optional[set] = None
+                if grounding_resolver is not None:
+                    try:
+                        grounding_text, frameworks = grounding_resolver(envelope)
+                    except Exception:  # noqa: BLE001 - grounding must not break scoring
+                        grounding_text, frameworks = "", None
+                # enrich_axes never raises and never mutates the envelope; it
+                # returns advisory-null axis blocks on any scorer degrade.
+                return enrich_axes(
+                    envelope,
+                    articulation=articulation,
+                    sophistication=sophistication,
+                    grounding=grounding_text,
+                    supported_frameworks=frameworks,
+                )
 
     # --- BoN-level cache (opt-in): (input_sha, model_version, n, temp) ----- #
     #     -> {candidates, verifier_pick}. Stores BOTH the N candidates and the
@@ -825,9 +888,16 @@ def run_phase_d_bon(
             last_resp = getattr(client, "last_response", None)
             usage = extract_usage(synthesizer_model, last_resp)
             payload = extract_json(raw)
-            axes = (
-                candidate_axes[i] if candidate_axes and i < len(candidate_axes) else {}
-            ) or {}
+            # Resolve this candidate's axis blocks: fixtures win (backward
+            # compat), else live-score via the enrichment adapter when enabled,
+            # else {} -> composite_quality 0.0.
+            axes = resolve_candidate_axes(
+                sample_index=i,
+                raw_text=raw,
+                payload=payload,
+                candidate_axes=candidate_axes,
+                enrich_fn=enrich_fn,
+            )
             cand = BoNCandidate(
                 sample_index=i,
                 raw_text=raw,
