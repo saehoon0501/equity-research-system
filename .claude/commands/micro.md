@@ -78,14 +78,16 @@ The prior is a **bias term**, not a veto: the signal model weights it at ~10% an
 
 ### 3. Fetch the intraday bar series
 
-The indicators need a series, not just a snapshot:
+The indicators need a series, not just a snapshot. Fetch the **full day** incl. extended hours (the signal model scopes the bars itself — see below), e.g. ~2 days back so the regular session is fully covered:
 
 ```
-mcp__massive.get_intraday_bars(ticker="<TICKER>", multiplier=1, timespan="minute", lookback_minutes=390)
+mcp__massive.get_intraday_bars(ticker="<TICKER>", multiplier=1, timespan="minute", lookback_minutes=2880)
 ```
 
 - `status="ok"` → keep `bars`.
 - `status` in {`config_error`,`http_error`} → record it; you can still try the live tape, but with too few bars the model returns `insufficient_data` (a clean HOLD).
+
+**Session scope (default REGULAR).** Pass the full series; the signal model defaults to `session="regular"` (09:30–16:00 ET) and **excludes pre/after-hours from the indicators** — thin extended-hours moves revert at the open and can flip the read (observed on MU: a bearish regular session + a +2% after-hours pop net to a long lean). The after-hours move is surfaced as a flagged `session.after_hours` annotation instead. Override with `session="extended"` (pre+regular+after) or `"all"` only when you specifically want extended-hours in the signal.
 
 Also fetch **daily** bars for the robust volatility anchor (the price-range band is scaled off daily ATR, not 1-minute ATR — see §5):
 
@@ -113,9 +115,10 @@ This opens a short-lived websocket, drains ~10 s of trades/quotes/aggregates, an
 Write the gathered inputs to a scratch JSON file, then run the signal model (P1: math lives in Python, not this markdown):
 
 ```bash
-# payload.json = {"ticker": "<TICKER>", "bars": <bars>, "live": <micro-aggregate>,
+# payload.json = {"ticker": "<TICKER>", "bars": <full-day bars>, "live": <micro-aggregate>,
 #                 "prior": <prior-or-null>, "daily_atr": <ATR14 of daily bars>,
-#                 "horizon_minutes": <60..390>}   # 1h floor → 1 trading-day cap; default 120 (2h)
+#                 "horizon_minutes": <60..390>,   # 1h floor → 1 trading-day cap; default 120 (2h)
+#                 "session": "regular"}           # default; "extended" | "all" to include pre/after-hours
 python -m src.micro.cli signal --input payload.json
 ```
 
@@ -145,6 +148,8 @@ This is `/micro`'s private lane. **Do not** write `execution_recommendations`, `
 /MICRO — <TICKER>   <UTC timestamp>   (horizon: intraday ≤1d)
 
 REFERENCE PRICE: $X.XX   (live: ok / no_ticks — market closed?)
+SESSION: regular (NN bars; pre/after-hours excluded)
+AFTER-HOURS: $X.XX (+X.XX% vs regular close $Y.YY, N bars) — flagged, NOT in the signal   [omit if none]
 SLOW-LAYER PRIOR: <BUY/HOLD/TRIM/SELL @ research date> (source: PM Recommendation | PM report)  |  prior-free
 LIVE TAPE: tick velocity X.X/s · spread X.X bps · liquidity ok/THIN
 

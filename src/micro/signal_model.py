@@ -31,6 +31,7 @@ import math
 from typing import Any, Sequence
 
 from src.micro import indicators as ind
+from src.micro import sessions
 
 # Slow-layer 4-bin prior -> intraday directional tilt in [-1, +1].
 _PRIOR_TILT = {
@@ -192,12 +193,14 @@ def compute_signal(
     prior: dict | None = None,
     horizon_minutes: float = _DEFAULT_HORIZON_MINUTES,
     daily_atr: float | None = None,
+    session: str = "regular",
 ) -> dict[str, Any]:
     """Produce the probabilistic intraday signal payload.
 
     Args:
         bars: ordered intraday OHLCV bars (oldest -> newest), as emitted by the
-            massive ``get_intraday_bars`` tool.
+            massive ``get_intraday_bars`` tool. Pass the FULL day's series
+            (incl. pre/after) so the after-hours move can be annotated.
         live: optional micro-aggregate from ``stream_micro_aggregate`` (used for
             the reference price and a confidence/liquidity modifier).
         prior: optional {"summary_code": "BUY"|"HOLD"|"TRIM"|"SELL", ...} from
@@ -208,9 +211,19 @@ def compute_signal(
         daily_atr: optional daily ATR (robust volatility unit). When given, the
             band = daily_atr * sqrt(horizon/session); else falls back to
             intraday ATR * sqrt(horizon/bar_minutes).
+        session: bar scope for the indicators — "regular" (default; 09:30–16:00
+            ET), "extended" (pre+regular+after), or "all". After-hours is thin
+            and reverts, so it's excluded by default and surfaced as an
+            annotation. Bars without timestamps are not filtered.
 
     Returns a JSON-serializable dict (see /micro command for the rendered card).
     """
+    # Annotate the after-hours move from the FULL series, then scope the bars
+    # the indicators see to `session` (default regular-only).
+    after_hours = sessions.after_hours_annotation(bars)
+    full_bar_count = len(bars)
+    bars = sessions.filter_session(bars, session)
+
     cl = ind.closes(bars)
     live = live or {}
     prior = prior or {}
@@ -228,11 +241,17 @@ def compute_signal(
     if not cl or ref is None or len(cl) < 5:
         return {
             "status": "insufficient_data",
-            "message": f"need >=5 intraday bars, got {len(cl)}",
+            "message": f"need >=5 {session} bars, got {len(cl)}",
             "primary": "HOLD",
             "probabilities": {"long": 0.0, "short": 0.0, "hold": 1.0},
             "reference_price": ref,
             "prior_used": {"summary_code": prior_code},
+            "session": {
+                "scope": session,
+                "bars_used": len(cl),
+                "bars_available": full_bar_count,
+                "after_hours": after_hours,
+            },
         }
 
     trend = _trend_score(cl)
@@ -328,6 +347,12 @@ def compute_signal(
         "probabilities": probs,
         "confidence": confidence,
         "directional_score": round(directional, 4),
+        "session": {
+            "scope": session,
+            "bars_used": len(bars),
+            "bars_available": full_bar_count,
+            "after_hours": after_hours,
+        },
         "indicators": {
             "rsi14": _round(ind.rsi(cl, 14)),
             "macd_hist": _round(ind.macd(cl)[2]) if ind.macd(cl) else None,
