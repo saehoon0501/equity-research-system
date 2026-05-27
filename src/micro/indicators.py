@@ -11,7 +11,13 @@ A "bar" is a dict with float-ish ``open/high/low/close/volume`` and optional
 
 from __future__ import annotations
 
+import math
 from typing import Iterable, Sequence
+
+
+def _norm_cdf(x: float) -> float:
+    """Standard-normal CDF via erf (no scipy dependency)."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 def _floats(values: Iterable) -> list[float]:
@@ -173,6 +179,111 @@ def session_vwap(bars: Sequence[dict]) -> float | None:
     if den == 0:
         return None
     return num / den
+
+
+def _money_flow_multiplier(bar: dict) -> float | None:
+    """Close Location Value: ((C-L)-(H-C))/(H-L), in [-1, +1]. None if H==L."""
+    try:
+        h, low, c = float(bar["high"]), float(bar["low"]), float(bar["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    rng = h - low
+    if rng <= 0:
+        return 0.0  # no intrabar range -> neutral
+    return ((c - low) - (h - c)) / rng
+
+
+def chaikin_money_flow(bars: Sequence[dict], window: int = 21) -> float | None:
+    """CMF = sum(MFM*Vol) / sum(Vol) over `window` bars, in [-1, +1].
+
+    Buying pressure (>0) when closes print in the upper part of bar ranges on
+    volume; selling pressure (<0) in the lower part. Standard money-flow
+    indicator (StockCharts ChartSchool).
+    """
+    rows = bars[-window:]
+    num = 0.0
+    den = 0.0
+    for b in rows:
+        mfm = _money_flow_multiplier(b)
+        vol = b.get("volume")
+        if mfm is None or vol is None:
+            continue
+        try:
+            vol = float(vol)
+        except (TypeError, ValueError):
+            continue
+        if vol <= 0:
+            continue
+        num += mfm * vol
+        den += vol
+    if den == 0:
+        return None
+    return num / den
+
+
+def bvc_imbalance(bars: Sequence[dict], window: int = 20) -> float | None:
+    """Bulk Volume Classification signed-volume imbalance over `window`, in [-1,1].
+
+    Per Easley, Lopez de Prado & O'Hara (Flow Toxicity / VPIN), each bar's volume
+    is split into buy/sell *fractions* by the standard-normal CDF of the bar's
+    standardized close-to-close return:
+        buy_fraction = Phi( dP / sigma_dP ),   signed = volume * (2*buy_fraction - 1)
+    Returns sum(signed) / sum(volume) in [-1, +1]. Needs only OHLCV bars (no L2).
+    A bar-native order-flow proxy appropriate to the intraday-to-daily horizon
+    (true OFI lives at a seconds horizon and needs full book depth).
+    """
+    rows = bars[-(window + 1):]
+    closes = _floats(b.get("close") for b in rows)
+    vols = [b.get("volume") for b in rows]
+    if len(closes) < 3:
+        return None
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    n = len(deltas)
+    mean_d = sum(deltas) / n
+    var = sum((d - mean_d) ** 2 for d in deltas) / n
+    sigma = var ** 0.5
+    # When every move is identical (sigma == 0) the normal CDF can't standardize;
+    # fall back to sign-based classification (all-up -> buy, all-down -> sell).
+    use_sign = sigma <= 0
+    signed = 0.0
+    total = 0.0
+    # deltas[i] corresponds to bar rows[i+1]
+    for i, d in enumerate(deltas):
+        vol = vols[i + 1]
+        try:
+            vol = float(vol)
+        except (TypeError, ValueError):
+            continue
+        if vol is None or vol <= 0:
+            continue
+        if use_sign:
+            buy_frac = 1.0 if d > 0 else (0.0 if d < 0 else 0.5)
+        else:
+            buy_frac = _norm_cdf(d / sigma)
+        signed += vol * (2.0 * buy_frac - 1.0)
+        total += vol
+    if total == 0:
+        return None
+    return signed / total
+
+
+def flow_pressure(bars: Sequence[dict], window: int = 20) -> float | None:
+    """Synthesized FLOW PRESSURE indicator: equal blend of BVC signed-volume
+    imbalance and Chaikin Money Flow, in [-1, +1].
+
+    Combines two OHLCV-native, horizon-appropriate buying/selling-pressure
+    measures that both add the VOLUME dimension price-only momentum lacks.
+    Equal-weighted by design (DeMiguel 2009 / data-snooping critique: optimized
+    signal weights overfit and fail out of sample). Returns None only if BOTH
+    components are unavailable; uses whichever is present otherwise.
+    """
+    bvc = bvc_imbalance(bars, window)
+    cmf = chaikin_money_flow(bars, window)
+    parts = [x for x in (bvc, cmf) if x is not None]
+    if not parts:
+        return None
+    val = sum(parts) / len(parts)
+    return max(-1.0, min(1.0, val))
 
 
 def opening_range(bars: Sequence[dict], minutes: int = 30) -> tuple[float, float] | None:

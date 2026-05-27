@@ -26,6 +26,7 @@ No I/O — pure function of its inputs, unit-tested in tests/unit/micro.
 
 from __future__ import annotations
 
+import datetime as _dt
 import math
 from typing import Any, Sequence
 
@@ -39,15 +40,38 @@ _PRIOR_TILT = {
     "SELL": -0.30,
 }
 
-# Relative weights of each TA component in the directional score.
-_W_TREND = 0.30
-_W_MOMENTUM = 0.25
-_W_VWAP = 0.20
-_W_MEANREV = 0.15
+# Relative weights of each component in the directional score. Kept close to
+# equal-weight on purpose: optimized signal weights overfit and fail OOS
+# (DeMiguel-Garlappi-Uppal 2009; data-snooping critique Sullivan-Timmermann-White
+# 1999). `flow` is the synthesized Flow-Pressure indicator (BVC signed volume +
+# CMF) — the volume-bearing, OHLCV-native order-flow proxy, independent of the
+# price-only trend/momentum terms.
+_W_TREND = 0.25
+_W_MOMENTUM = 0.20
+_W_VWAP = 0.15
+_W_MEANREV = 0.10
+_W_FLOW = 0.20
 _W_PRIOR = 0.10
 
 # Softmax temperature: higher => probabilities closer to uniform (less decisive).
 _TEMP = 0.45
+
+# Trade-horizon bounds. Price ranges scale to a holding horizon so targets are
+# executable. Microstructure research (2026-05-27) is decisive that minute-scale
+# intraday targets are eaten by spread + impact + noise (round trip must clear
+# ~2x effective spread; sub-minute moves ARE the bid-ask bounce a taker pays,
+# not earns — Bessembinder-Venkataraman 2009, Kyle-Obizhaeva 2018) and that
+# minute-scale backtested edges are the max-overfitting regime (López de Prado
+# 2014). So the floor is HOURS, not minutes; the cap is one trading day.
+#   floor   = 60 min  (1 hour — "no min but hours at least")
+#   session = 390 min (one regular US session = the "1 day" cap)
+# Volatility is anchored on DAILY ATR scaled by sqrt(horizon/session): the
+# sqrt-of-time rule breaks under jumps/serial-correlation and a 1-min ATR is
+# inflated by microstructure noise (Danielsson-Zigrand), so daily ATR is the
+# robust unit. Falls back to intraday-ATR sqrt-time only when daily ATR is absent.
+_MIN_HORIZON_MINUTES = 60.0
+_SESSION_MINUTES = 390.0
+_DEFAULT_HORIZON_MINUTES = 120.0
 
 
 def _clamp(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
@@ -110,10 +134,15 @@ def _softmax3(long_l: float, short_l: float, hold_l: float) -> dict[str, float]:
 
 
 def _price_ranges(
-    ref: float, atr_v: float | None, direction: str, vwap: float | None
+    ref: float, band: float, direction: str, vwap: float | None
 ) -> dict[str, Any]:
-    """ATR-anchored entry/target/stop. Falls back to % bands if ATR is None."""
-    band = atr_v if atr_v and atr_v > 0 else ref * 0.004  # ~0.4% fallback
+    """Entry/target/stop anchored on a horizon-scaled volatility ``band``.
+
+    ``band`` is the expected price move over the trade horizon (per-bar ATR
+    scaled by sqrt(horizon/bar) — see ``compute_signal``), NOT a single 1-minute
+    ATR. That keeps the levels executable: a 1-min ATR (~$0.7 on a $900 name)
+    produces tick-width targets nobody can trade; a 30-min band is ~$3-4.
+    """
     if direction == "long":
         entry = (round(ref - 0.25 * band, 4), round(ref + 0.10 * band, 4))
         target = (round(ref + 1.0 * band, 4), round(ref + 1.8 * band, 4))
@@ -128,15 +157,36 @@ def _price_ranges(
         "entry_zone": entry,
         "target_zone": target,
         "stop": stop,
-        "atr_used": round(band, 4),
+        "band_used": round(band, 4),
         "vwap_anchor": round(vwap, 4) if vwap is not None else None,
     }
+
+
+def _infer_bar_minutes(bars: Sequence[dict]) -> float:
+    """Median minutes between consecutive bar timestamps (default 1.0)."""
+    ts = [b.get("ts") for b in bars if b.get("ts")]
+    deltas: list[float] = []
+    for a, b in zip(ts, ts[1:]):
+        try:
+            ta = _dt.datetime.fromisoformat(str(a).replace("Z", "+00:00"))
+            tb = _dt.datetime.fromisoformat(str(b).replace("Z", "+00:00"))
+            d = (tb - ta).total_seconds() / 60.0
+            if d > 0:
+                deltas.append(d)
+        except (ValueError, TypeError):
+            continue
+    if not deltas:
+        return 1.0
+    deltas.sort()
+    return deltas[len(deltas) // 2] or 1.0
 
 
 def compute_signal(
     bars: Sequence[dict],
     live: dict | None = None,
     prior: dict | None = None,
+    horizon_minutes: float = _DEFAULT_HORIZON_MINUTES,
+    daily_atr: float | None = None,
 ) -> dict[str, Any]:
     """Produce the probabilistic intraday signal payload.
 
@@ -147,6 +197,12 @@ def compute_signal(
             the reference price and a confidence/liquidity modifier).
         prior: optional {"summary_code": "BUY"|"HOLD"|"TRIM"|"SELL", ...} from
             the latest /research-company run for this ticker.
+        horizon_minutes: intended holding horizon for the price ranges, clamped
+            to [60 min, 390 min] (1 hour floor → 1 trading day cap). Entry/
+            target/stop scale to the expected move over this window.
+        daily_atr: optional daily ATR (robust volatility unit). When given, the
+            band = daily_atr * sqrt(horizon/session); else falls back to
+            intraday ATR * sqrt(horizon/bar_minutes).
 
     Returns a JSON-serializable dict (see /micro command for the rendered card).
     """
@@ -189,6 +245,7 @@ def compute_signal(
         "momentum": _momentum_score(cl),
         "vwap": _vwap_score(bars, cl),
         "meanrev": meanrev,
+        "flow": ind.flow_pressure(bars, 20),  # synthesized Flow-Pressure indicator
     }
     prior_tilt = _PRIOR_TILT.get(prior_code, 0.0) if prior_code else 0.0
 
@@ -197,6 +254,7 @@ def compute_signal(
         "momentum": _W_MOMENTUM,
         "vwap": _W_VWAP,
         "meanrev": _W_MEANREV,
+        "flow": _W_FLOW,
     }
     used_w = 0.0
     raw = 0.0
@@ -236,9 +294,23 @@ def compute_signal(
     vwap = ind.session_vwap(bars)
     o_range = ind.opening_range(bars, 30)
 
+    # Expected-move band for the trade horizon, clamped to [1h, 1 trading day].
+    # Prefer the DAILY ATR as the volatility unit (robust); scale by
+    # sqrt(horizon/session). Fall back to intraday ATR * sqrt(horizon/bar) only
+    # when daily ATR is unavailable. (Rationale + research in the constants block.)
+    horizon = min(_SESSION_MINUTES, max(_MIN_HORIZON_MINUTES, float(horizon_minutes)))
+    bar_minutes = _infer_bar_minutes(bars)
+    if daily_atr and daily_atr > 0:
+        band = daily_atr * math.sqrt(horizon / _SESSION_MINUTES)
+        band_source = "daily_atr"
+    else:
+        per_bar = atr_v if (atr_v and atr_v > 0) else ref * 0.004
+        band = per_bar * math.sqrt(horizon / bar_minutes)
+        band_source = "intraday_atr_sqrt_time"
+
     directions = {
-        "LONG": _price_ranges(ref, atr_v, "long", vwap),
-        "SHORT": _price_ranges(ref, atr_v, "short", vwap),
+        "LONG": _price_ranges(ref, band, "long", vwap),
+        "SHORT": _price_ranges(ref, band, "short", vwap),
         "HOLD": {"note": "stand aside; re-check on the next /micro pull"},
     }
 
@@ -258,6 +330,9 @@ def compute_signal(
             "session_vwap": _round(vwap),
             "atr14": _round(atr_v),
             "bollinger_pct_b": _round(ind.bollinger_pct_b(cl, 20, 2.0)),
+            "flow_pressure": _round(ind.flow_pressure(bars, 20)),
+            "bvc_imbalance": _round(ind.bvc_imbalance(bars, 20)),
+            "chaikin_money_flow": _round(ind.chaikin_money_flow(bars, 21)),
             "opening_range": o_range,
             "component_scores": {k: _round(v) for k, v in components.items()},
         },
@@ -272,6 +347,16 @@ def compute_signal(
             "spread_bps": spread_bps,
             "liquidity_ok": liquidity_ok,
         },
+        "horizon": {
+            "minutes": round(horizon, 1),
+            "label": _horizon_label(horizon),
+            "bar_minutes": round(bar_minutes, 2),
+            "expected_move_band": round(band, 4),
+            "band_source": band_source,
+            "daily_atr": _round(daily_atr),
+            "bounds": {"floor_min": _MIN_HORIZON_MINUTES, "cap_min": _SESSION_MINUTES},
+            "note": "floor 1h, cap 1 trading day; band scaled to holding horizon",
+        },
         "directions": directions,
         "vocabulary_note": (
             "LONG/SHORT/HOLD is the intraday day-trading lane (CLAUDE.md P9 "
@@ -284,3 +369,11 @@ def _round(v: Any, n: int = 4) -> Any:
     if isinstance(v, (int, float)):
         return round(v, n)
     return v
+
+
+def _horizon_label(minutes: float) -> str:
+    if minutes >= _SESSION_MINUTES:
+        return "1 trading day"
+    if minutes % 60 == 0:
+        return f"{int(minutes // 60)}h"
+    return f"{int(minutes)}m"

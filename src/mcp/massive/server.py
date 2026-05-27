@@ -190,6 +190,8 @@ async def _collect_window(
             await ws.send(json.dumps({"action": "subscribe", "params": sub_params}))
             loop = asyncio.get_event_loop()
             deadline = loop.time() + window_s
+            authorized: set[str] = set()  # channels the plan accepted
+            sub_errors: list[str] = []  # subscribe-rejection messages (entitlement)
             while True:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
@@ -202,6 +204,12 @@ async def _collect_window(
                     break
                 for frame in _as_frames(raw):
                     if frame.get("ev") == "status":
+                        status = (frame.get("status") or "").lower()
+                        msg = frame.get("message") or ""
+                        if status == "success":
+                            authorized |= _channels_in(msg)
+                        elif status == "error":
+                            sub_errors.append(msg)
                         continue
                     _accumulate(frame, acc)
     except (OSError, WebSocketException) as exc:
@@ -213,7 +221,32 @@ async def _collect_window(
             "as_of": _now_iso(),
         }
 
-    return _summarize(sym, window_s, channels, acc)
+    requested = set(channels)
+    rejected = sorted(requested - authorized)
+    # Entitlement: every requested channel was rejected (e.g. a delayed plan hit
+    # with real-time channels, or real-time channels on the delayed cluster).
+    if authorized == set() and sub_errors:
+        return {
+            "ticker": sym,
+            "status": "not_entitled",
+            "message": sub_errors[0],
+            "rejected_channels": sorted(requested),
+            "ws_url": uri,
+            "as_of": _now_iso(),
+        }
+    return _summarize(
+        sym, window_s, channels, acc, sorted(authorized), rejected
+    )
+
+
+def _channels_in(message: str) -> set[str]:
+    """Parse channel prefixes from a subscribe-ack like 'subscribed to: A.MU,Q.MU'."""
+    out: set[str] = set()
+    for token in message.replace("subscribed to:", "").split(","):
+        token = token.strip()
+        if "." in token:
+            out.add(token.split(".", 1)[0].upper())
+    return out
 
 
 async def _await_auth(ws: Any) -> bool | str:
@@ -255,7 +288,12 @@ def _as_frames(raw: Any) -> list[dict[str, Any]]:
 
 
 def _summarize(
-    sym: str, window_s: int, channels: list[str], acc: dict[str, Any]
+    sym: str,
+    window_s: int,
+    channels: list[str],
+    acc: dict[str, Any],
+    authorized_channels: list[str] | None = None,
+    rejected_channels: list[str] | None = None,
 ) -> dict[str, Any]:
     trade_count = acc["trade_count"]
     vwap = (acc["px_sz_sum"] / acc["sz_sum"]) if acc["sz_sum"] > 0 else None
@@ -282,6 +320,8 @@ def _summarize(
         "status": status,
         "window_seconds": window_s,
         "channels": channels,
+        "authorized_channels": authorized_channels,
+        "rejected_channels": rejected_channels,
         "last_trade_price": last,
         "vwap_window": round(vwap, 6) if vwap is not None else None,
         "trade_count": trade_count,
@@ -323,14 +363,21 @@ async def stream_micro_aggregate(
             "Q" quotes, "A" per-second aggregates. Default "T,Q,A".
 
     Returns (status="ok"):
-        {"ticker", "status", "last_trade_price", "vwap_window",
-         "tick_velocity_per_s", "window_volume", "window_high", "window_low",
-         "bid", "ask", "mid", "spread_bps", "trade_count", "quote_count",
-         "as_of", "provider"}
+        {"ticker", "status", "authorized_channels", "rejected_channels",
+         "last_trade_price", "vwap_window", "tick_velocity_per_s",
+         "window_volume", "window_high", "window_low", "bid", "ask", "mid",
+         "spread_bps", "trade_count", "quote_count", "as_of", "provider"}
+
+    Channels the plan rejects are auto-dropped: the call proceeds with whatever
+    was authorized and lists the rest in ``rejected_channels`` (e.g. a delayed
+    plan accepts ``A`` but rejects ``T``/``Q`` — so ``bid``/``ask``/``spread_bps``
+    come back null). If EVERY requested channel is rejected, returns
+    status="not_entitled" with the provider's explanatory message (e.g. "you
+    don't have access real-time data; use wss://delayed...").
 
     On degradation returns status in {"config_error", "auth_failed",
-    "connection_error", "no_ticks"} with a "message" — never raises for
-    operational failures, so /micro can render a graceful card.
+    "connection_error", "not_entitled", "no_ticks"} with a "message" — never
+    raises for operational failures, so /micro can render a graceful card.
     """
     window_s = max(_MIN_WINDOW_S, min(_MAX_WINDOW_S, int(collect_seconds)))
     chans = [c.strip().upper() for c in (channels or "T,Q,A").split(",") if c.strip()]

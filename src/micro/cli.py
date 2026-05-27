@@ -80,11 +80,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("ERROR: 'bars' must be a list", file=sys.stderr)
         return 2
 
-    result = compute_signal(
-        bars=bars,
-        live=payload.get("live"),
-        prior=payload.get("prior"),
-    )
+    kwargs = {"bars": bars, "live": payload.get("live"), "prior": payload.get("prior")}
+    if payload.get("horizon_minutes") is not None:
+        kwargs["horizon_minutes"] = float(payload["horizon_minutes"])
+    if payload.get("daily_atr") is not None:
+        kwargs["daily_atr"] = float(payload["daily_atr"])
+    result = compute_signal(**kwargs)
     result["ticker"] = (payload.get("ticker") or "").upper() or None
     result["as_of"] = _now_iso()
     print(json.dumps(result, indent=2, default=str))

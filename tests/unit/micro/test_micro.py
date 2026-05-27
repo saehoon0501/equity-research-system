@@ -67,6 +67,36 @@ def test_insufficient_bars_is_hold():
     assert out["probabilities"]["hold"] == 1.0
 
 
+def test_price_ranges_scale_with_horizon_hours_to_day():
+    # Horizon is bounded to [60min, 390min] = [1h, 1 trading day]. A 4h horizon
+    # must give wider (executable) targets than 1h; sub-hour clamps to the 1h
+    # floor; over-a-day clamps to the 1-day cap.
+    bars = [_bar(c=100.0 + i * 0.25, h=100.4 + i * 0.25, l=99.6 + i * 0.25)
+            for i in range(60)]
+    h1 = compute_signal(bars, horizon_minutes=60)
+    h4 = compute_signal(bars, horizon_minutes=240)
+    floored = compute_signal(bars, horizon_minutes=15)    # below 60 -> 60
+    capped = compute_signal(bars, horizon_minutes=2000)   # above 390 -> 390
+    def width(out):
+        return out["directions"]["LONG"]["target_zone"][1] - out["reference_price"]
+    assert width(h4) > width(h1) > 0
+    assert floored["horizon"]["minutes"] == 60.0
+    assert floored["horizon"]["label"] == "1h"
+    assert capped["horizon"]["minutes"] == 390.0
+    assert capped["horizon"]["label"] == "1 trading day"
+
+
+def test_daily_atr_anchors_the_band():
+    # With a daily ATR supplied, the 1-day band equals daily ATR; shorter
+    # horizons scale by sqrt(horizon/session); source is tagged daily_atr.
+    bars = [_bar(c=100.0 + i * 0.1) for i in range(60)]
+    day = compute_signal(bars, horizon_minutes=390, daily_atr=20.0)
+    hour = compute_signal(bars, horizon_minutes=60, daily_atr=20.0)
+    assert day["horizon"]["band_source"] == "daily_atr"
+    assert abs(day["horizon"]["expected_move_band"] - 20.0) < 1e-6
+    assert abs(hour["horizon"]["expected_move_band"] - 20.0 * (60 / 390) ** 0.5) < 1e-3
+
+
 def test_wide_spread_pushes_toward_hold():
     bars = [_bar(c=100.0 + i * 0.25) for i in range(60)]
     tight = compute_signal(bars, live={"status": "ok", "spread_bps": 2}, prior=None)
