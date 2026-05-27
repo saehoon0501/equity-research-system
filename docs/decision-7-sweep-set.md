@@ -35,10 +35,13 @@ plus two that **post-date** decision 7 and are deliberate recent work. All five 
 - **Commands:** `research-company.md`, `evaluate.md` (`.claude/commands/`)
 - **Agents (8):** quantitative-analyst, strategic-analyst, tactical-overlay, flow-overlay,
   mean-reversion-overlay, catalyst-scout, pm-supervisor, evaluator (`.claude/agents/`)
-- **Python (`src/`, unchanged at repo root):** p8_tactical_overlay, p9_flow_overlay,
-  p10_reversion_overlay, evaluator_gates, p7_recommendation_emitter, agent_harness, data_layer,
-  regime_sidecar, audit_trail, evidence_index, mode_classifier, eval,
-  mcp/{postgres, contamination_check, edgar, market_data, yfinance, polygon, macro_stack, fred, fundamentals}
+- **Python (`src/`, at repo root — regrouped by stakeholder 2026-05-27, see `STAKEHOLDERS.md`):**
+  `overlays/{tactical,flow,reversion}` (was p8/p9/p10_*), `eval/{gates,scorer.py}` (gates was
+  evaluator_gates), `supervisor/` (was p7_recommendation_emitter),
+  `shared/{agent_harness,data_layer,regime_sidecar,audit_trail,evidence_index,mode_classifier}`,
+  `mcp/{postgres, contamination_check, edgar, market_data, yfinance, polygon, macro_stack, fred, fundamentals}`.
+  (The pre-regroup names p8_tactical_overlay/p9_flow_overlay/p10_reversion_overlay/evaluator_gates/
+  p7_recommendation_emitter are historical; agent specs + `research-company.md` reference the new paths.)
 - **scripts/** (kept), **`.claude/references/**`**, **db/**, kept **tests/**, **.mcp.json** (9 servers)
 
 ## Retire-set — archived to `archive/_retired/`
