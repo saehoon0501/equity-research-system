@@ -1,5 +1,7 @@
 -- =============================================================================
--- Migration 041: research-company eval loop dead-path removal
+-- Migration 044: research-company eval loop dead-path removal
+-- (Renamed from 041 to resolve number collision with 041_flow_overlay_v03_crowding.sql.
+--  Originally applied to live DB as 041 on 2026-05-23; rename is filesystem-only.)
 -- Date:    2026-05-23
 -- Spec:    docs/superpowers/specs/2026-05-23-eval-loop-deletion-design.md
 -- Plan:    /Users/sehoonbyun/.claude/plans/async-yawning-owl.md (D0–D4)
