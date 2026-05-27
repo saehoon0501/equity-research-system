@@ -109,12 +109,48 @@ def _momentum_score(cl: list[float]) -> float | None:
     return _clamp(sum(parts) / len(parts))
 
 
-def _vwap_score(bars: Sequence[dict], cl: list[float]) -> float | None:
-    """Price above session VWAP => long tilt. Normalized by ~0.5%."""
+def _vwap_score(
+    bars: Sequence[dict],
+    cl: list[float],
+    daily_atr: float | None = None,
+) -> float | None:
+    """Price-vs-VWAP score with stretched-fade reversal.
+
+    Normal zone (price within ~0.5x daily-ATR % of VWAP): pure continuation —
+    above VWAP is bullish, below is bearish.
+
+    Stretched zone (beyond ~1.5x daily-ATR %): the sign FLIPS to a fade signal.
+    Across [stretch_start, stretch_full] the score smoothly transitions from
+    continuation to fade. Pure continuation reads a parabolic gap-up as a
+    strong-long when it's actually exhaustion — the MU 2026-05-27 replay
+    found the model gave vwap=+1.0 at $935 (5.2% above session VWAP) when the
+    setup was a textbook gap-fade short. This piecewise function corrects that
+    blind spot without making the call deterministic — past stretch, the
+    signal just flips, the magnitude is still bounded.
+
+    Without daily_atr, falls back to fixed % thresholds (2.5%/7.5%) — wider
+    than the ATR-anchored version on quiet names but safe.
+    """
     vwap = ind.session_vwap(bars)
     if vwap is None or vwap == 0 or not cl:
         return None
-    return _clamp((cl[-1] - vwap) / vwap / 0.005)
+    raw_pct = (cl[-1] - vwap) / vwap
+    cont = _clamp(raw_pct / 0.005)  # normal continuation regime
+
+    if daily_atr and daily_atr > 0 and cl[-1] > 0:
+        atr_pct = daily_atr / cl[-1]
+        stretch_start = 0.5 * atr_pct
+        stretch_full = 1.5 * atr_pct
+    else:
+        stretch_start = 0.025
+        stretch_full = 0.075
+
+    abs_pct = abs(raw_pct)
+    if abs_pct <= stretch_start:
+        return cont
+    span = max(1e-9, stretch_full - stretch_start)
+    fade_fraction = _clamp((abs_pct - stretch_start) / span, 0.0, 1.0)
+    return _clamp((1.0 - fade_fraction) * cont + fade_fraction * (-cont))
 
 
 def _meanrev_score(cl: list[float]) -> float | None:
@@ -256,18 +292,20 @@ def compute_signal(
 
     trend = _trend_score(cl)
     meanrev = _meanrev_score(cl)
-    # Regime gate: mean-reversion (Bollinger fade) only makes sense in a
+    # Regime gate: mean-reversion (Bollinger fade) makes most sense in a
     # range-bound tape. In a strong trend, price riding the upper/lower band is
-    # *continuation*, not a reversal signal — so we damp the fade in proportion
-    # to trend strength. At |trend|=1 the fade is fully suppressed; at trend~0
-    # (chop) it carries full weight.
+    # mostly *continuation*, not a reversal signal — so we damp the fade by
+    # trend strength. BUT keeping a 30% floor preserves fade contribution at
+    # the exact gap-fade moments where the playbook needs it: parabolic gappers
+    # have strong-trend EMAs by construction, and the prior zero-floor zeroed
+    # out the fade exactly when it should fire (MU 2026-05-27 replay finding).
     if trend is not None and meanrev is not None:
-        meanrev = meanrev * (1.0 - abs(trend))
+        meanrev = meanrev * max(0.30, 1.0 - abs(trend))
 
     components: dict[str, float | None] = {
         "trend": trend,
         "momentum": _momentum_score(cl),
-        "vwap": _vwap_score(bars, cl),
+        "vwap": _vwap_score(bars, cl, daily_atr),
         "meanrev": meanrev,
         "flow": ind.flow_pressure(bars, 20),  # synthesized Flow-Pressure indicator
     }
@@ -289,6 +327,22 @@ def compute_signal(
     # Renormalize by the weight actually available, then fold in the prior tilt.
     ta_score = (raw / used_w) if used_w > 0 else 0.0
     directional = _clamp((1 - _W_PRIOR) * ta_score + _W_PRIOR * prior_tilt)
+
+    # Exhaustion-at-extreme dampener: oversold-at-lower-band or overbought-at-
+    # upper-band tape is structurally a "wait for reversal / cover a winning
+    # trade" zone, not "press the move further". Shrink |directional| toward
+    # HOLD without flipping sign — preserves direction read but lowers
+    # conviction so HOLD probability rises. MU 2026-05-27 replay: at the $895
+    # gap-fill print, RSI 30.5 + %B -0.008 + price at prior-close magnet — model
+    # had no signal for "we're at support, stop pressing the short". This
+    # corrects it. Soft-prob (not hard answer) per goal.
+    rsi_now = ind.rsi(cl, 14)
+    pb_now = ind.bollinger_pct_b(cl, 20, 2.0)
+    if rsi_now is not None and pb_now is not None:
+        oversold_at_support = rsi_now < 32.0 and pb_now < 0.05
+        overbought_at_resist = rsi_now > 68.0 and pb_now > 0.95
+        if oversold_at_support or overbought_at_resist:
+            directional = directional * 0.50
 
     # Confidence: agreement among available components + liquidity from live tape.
     available = [v for v in components.values() if v is not None]
