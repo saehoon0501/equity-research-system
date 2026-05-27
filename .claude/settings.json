@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/post_agent_validate.sh"
+          }
+        ]
+      }
     ]
   },
   "env": {
