@@ -59,11 +59,15 @@ class GateDecision(TypedDict):
     deterministic : results of the hard deterministic companion checks.
     advisory      : the advisory (LLM-judge) output; never flips to PASS
                     alone (can only downgrade to ESCALATE — see WS-6).
+    escalated     : True iff ``verdict == "ESCALATE"`` — a convenience flag
+                    mirroring the verdict, emitted by the producer
+                    ``_hybrid_gate.HybridResult.to_gate_decision()``.
     """
 
     verdict: GateVerdict
     deterministic: dict[str, Any]
     advisory: dict[str, Any]
+    escalated: bool
 
 
 __all__ = [

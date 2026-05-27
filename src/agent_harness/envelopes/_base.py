@@ -233,7 +233,15 @@ def _validate_object(
         )
         return
 
-    if schema.get("type") == "object" and isinstance(obj, dict):
+    # Normalize the declared type to a set so the LIST form
+    # (e.g. ["object", "null"], ["array", "null"]) recurses into nested
+    # shape validation exactly like the scalar form. The isinstance guard
+    # preserves null-permissiveness: a null value (allowed when "null" is
+    # in the type) is not a dict/list, so its nested branch is skipped.
+    declared_type = schema.get("type")
+    type_members = set(declared_type) if isinstance(declared_type, list) else {declared_type}
+
+    if "object" in type_members and isinstance(obj, dict):
         required = schema.get("required", [])
         for r in required:
             if r not in obj:
@@ -266,7 +274,7 @@ def _validate_object(
                 _validate_object(obj[k], sub, path=sub_path, out=out)
         return
 
-    if schema.get("type") == "array" and isinstance(obj, list):
+    if "array" in type_members and isinstance(obj, list):
         items = schema.get("items")
         if isinstance(items, dict):
             for i, v in enumerate(obj):

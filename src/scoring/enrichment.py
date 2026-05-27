@@ -34,15 +34,53 @@ from src.scoring.sophistication.scorer import SophisticationScorer
 
 ADAPTER_VERSION = "p2-enrichment-1"
 
+# Canonical FLAT key sets the axis scorers themselves emit on degrade. Copied
+# from src/scoring/articulation/scorer.py::CANONICAL_NUMERIC_KEYS (axis_a) and
+# src/scoring/sophistication/scorer.py::_NUMERIC_KEYS (axis_b) so the adapter's
+# own degrade block matches the scorers' degrade shape EXACTLY — a consumer
+# iterating the canonical key-set (not ``.get``) sees the same schema either
+# way. Keep in sync with those modules.
+_AXIS_A_NUMERIC_KEYS = (
+    "faithfulness",
+    "answer_relevancy",
+    "citation_precision",
+    "citation_recall",
+    "veriscore",
+    "coherence",
+    "clarity",
+)
+_AXIS_B_NUMERIC_KEYS = (
+    "roscoe",
+    "receval",
+    "cot_faithfulness_flag",
+    "novelty_percentile",
+    "surprise",
+)
+
 
 def _advisory_null(block_name: str) -> dict[str, Any]:
-    """A minimal all-null advisory block used when a scorer cannot be run."""
-    return {
-        "mode": "advisory",
-        "degraded": True,
-        "reason": "enrichment_unavailable",
-        "scorer_version": ADAPTER_VERSION,
-    }
+    """An all-null advisory block matching the scorer's own degrade shape.
+
+    The WS-1/WS-2 scorers, when they degrade, emit a FLAT block carrying the
+    canonical numeric keys set to ``None`` plus ``mode="advisory"`` (see each
+    scorer's ``_null_flat_scores`` / ``_null_scores``). This adapter's own
+    degrade block must use the SAME shape for the given ``block_name`` so a
+    consumer iterating the canonical key-set sees one schema regardless of
+    whether the scorer or the adapter produced the degraded block. The
+    ``degraded``/``reason``/``scorer_version`` markers are also retained.
+    """
+    if block_name == "axis_a":
+        numeric_keys: tuple[str, ...] = _AXIS_A_NUMERIC_KEYS
+    elif block_name == "axis_b":
+        numeric_keys = _AXIS_B_NUMERIC_KEYS
+    else:
+        numeric_keys = ()
+    block: dict[str, Any] = {k: None for k in numeric_keys}
+    block["mode"] = "advisory"
+    block["degraded"] = True
+    block["reason"] = "enrichment_unavailable"
+    block["scorer_version"] = ADAPTER_VERSION
+    return block
 
 
 def _scores_or_null(result: Any, block_name: str) -> dict[str, Any]:

@@ -248,3 +248,84 @@ def test_retry_decision_unchanged_on_poststep_error(monkeypatch, envelope_file, 
 
     assert decision.decision == "RETRY"
     assert decision.exit_code == EXIT_RETRY
+
+
+# --------------------------------------------------------------------------
+# 4. C1 — decoupled writes: an enrichment-branch failure must NOT drop the
+#    always-on gate_decision write.
+# --------------------------------------------------------------------------
+def test_gate_decision_persisted_when_enrichment_branch_raises(
+    monkeypatch, envelope_file, tmp_path
+):
+    # Flag ON so the opt-in axis-enrichment branch runs; make enrich_envelope
+    # blow up. The decoupled gate_decision write must still land, the decision
+    # must be unchanged, and run_step must not raise.
+    validation = _make_validation(valid=True)
+    _patch_validate_all(monkeypatch, validation)
+    monkeypatch.setenv("INSIGHT_SCORING_ENABLED", "1")
+
+    import src.scoring.enrichment as enrichment_mod
+
+    def _boom(*a, **k):
+        raise RuntimeError("injected enrichment error")
+
+    # Patch on the source module: enrich_envelope is lazily imported inside
+    # the post-step, so the lookup resolves to this module attribute.
+    monkeypatch.setattr(enrichment_mod, "enrich_envelope", _boom)
+
+    decision = _run(envelope_file, tmp_path)
+
+    # Decision unaffected; no raise out of run_step.
+    assert decision.decision == "PASS"
+    assert decision.exit_code == EXIT_PASS
+
+    written = json.loads(envelope_file.read_text(encoding="utf-8"))
+    # Always-on write survived the enrichment-branch failure (the C1 fix).
+    assert "gate_decision" in written
+    assert set(written["gate_decision"].keys()) == {
+        "verdict",
+        "deterministic",
+        "advisory",
+        "escalated",
+    }
+    # Enrichment failed, so its axes were never spliced.
+    assert "axis_a" not in written
+    assert "axis_b" not in written
+
+
+# --------------------------------------------------------------------------
+# 5. A4 — the envelope file is rewritten atomically (tmp + os.replace).
+# --------------------------------------------------------------------------
+def test_envelope_write_leaves_no_tmp_sibling(monkeypatch, envelope_file, tmp_path):
+    _patch_validate_all(monkeypatch, _make_validation(valid=True))
+    monkeypatch.delenv("INSIGHT_SCORING_ENABLED", raising=False)
+
+    _run(envelope_file, tmp_path)
+
+    written = json.loads(envelope_file.read_text(encoding="utf-8"))
+    assert "gate_decision" in written
+    # A clean atomic write must not leave a *.tmp sibling behind.
+    leftovers = list(envelope_file.parent.glob(envelope_file.name + ".*.tmp"))
+    assert leftovers == [], f"unexpected leftover temp files: {leftovers}"
+
+
+def test_envelope_write_uses_os_replace(monkeypatch, envelope_file, tmp_path):
+    _patch_validate_all(monkeypatch, _make_validation(valid=True))
+    monkeypatch.delenv("INSIGHT_SCORING_ENABLED", raising=False)
+
+    calls: list[tuple[str, str]] = []
+    real_replace = ostep.os.replace
+
+    def _spy_replace(src, dst):
+        calls.append((str(src), str(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(ostep.os, "replace", _spy_replace)
+
+    _run(envelope_file, tmp_path)
+
+    # The envelope path must have been written via os.replace (atomic swap),
+    # never a direct open(path, "w") truncating write.
+    assert any(dst == str(envelope_file) for _, dst in calls), (
+        f"os.replace was not used to write the envelope; calls={calls}"
+    )

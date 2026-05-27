@@ -385,7 +385,14 @@ def emit_recommendation(
     Args:
         inp: bundle of upstream inputs.
         conn: psycopg-style connection. None → dry-run; HMAC computed and
-            EmitOutcome returned but no DB write.
+            EmitOutcome returned but no DB write. When NOT None (persisting),
+            migration 045 is a HARD precondition: the rec + audit chain +
+            calibration_emission_snapshot all INSERT in ONE atomic txn, so
+            db/migrations/045_calibration_resolver.sql MUST be applied first.
+            If calibration_emission_snapshot is missing, emission fails (the
+            whole txn rolls back) with a clear RuntimeError naming mig-045 —
+            it is NOT skipped, because the snapshot is load-bearing for the
+            WS-4 calibration loop.
         hmac_key: explicit HMAC key bytes. Falls back to AUDIT_HMAC_KEY env.
 
     Per v3 spec Section 4.6 Q1 + Section 5 Q1 + Section 7 Q4.
@@ -616,11 +623,14 @@ def _persist(
         except Exception:  # pragma: no cover - test conn may not allow toggling
             began = False
 
-    raised = False
     try:
         _do_persist(conn, row, audit_rows, calibration_snapshot)
+        # Commit the multi-row write as a unit. The explicit commit() — NOT
+        # the autocommit toggle in `finally` — is the transaction boundary,
+        # so commit MUST happen before autocommit is restored (A3 fix).
+        if hasattr(conn, "commit"):
+            conn.commit()
     except Exception:
-        raised = True
         if hasattr(conn, "rollback"):
             try:
                 conn.rollback()
@@ -629,22 +639,13 @@ def _persist(
         raise
     finally:
         # Restore autocommit setting either way (don't leak our toggling).
+        # This runs AFTER the explicit commit/rollback above, so the toggle
+        # never issues an implicit commit ahead of our real commit boundary.
         if began:
             try:
                 conn.autocommit = True
             except Exception:  # pragma: no cover
                 pass
-    if raised:
-        # Defensive: should not reach here because `raise` above re-raised,
-        # but keeps the type-flow explicit.
-        return  # pragma: no cover
-
-    # Clean path — commit the multi-row write as a unit.
-    if hasattr(conn, "commit"):
-        try:
-            conn.commit()
-        except Exception:  # pragma: no cover
-            pass
 
 
 def _do_persist(
@@ -712,23 +713,47 @@ def _do_persist(
         # — NO ON CONFLICT: a second emit for the same rec_id MUST be rejected
         # by the DB's PK (write-once guarantee), not silently overwritten.
         if calibration_snapshot is not None:
-            cur.execute(
-                """
-                INSERT INTO calibration_emission_snapshot (
-                    rec_id, as_of_ts, continuous_score,
-                    p_beat_benchmark, model_version
-                ) VALUES (
-                    %s, %s, %s, %s, %s
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO calibration_emission_snapshot (
+                        rec_id, as_of_ts, continuous_score,
+                        p_beat_benchmark, model_version
+                    ) VALUES (
+                        %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        str(calibration_snapshot["rec_id"]),
+                        calibration_snapshot["as_of_ts"],
+                        calibration_snapshot["continuous_score"],
+                        calibration_snapshot["p_beat_benchmark"],
+                        calibration_snapshot["model_version"],
+                    ),
                 )
-                """,
-                (
-                    str(calibration_snapshot["rec_id"]),
-                    calibration_snapshot["as_of_ts"],
-                    calibration_snapshot["continuous_score"],
-                    calibration_snapshot["p_beat_benchmark"],
-                    calibration_snapshot["model_version"],
-                ),
-            )
+            except Exception as exc:
+                # Migration 045 is a HARD precondition (see emit_recommendation
+                # docstring). If the snapshot table is missing, the driver
+                # raises an undefined-table error (psycopg pgcode 42P01 /
+                # "relation ... does not exist"). Re-raise as a CLEAR,
+                # actionable RuntimeError naming the migration — re-raising
+                # (not swallowing) keeps the whole txn rolling back, so a rec
+                # is NOT persisted when its calibration precondition is unmet.
+                # Catch ONLY the undefined-table case; everything else
+                # propagates unchanged.
+                pgcode = getattr(exc, "pgcode", None)
+                msg = str(exc).lower()
+                if (
+                    pgcode == "42P01"
+                    or "does not exist" in msg
+                    or "undefined" in msg
+                ):
+                    raise RuntimeError(
+                        "calibration_emission_snapshot missing — apply "
+                        "db/migrations/045_calibration_resolver.sql before "
+                        "emitting"
+                    ) from exc
+                raise
         for ar in audit_rows:
             cur.execute(
                 """

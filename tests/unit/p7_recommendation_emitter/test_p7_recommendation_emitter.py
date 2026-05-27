@@ -663,21 +663,27 @@ def test_emit_persists_via_fake_conn(monkeypatch: pytest.MonkeyPatch) -> None:
     out = emit_recommendation(_baseline_inputs(), conn=conn)
     # 1 main row + 1 calibration snapshot + 5 audit rows = 7 SQL executes.
     assert len(conn.cur.executed) == 7
-    # First INSERT is execution_recommendations.
-    sql0, params0 = conn.cur.executed[0]
-    assert "INSERT INTO execution_recommendations" in sql0
+    executed = conn.cur.executed
+    # B2 regression: pin the EXACT documented write ordering so a future
+    # interleaving regression is caught, not just the per-prefix counts.
+    # Documented order is [rec, calibration_snapshot, audit×5].
+    sql0, params0 = executed[0]
+    assert "INSERT INTO execution_recommendations" in sql0  # rec is FIRST
     assert params0[1] == "NVDA"  # ticker
-    # Exactly one calibration_emission_snapshot INSERT and five
-    # audit_provenance INSERTs follow (filter by SQL prefix, not index).
+    # calibration_emission_snapshot is at its fixed position (index 1).
+    assert "INSERT INTO calibration_emission_snapshot" in executed[1][0]
+    # The 5 audit_provenance rows are CONTIGUOUS (indices 2..6 inclusive).
+    assert all(
+        "INSERT INTO audit_provenance" in executed[i][0] for i in range(2, 7)
+    )
+    # Belt-and-suspenders: exactly one snapshot + five audit INSERTs total.
     snapshot_inserts = [
         (sql, p)
-        for sql, p in conn.cur.executed
+        for sql, p in executed
         if "INSERT INTO calibration_emission_snapshot" in sql
     ]
     audit_inserts = [
-        (sql, p)
-        for sql, p in conn.cur.executed
-        if "INSERT INTO audit_provenance" in sql
+        (sql, p) for sql, p in executed if "INSERT INTO audit_provenance" in sql
     ]
     assert len(snapshot_inserts) == 1
     assert len(audit_inserts) == 5
@@ -941,3 +947,147 @@ def test_emit_clean_psycopg2_path_commits_once(
     assert out is not None
     assert conn.rollbacks == 0
     assert conn.commits == 1
+
+
+# ---------------------------------------------------------------------------
+# B1 — migration 045 hard precondition: undefined table => clear error
+# ---------------------------------------------------------------------------
+
+
+class _UndefinedTableError(Exception):
+    """Mimics a psycopg UndefinedTable error (pgcode 42P01)."""
+
+    pgcode = "42P01"
+
+
+class _MissingSnapshotTableCursor(_FakeCursor):
+    """Raises an undefined-table error ONLY on the snapshot INSERT.
+
+    Simulates migration 045 not being applied: the rec INSERT succeeds, then
+    the calibration_emission_snapshot INSERT hits 'relation does not exist'.
+    """
+
+    def execute(self, sql: str, params: tuple = ()) -> None:
+        super().execute(sql, params)
+        if "calibration_emission_snapshot" in sql:
+            raise _UndefinedTableError(
+                'relation "calibration_emission_snapshot" does not exist'
+            )
+
+
+class _MissingSnapshotTableConn(_FakeConn):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cur = _MissingSnapshotTableCursor()
+        self.rolled_back = False
+
+    def rollback(self) -> None:
+        self.rolled_back = True
+
+
+def test_emit_missing_mig045_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: snapshot table missing => actionable RuntimeError naming mig-045,
+    and the recommendation is NOT reported as persisted (no commit)."""
+    monkeypatch.setenv(AUDIT_HMAC_ENV, "test-audit-key")
+    conn = _MissingSnapshotTableConn()
+
+    with pytest.raises(RuntimeError, match="045") as exc_info:
+        emit_recommendation(_baseline_inputs(), conn=conn)
+
+    # Error message is actionable: names the migration file to apply.
+    msg = str(exc_info.value)
+    assert "calibration_emission_snapshot" in msg
+    assert "045_calibration_resolver.sql" in msg
+    # The original undefined-table driver error is preserved as the cause.
+    assert isinstance(exc_info.value.__cause__, _UndefinedTableError)
+    # Rec NOT persisted: the txn never committed (it must roll back).
+    assert conn.committed is False
+
+
+def test_emit_non_undefined_table_error_propagates_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1 guard: a NON-undefined-table failure on the snapshot INSERT must
+    propagate unchanged (NOT be rewrapped as the mig-045 RuntimeError)."""
+    monkeypatch.setenv(AUDIT_HMAC_ENV, "test-audit-key")
+
+    class _OtherErrorCursor(_FakeCursor):
+        def execute(self, sql: str, params: tuple = ()) -> None:
+            super().execute(sql, params)
+            if "calibration_emission_snapshot" in sql:
+                raise ValueError("some unrelated insert failure")
+
+    class _OtherErrorConn(_FakeConn):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cur = _OtherErrorCursor()
+
+        def rollback(self) -> None:
+            pass
+
+    conn = _OtherErrorConn()
+    with pytest.raises(ValueError, match="some unrelated insert failure"):
+        emit_recommendation(_baseline_inputs(), conn=conn)
+    assert conn.committed is False
+
+
+# ---------------------------------------------------------------------------
+# A3 — commit() must happen BEFORE autocommit is restored
+# ---------------------------------------------------------------------------
+
+
+class _OrderedCallConn:
+    """psycopg2-style fake recording the order of commit / rollback /
+    autocommit toggles via a single ordered event log.
+
+    Starts in autocommit=True (so the emitter takes the legacy path and must
+    toggle autocommit). ``__setattr__`` interception records every write to
+    ``autocommit`` so the test can assert the explicit commit precedes the
+    autocommit restore.
+    """
+
+    def __init__(self) -> None:
+        # Bypass our own __setattr__ for bookkeeping attrs.
+        object.__setattr__(self, "events", [])
+        object.__setattr__(self, "cur", _FakeCursor())
+        object.__setattr__(self, "autocommit", True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == "autocommit":
+            self.events.append(("autocommit", value))
+        object.__setattr__(self, name, value)
+
+    def cursor(self) -> _FakeCursor:
+        return self.cur
+
+    def commit(self) -> None:
+        self.events.append("commit")
+
+    def rollback(self) -> None:
+        self.events.append("rollback")
+
+
+def test_emit_commit_before_autocommit_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A3: on an autocommit=True conn, the explicit commit() is the txn
+    boundary — it MUST be called before autocommit is restored to True."""
+    monkeypatch.setenv(AUDIT_HMAC_ENV, "test-audit-key")
+    conn = _OrderedCallConn()
+
+    out = emit_recommendation(_baseline_inputs(), conn=conn)
+    assert out is not None
+
+    events = conn.events
+    # Emitter flipped autocommit off, committed, then restored autocommit on.
+    assert ("autocommit", False) in events
+    assert "commit" in events
+    assert ("autocommit", True) in events
+    # The commit boundary precedes the autocommit restore (the A3 fix).
+    assert events.index("commit") < events.index(("autocommit", True))
+    # And the autocommit-off happened before the commit (txn window opened).
+    assert events.index(("autocommit", False)) < events.index("commit")
+    # No rollback on the happy path.
+    assert "rollback" not in events

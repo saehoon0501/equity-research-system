@@ -20,6 +20,7 @@ calls are made.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -58,7 +59,9 @@ from p3_mechanical_scorer.stage1b_tier_a_composite import (  # noqa: E402
     evaluate as stage1b_evaluate,
 )
 from p3_mechanical_scorer.stage2_llm_rubric import (  # noqa: E402
+    CacheMissError,
     EvidenceCorpus,
+    LLMUnavailableError,
     PATTERNS_TO_SCORE,
     score_all_patterns,
     score_pattern,
@@ -362,6 +365,50 @@ def test_stage2_saw_rule_output_always_false():
                                      "defer_to_human": False, "tie_break_applied": False},
     )
     assert result.saw_rule_output is False
+
+
+def test_stage2_cache_miss_propagates_not_swallowed():
+    """P0-5 replay-mode contract (FINDING A1): a CacheMissError (missing
+    cassette in LLM_CACHE_MODE=replay) MUST propagate and fail the run hard —
+    it must NOT be swallowed into ``sample = {}``, which would silently corrupt
+    the self-consistency median and let CI pass green on a missing cassette."""
+    pattern = PATTERNS_TO_SCORE[0]
+    corpus = EvidenceCorpus(
+        ticker="NVDA",
+        documents=[{"source_id": "10K", "kind": "filing", "text": "Verbatim text body."}],
+    )
+
+    def missing_cassette(system, user, model, temperature):
+        # Simulates get_or_compute() in replay mode hitting a missing cassette.
+        raise CacheMissError("no cassette for prompt_sha=deadbeef (replay mode)")
+
+    with pytest.raises(CacheMissError):
+        score_pattern(pattern, corpus, llm_caller=missing_cassette)
+
+
+def test_stage2_genuine_llm_unavailable_still_degrades():
+    """Narrowing the broad except (FINDING A1) must NOT break the real degrade
+    path: a genuine LLMUnavailableError / JSONDecodeError still degrades to an
+    empty sample (-> default LOW), it does not newly raise."""
+    pattern = PATTERNS_TO_SCORE[0]
+    corpus = EvidenceCorpus(
+        ticker="NVDA",
+        documents=[{"source_id": "10K", "kind": "filing", "text": "Verbatim text body."}],
+    )
+
+    def unavailable(system, user, model, temperature):
+        raise LLMUnavailableError("anthropic SDK not installed")
+
+    # Does not raise — degrades all N samples to {} -> validator defaults LOW.
+    result = score_pattern(pattern, corpus, llm_caller=unavailable)
+    assert result.rating == RATING_LOW
+    assert result.score == 0.0
+
+    def bad_json(system, user, model, temperature):
+        raise json.JSONDecodeError("Expecting value", "not json", 0)
+
+    result_json = score_pattern(pattern, corpus, llm_caller=bad_json)
+    assert result_json.rating == RATING_LOW
 
 
 # ---------------------------------------------------------------------------

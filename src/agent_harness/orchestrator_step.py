@@ -44,6 +44,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -89,6 +90,35 @@ def _extract_gate_decision(validation: Any) -> dict[str, Any] | None:
     return None
 
 
+def _atomic_write_json(path: Path, obj: Any) -> None:
+    """Atomically serialize ``obj`` as JSON onto ``path``.
+
+    Writes to a uniquely-named temp file in the SAME directory, fsyncs it,
+    then ``os.replace``s it over the target. ``os.replace`` is atomic on
+    POSIX, so a crash mid-write (OOM/SIGKILL/disk-full) leaves either the old
+    complete file or the new complete file — never a truncated one. Mirrors
+    the tmp-file + os.replace pattern in ``src/conformal/buffer.py``.
+    """
+    payload = json.dumps(obj, indent=2, default=str)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Best-effort cleanup of the temp file on any failure so a failed
+        # write never leaves a stray *.tmp sibling behind.
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _enrich_envelope_poststep(
     *,
     envelope: dict[str, Any],
@@ -100,41 +130,48 @@ def _enrich_envelope_poststep(
 
     A PURE SIDE-EFFECT run AFTER the PASS/RETRY/ESCALATE decision is fixed:
       1. Persist the hybrid gate's gate_decision onto the envelope file
-         (always on, cheap). Skipped silently when absent.
+         (ALWAYS ON, cheap). Skipped silently when absent.
       2. When ``insight_scoring_enabled`` (default OFF), splice the advisory
          axis_a/axis_b blocks via the enrichment adapter.
 
-    NEVER raises and NEVER changes the decision: any failure is logged and
-    swallowed; the only effect is the envelope-file writeback. Returns early
-    without touching the file when there is nothing to write.
+    The two effects are DECOUPLED into independent try/except blocks: a
+    failure in the opt-in axis enrichment (step 2) can never drop the
+    always-on gate_decision write (step 1), and vice-versa. Each write is
+    atomic (tmp file + os.replace). NEVER raises and NEVER changes the
+    decision: any failure is logged and swallowed; the only effect is the
+    envelope-file writeback.
     """
-    try:
-        out = dict(envelope)
-        mutated = False
+    # ``working`` carries the latest on-disk view of the envelope across the
+    # two blocks so the opt-in axis write (block 2) builds on — and preserves
+    # — whatever the always-on gate_decision write (block 1) produced.
+    working = dict(envelope)
 
+    # ----- Block 1: always-on gate_decision write (own try/except) ------
+    try:
         gate_decision = _extract_gate_decision(validation)
         if gate_decision is not None:
-            out["gate_decision"] = gate_decision
-            mutated = True
+            working["gate_decision"] = gate_decision
+            _atomic_write_json(envelope_path, working)
+    except Exception as exc:  # noqa: BLE001 - never break the decision path
+        logger.warning(
+            "envelope gate_decision post-step failed (decision unaffected): %s",
+            exc,
+        )
 
-        if insight_scoring_enabled:
+    # ----- Block 2: opt-in axis enrichment write (own try/except) -------
+    if insight_scoring_enabled:
+        try:
             # Import lazily so the default-OFF hot path never imports the
             # scoring stack (which may pull heavier deps).
             from src.scoring.enrichment import enrich_envelope
 
-            out = enrich_envelope(out)
-            mutated = True
-
-        if not mutated:
-            return
-
-        with open(envelope_path, "w", encoding="utf-8") as f:
-            json.dump(out, f, indent=2, default=str)
-    except Exception as exc:  # noqa: BLE001 - never break the decision path
-        logger.warning(
-            "envelope enrichment post-step failed (decision unaffected): %s",
-            exc,
-        )
+            working = enrich_envelope(working)
+            _atomic_write_json(envelope_path, working)
+        except Exception as exc:  # noqa: BLE001 - never break the decision path
+            logger.warning(
+                "envelope axis enrichment post-step failed (decision unaffected): %s",
+                exc,
+            )
 
 
 # Exit codes — keep stable; the orchestrator pattern-matches on these.

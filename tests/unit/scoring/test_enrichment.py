@@ -83,6 +83,33 @@ def test_enrich_axes_degrades_on_raising_scorer():
     assert out["axis_a"]["mode"] == "advisory"
 
 
+def test_enrich_axes_degrade_block_matches_scorer_degrade_shape():
+    """C3: an adapter-degraded block carries the SAME canonical flat-null keys
+    the scorers emit when they themselves degrade — so a consumer iterating the
+    canonical key-set (not ``.get``) sees one schema either way.
+    """
+    # Pull the canonical key-sets straight from the scorer modules so the test
+    # fails if the adapter ever drifts from the scorers' own degrade shape.
+    from src.scoring.articulation.scorer import CANONICAL_NUMERIC_KEYS as A_KEYS
+    from src.scoring.sophistication.scorer import _NUMERIC_KEYS as B_KEYS
+
+    out = enrich_axes(
+        {"thesis": "x"},
+        articulation=_RaisingScorer(),
+        sophistication=_RaisingScorer(),
+    )
+
+    axis_a = out["axis_a"]
+    assert set(A_KEYS) <= set(axis_a)  # all 8 articulation canonical keys present
+    assert all(axis_a[k] is None for k in A_KEYS)  # numeric ones None
+    assert axis_a["mode"] == "advisory"
+
+    axis_b = out["axis_b"]
+    assert set(B_KEYS) <= set(axis_b)  # all sophistication canonical keys present
+    assert all(axis_b[k] is None for k in B_KEYS)  # numeric/flag ones None
+    assert axis_b["mode"] == "advisory"
+
+
 def test_enrich_axes_handles_none_scores_payload():
     out = enrich_axes(
         {"thesis": "x"},

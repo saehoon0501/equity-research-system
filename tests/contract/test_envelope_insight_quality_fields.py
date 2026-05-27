@@ -169,6 +169,55 @@ def test_new_fields_nullable_do_not_break_validation():
     assert result.valid is True, result.to_result_dict()
 
 
+# ---------- A2: list-form schema types enforce nested validation -------
+#
+# Regression for finding A2: REASONING_TRACE_SCHEMA declares
+# type=["array","null"] (the LIST form), and its items declare
+# required=["op","rationale"]. The old _validate_object compared
+# schema.get("type") == "array" literally, so the list form skipped the
+# items/required recursion entirely — malformed nested entries passed
+# unchecked. After the fix, the nested shape IS enforced.
+
+
+def test_reasoning_trace_entry_missing_rationale_now_fails():
+    env = deepcopy(_flow_envelope())
+    env["reasoning_trace"] = [
+        {"op": "load_ticker_prices", "rationale": "fetched 252d window"},
+        {"op": "emit_envelope"},  # missing required 'rationale'
+    ]
+    result = flow_env.validate(env)
+    assert result.valid is False, result.to_result_dict()
+    assert any("rationale" in e.path for e in result.field_errors), result.to_result_dict()
+
+
+def test_reasoning_trace_non_dict_item_now_fails():
+    env = deepcopy(_flow_envelope())
+    env["reasoning_trace"] = [
+        {"op": "load_ticker_prices", "rationale": "ok"},
+        "not-a-dict",  # non-dict item — items schema is type=object
+    ]
+    result = flow_env.validate(env)
+    assert result.valid is False, result.to_result_dict()
+
+
+def test_reasoning_trace_well_formed_still_passes():
+    env = deepcopy(_flow_envelope())
+    env["reasoning_trace"] = [
+        {"op": "load_ticker_prices", "rationale": "fetched 252d window"},
+        {"op": "emit_envelope", "rationale": "serialized result"},
+    ]
+    result = flow_env.validate(env)
+    assert result.valid is True, result.to_result_dict()
+    assert result.field_errors == []
+
+
+def test_reasoning_trace_null_still_passes():
+    env = deepcopy(_flow_envelope())
+    env["reasoning_trace"] = None
+    result = flow_env.validate(env)
+    assert result.valid is True, result.to_result_dict()
+
+
 # ---------- new reversion envelope module ------------------------------
 
 

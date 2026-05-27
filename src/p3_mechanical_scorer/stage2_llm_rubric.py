@@ -65,6 +65,20 @@ from . import (
     SELF_CONSISTENCY_TEMP,
 )
 
+# P0-5 replay-mode contract: a cache miss (missing cassette) must FAIL the run
+# hard, never degrade to an empty sample. We import the cache's miss exception
+# at module level so ``score_pattern``'s broad degrade-handler can let it
+# escape (see the ``except CacheMissError: raise`` guard there). The import is
+# defensive — if the cache package is unavailable at import time a cache miss
+# cannot occur, so a sentinel that is never raised is a safe fallback.
+try:
+    from src.llm_cache import CacheMissError  # noqa: WPS433
+except Exception:  # pragma: no cover - cache import must never break runtime
+
+    class CacheMissError(RuntimeError):  # type: ignore[no-redef]
+        """Sentinel fallback when src.llm_cache is unimportable (never raised)."""
+
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -525,6 +539,13 @@ def score_pattern(
                 sample = _call_llm_once(
                     system, user, chosen_model, temperature, sample_index=i
                 )
+        except CacheMissError:
+            # P0-5 replay-mode contract: a missing cassette MUST fail the run
+            # hard. Never degrade a cache miss to ``sample = {}`` — doing so
+            # would silently corrupt the self-consistency median (mixing real
+            # cached samples with empty fallbacks) and let CI pass green on a
+            # missing cassette, defeating the entire reason replay mode exists.
+            raise
         except (json.JSONDecodeError, LLMUnavailableError, Exception) as e:
             _LOG.warning("Stage-2 sample %d failed for %s: %s", i, pattern.pattern_id, e)
             sample = {}
