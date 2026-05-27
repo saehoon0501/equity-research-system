@@ -9,7 +9,8 @@ leaf-level tools (MCP servers + skill helpers), never as an orchestrator.
 As of the 2026-05-26 plugin restructure, the repo is packaged as a single Claude Code plugin,
 `equity-research` (manifest at `.claude-plugin/plugin.json`). Scope was collapsed to the one
 value-producing workflow per BUILD_LOG decision 7 (see `docs/decision-7-sweep-set.md`); all
-off-critical-path machinery was archived to `archive/_retired/` (reversible).
+off-critical-path machinery was removed (recoverable via git history). `src/` and `.claude/agents/`
+are grouped by stakeholder — see `STAKEHOLDERS.md`.
 
 ## Layout
 

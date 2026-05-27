@@ -1,7 +1,11 @@
 # Decision-7 Sweep Set (derived artifact + execution record)
 
-**Status:** EXECUTED 2026-05-26 via `git mv` to `archive/_retired/` (reversible — not `git rm`).
-**Branch:** `refactor/plugin-restructure`.
+**Status:** EXECUTED 2026-05-26 via `git mv` to `archive/_retired/` (staged for review), then —
+after the post-regroup `/research-company` audits passed clean (GOOGL + MU) and `dashboard/` was
+caught and restored — **`archive/_retired/` was removed entirely on 2026-05-27**. All archived
+content remains recoverable via git history (`git log --all`, `git show`, or revert of the sweep
+commits). The "archived to `archive/_retired/`" phrasing below documents the intermediate step.
+**Branch:** `refactor/plugin-restructure` (worktree branch `worktree-refactor+plugin-restructure`).
 
 This is the derived sweep set that BUILD_LOG decision 7 §"Implementation protocol" step 1
 mandates ("Produce a derived sweep set as a separate review artifact … Operator reviews the
@@ -103,12 +107,15 @@ canonical substance (C3 thresholds in `phasing-plan.md §2.5`, DDL/gate-criteria
 the v3 design spec) rather than reproducing it, and CLAUDE.md + ~40 live agent/`src` citations resolve
 into the kept subset — so a wholesale removal would break the documented authority chain.
 
-Residual cosmetic dangling pointers (content preserved in `archive/`): BUILD_LOG/README historical-narrative
-mentions of `harness-reference`/`tier4-deferred-work`/`operator-reference`/`launch-readiness-log` (left as
-written-time-accurate history). The two *current* module READMEs (`src/eval/`, `src/mcp/fundamentals/`)
-were repointed to their `archive/_retired/docs/…` locations.
+After the final `archive/_retired/` removal, BUILD_LOG's historical-narrative mentions of the
+trimmed docs remain as written-time-accurate history, and the two *current* module READMEs
+(`src/eval/`, `src/mcp/fundamentals/`) note their referenced docs were removed (recoverable via git
+history) rather than pointing at a path.
 
 ## Reversal
 
-`git mv archive/_retired/<path> <original-path>` restores any item; `git log --follow` preserves
-history across the move. Re-add `broker` to `.mcp.json` if `broker_mcp` is restored.
+`archive/_retired/` no longer exists in the working tree. To recover any removed item, use git
+history: `git log --all -- <original-path>` to find it, then `git checkout <commit> -- <original-path>`
+(or `git revert` the removal commit). The intermediate archive commits (`caac428` plugin/decision-7,
+`19c6719` docs-trim, `eb09c42` regroup) preserve every file. Re-add `broker` to `.mcp.json` if
+`broker_mcp` is restored.

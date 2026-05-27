@@ -13,7 +13,7 @@ Per Path A (BUILD_LOG.md Day 1 architectural decisions), agent definitions live 
 > - `mcp/` — 9 external-service adapters (unchanged)
 >
 > Per the earlier decision-7 scope collapse, off-critical-path modules (incl. `backtesting/`) were
-> archived to `archive/_retired/src/` (reversible). `overlays/` and `shared/` are namespace dirs (no
+> removed (recoverable via git history). `overlays/` and `shared/` are namespace dirs (no
 > `__init__.py`). The build-sequence table and dependency graph below are **historical**; see
 > [`docs/decision-7-sweep-set.md`](../docs/decision-7-sweep-set.md) for the keep/retire list.
 

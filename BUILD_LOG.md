@@ -633,4 +633,26 @@ chose "reorg only," so the orchestration spec is left byte-identical; consolidat
 refactor.
 
 **Reversal:** `git mv archive/_retired/<path> <original>`; history preserved via `git log --follow`.
+
+---
+
+## Stakeholder regroup + archive removal (2026-05-27)
+
+Two follow-ons after the plugin restructure, both verified by post-change `/research-company`
+structural audits (GOOGL then MU — all MCP servers, every new-path embedded agent/hook command, the
+param snapshot, manifest, and gates resolve clean; zero refactor errors):
+
+1. **Stakeholder regroup** (commit `eb09c42`) — `src/` reorganized by pipeline stakeholder:
+   `overlays/{tactical,flow,reversion}`, `supervisor` (was p7), `eval/{scorer,gates}` (gates was
+   evaluator_gates), `shared/{agent_harness,data_layer,evidence_index,audit_trail,regime_sidecar,mode_classifier}`,
+   `mcp/` unchanged. `.claude/agents/` grouped into `analysts/overlays/catalyst/supervisor/eval/`
+   (recursive discovery; identity = `name:` frontmatter). Every import/path/`python -m` reference
+   rewritten. See `STAKEHOLDERS.md`.
+2. **`dashboard/` restored** (commit `3e3814c`) — wrongly archived in the decision-7 sweep; it is
+   the operator UI (reads memos/envelopes + `.claude/agents/` recursively + DB). Imports no `src/`
+   Python, so the regroup didn't affect it.
+3. **`archive/_retired/` removed entirely** (this commit) — after the audits passed and the dashboard
+   was recovered, the 201-file / 2.7 MB archive was `git rm`'d. All content remains recoverable via
+   git history (commits `caac428` / `19c6719` / `eb09c42`). This supersedes the reversible-archive
+   posture of the decision-7 entry above; reversal is now via `git checkout <commit> -- <path>`.
 Re-add `broker` to `.mcp.json` if `broker_mcp` is restored.

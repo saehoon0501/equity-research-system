@@ -9,8 +9,9 @@ surface that slash commands expect; they do not return data.
 Sharadar Core Fundamentals subscription is deliberately deferred per
 `BUILD_LOG.md` decision 2. v0.1 is paper-only and does not require
 point-in-time fundamentals or survivorship-bias-free delisting data to ship a
-sample memo. Full deferral rationale and unblocking criteria live in
-`archive/_retired/docs/tier4-deferred-work.md`.
+sample memo. Full deferral rationale and unblocking criteria were in
+`docs/tier4-deferred-work.md` (removed in the 2026-05-27 archive cleanup —
+recoverable via git history).
 
 ## Operator unblocking
 
