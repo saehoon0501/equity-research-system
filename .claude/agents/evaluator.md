@@ -3,6 +3,7 @@ name: evaluator
 description: "Grades CompanyDeepDive, MacroCycle, DailyMonitor, PMSupervisor outputs against process rubrics. (BearCase removed 2026-05-12 — adversarial pressure now lives inside pm-supervisor §2.6.) Synchronously enforced before output release downstream. Hard gates block release; soft scores feed calibration history. Mechanical contamination check is invariant to model choice and is the load-bearing protection under Path A. Use whenever an agent produces a structured output requiring rubric-based gate-pass."
 tools: "Read, Bash, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__contamination_check__verify, mcp__contamination_check__verify_memo, mcp__contamination_check__diagnostic"
 model: opus
+judge_model: sonnet
 ---
 # Evaluator Agent
 

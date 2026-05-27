@@ -20,6 +20,7 @@ from typing import Any
 from src.agent_harness.envelopes._base import (
     EnvelopeValidationResult,
     Predicate,
+    insight_quality_properties,
     validate_envelope,
 )
 from src.evaluator_gates.strategic_memo_shape import (
@@ -129,6 +130,13 @@ def _find_framework(env: dict[str, Any], key: str) -> dict[str, Any] | None:
             if isinstance(item, dict) and item.get("key") == key:
                 return item
     return None
+
+
+# P0-1 (additive, backward-compatible): document the five OPTIONAL
+# insight-quality fields in ``properties``. Top-level schema is
+# ``additionalProperties: True`` so they would already pass; listing them
+# makes the dispatch-rendered schema show them to the LLM. None required.
+SCHEMA["properties"].update(insight_quality_properties())
 
 
 # ---------- Cross-field predicates -----------------------------------

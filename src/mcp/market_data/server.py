@@ -26,9 +26,11 @@ diff.
 from __future__ import annotations
 
 import datetime as _dt
+import importlib.util as _importlib_util
 import logging
 import math
 import os
+import sys as _sys
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,28 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
 
 _LOG = logging.getLogger(__name__)
+
+
+def _load_evidence_persistence():
+    """Load the shared fail-soft evidence_documents persistence helper.
+
+    Loaded by file path (unique module name) so it works whether this server is
+    launched as an MCP process or imported by file path in tests. Fail-soft: a
+    load failure makes persistence a no-op.
+    """
+    if "_mcp_evidence_persistence" in _sys.modules:
+        return _sys.modules["_mcp_evidence_persistence"]
+    helper_path = Path(__file__).resolve().parents[1] / "evidence_persistence.py"
+    try:
+        spec = _importlib_util.spec_from_file_location(
+            "_mcp_evidence_persistence", helper_path
+        )
+        module = _importlib_util.module_from_spec(spec)
+        _sys.modules["_mcp_evidence_persistence"] = module
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # pragma: no cover - persistence is best-effort
+        return None
 
 # Provider dispatch resolved at module import. Polygon requires both
 # MARKET_DATA_PROVIDER=polygon AND POLYGON_API_KEY set; if the env var
@@ -107,9 +131,27 @@ def _add_one_day(iso_date: str) -> str:
 mcp = FastMCP("market_data")
 
 
+def _prices_source_uri(
+    ticker: str, start: str, end: str, interval: str, mode: str
+) -> str:
+    """Synthetic source_uri for a price pull — same vocabulary as evidence_index.
+
+    Mode is part of the URI so a split-only and a total-return pull of the same
+    window are distinguishable / separately auditable.
+    """
+    return (
+        f"marketdata://prices/{ticker.upper()}/{start}/{end}/{interval}/{mode}"
+    )
+
+
 @mcp.tool()
 def get_prices(
-    ticker: str, start: str, end: str, interval: str = "1d"
+    ticker: str,
+    start: str,
+    end: str,
+    interval: str = "1d",
+    mode: str = "split_only",
+    as_of: str | None = None,
 ) -> dict:
     """Return historical OHLCV prices for a ticker.
 
@@ -119,6 +161,15 @@ def get_prices(
         end: ISO end date 'YYYY-MM-DD' (inclusive — yfinance treats as exclusive,
              so we add 1 day internally to make it inclusive for the user).
         interval: '1d', '1wk', '1mo' (yfinance values). Default '1d'.
+        mode: pricing basis. Default ``"split_only"`` preserves the legacy shape
+              (raw OHLC + ``adj_close`` only when the provider supplies a true
+              total-return-adjusted series). ``"total_return"`` populates
+              ``total_return_close`` (dividend + split inclusive) for each row so
+              callers computing realized return capture reinvested dividends.
+        as_of: optional ISO 'YYYY-MM-DD' point-in-time guard. When set, bars
+               dated AFTER ``as_of`` are dropped — used by the calibration
+               resolver to guarantee no look-ahead (reads ≤ resolve_at). When
+               None, behaviour is unchanged.
 
     Returns:
         {
@@ -126,47 +177,93 @@ def get_prices(
             "start": "2024-01-01",
             "end": "2024-12-31",
             "interval": "1d",
+            "mode": "split_only",
+            "as_of": null,
             "rows": [
                 {"date": "2024-01-02", "open": 187.15, "high": 188.44,
-                 "low": 183.89, "close": 185.64, "adj_close": 184.95, "volume": 82488700},
+                 "low": 183.89, "close": 185.64, "adj_close": 184.95,
+                 "total_return_close": 184.95, "volume": 82488700},
                 ...
             ],
             "rowcount": N
         }
-    """
-    if _USE_POLYGON:
-        return _polygon.get_prices(ticker, start, end, interval)
-    yf_end = _add_one_day(end)
-    df = yf.Ticker(ticker).history(
-        start=start, end=yf_end, interval=interval, auto_adjust=False
-    )
 
-    rows: list[dict[str, Any]] = []
-    # yfinance column names: Open, High, Low, Close, Adj Close, Volume.
-    # When auto_adjust=False, both Close and Adj Close are present.
-    for ts, row in df.iterrows():
-        # ts is a pandas Timestamp; index by name, fall back to date-only ISO.
-        date_iso = ts.date().isoformat() if hasattr(ts, "date") else str(ts)
-        rows.append(
-            {
-                "date": date_iso,
-                "open": _jsonify(row.get("Open")),
-                "high": _jsonify(row.get("High")),
-                "low": _jsonify(row.get("Low")),
-                "close": _jsonify(row.get("Close")),
-                "adj_close": _jsonify(row.get("Adj Close")),
-                "volume": _jsonify(row.get("Volume")),
-            }
+    Notes on ``mode`` semantics:
+        - Polygon ``adjusted=true`` is **split-only**, NOT total-return — it
+          does not reinvest dividends. The polygon provider therefore
+          reconstructs total return from the dividends endpoint when
+          ``mode="total_return"`` (see polygon_provider.get_prices). In
+          split_only mode the provider returns ``total_return_close: null``.
+        - yfinance ``auto_adjust=False`` exposes ``Adj Close`` which Yahoo
+          adjusts for BOTH splits AND dividends — i.e. it is already a
+          total-return series. So the yfinance total_return mode simply surfaces
+          ``Adj Close`` as ``total_return_close``.
+    """
+    if mode not in ("split_only", "total_return"):
+        raise ValueError(
+            f"mode={mode!r} unsupported; use 'split_only' or 'total_return'"
         )
 
-    return {
-        "ticker": ticker.upper(),
-        "start": start,
-        "end": end,
-        "interval": interval,
-        "rows": rows,
-        "rowcount": len(rows),
-    }
+    if _USE_POLYGON:
+        result = _polygon.get_prices(ticker, start, end, interval, mode=mode)
+    else:
+        yf_end = _add_one_day(end)
+        df = yf.Ticker(ticker).history(
+            start=start, end=yf_end, interval=interval, auto_adjust=False
+        )
+
+        rows: list[dict[str, Any]] = []
+        # yfinance column names: Open, High, Low, Close, Adj Close, Volume.
+        # When auto_adjust=False, both Close and Adj Close are present; Adj
+        # Close is split+dividend adjusted (a total-return series).
+        for ts, row in df.iterrows():
+            # ts is a pandas Timestamp; index by name, fall back to date-only ISO.
+            date_iso = ts.date().isoformat() if hasattr(ts, "date") else str(ts)
+            adj_close = _jsonify(row.get("Adj Close"))
+            rows.append(
+                {
+                    "date": date_iso,
+                    "open": _jsonify(row.get("Open")),
+                    "high": _jsonify(row.get("High")),
+                    "low": _jsonify(row.get("Low")),
+                    "close": _jsonify(row.get("Close")),
+                    "adj_close": adj_close,
+                    # yfinance Adj Close IS total-return adjusted; surface it as
+                    # total_return_close only when the caller asked for it.
+                    "total_return_close": adj_close if mode == "total_return" else None,
+                    "volume": _jsonify(row.get("Volume")),
+                }
+            )
+
+        result = {
+            "ticker": ticker.upper(),
+            "start": start,
+            "end": end,
+            "interval": interval,
+            "rows": rows,
+            "rowcount": len(rows),
+        }
+
+    # P0-7 point-in-time guard: drop any bar dated after as_of so callers
+    # (e.g. the calibration resolver) cannot read look-ahead data.
+    if as_of is not None:
+        kept = [r for r in result.get("rows", []) if r.get("date") and r["date"] <= as_of]
+        result["rows"] = kept
+        result["rowcount"] = len(kept)
+    result["mode"] = mode
+    result["as_of"] = as_of
+
+    # P0-3: persist the fetched price payload to evidence_documents, keyed to a
+    # synthetic source_uri. Fail-soft & additive.
+    _persist = _load_evidence_persistence()
+    if _persist is not None:
+        _persist.persist_document(
+            source_uri=_prices_source_uri(ticker, start, end, interval, mode),
+            body=result,
+            fetched_by="market_data",
+        )
+
+    return result
 
 
 @mcp.tool()

@@ -420,8 +420,48 @@ def _call_llm_once(
     model: str,
     temperature: float,
     client=None,
+    sample_index: int = 0,
 ) -> dict:
-    """One LLM call returning parsed JSON dict. Raises on parse failure."""
+    """One LLM call returning parsed JSON dict. Raises on parse failure.
+
+    Opt-in response-replay cache (P0-5): when ``LLM_CACHE_ENABLED`` is set,
+    the call is routed through ``src.llm_cache`` keyed on the resolved model
+    id + ``(prompt_sha, temperature, max_tokens, sample_index)``. Default OFF.
+    ``sample_index`` lets self-consistency's N=5 samples cache distinctly
+    instead of collapsing to one entry (which would degenerate the median).
+    """
+    cache = None
+    try:
+        from src.llm_cache import cache_from_env, cached_call_once  # noqa: WPS433
+
+        cache = cache_from_env()
+    except Exception:  # pragma: no cover - cache import must never break runtime
+        cache = None
+
+    if cache is not None:
+        return cached_call_once(
+            cache=cache,
+            model=model,
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=1024,
+            sample_index=sample_index,
+            compute=lambda: _raw_call_llm_once(system, user, model, temperature, client),
+            dumps=json.dumps,
+            loads=json.loads,
+        )
+    return _raw_call_llm_once(system, user, model, temperature, client)
+
+
+def _raw_call_llm_once(
+    system: str,
+    user: str,
+    model: str,
+    temperature: float,
+    client=None,
+) -> dict:
+    """The actual round-trip + parse (cache-agnostic)."""
     if client is None:
         client = _get_anthropic_client()
     msg = client.messages.create(
@@ -478,7 +518,13 @@ def score_pattern(
             if llm_caller is not None:
                 sample = llm_caller(system, user, chosen_model, temperature)
             else:
-                sample = _call_llm_once(system, user, chosen_model, temperature)
+                # Pass the sample ordinal so the opt-in cache (P0-5) stores
+                # each of the N self-consistency samples as a distinct entry
+                # rather than collapsing them (which would degenerate the
+                # median). No effect when the cache is disabled (default).
+                sample = _call_llm_once(
+                    system, user, chosen_model, temperature, sample_index=i
+                )
         except (json.JSONDecodeError, LLMUnavailableError, Exception) as e:
             _LOG.warning("Stage-2 sample %d failed for %s: %s", i, pattern.pattern_id, e)
             sample = {}

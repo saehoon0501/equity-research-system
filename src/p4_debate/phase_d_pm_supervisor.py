@@ -46,11 +46,33 @@ from typing import Any, Optional
 from . import (
     ALL_VERDICTS,
     MODEL_OPUS,
+    MODEL_SONNET,
     PROMPT_VERSION_PHASE_D,
     VERDICT_ADD,
     VERDICT_PASS,
     VERDICT_WATCH,
     get_weights,
+)
+from ._bon_mav import (
+    BON_N,
+    BON_N_CAP,
+    COST_CAP_USD,
+    SELF_CONSISTENCY_TEMPERATURE,
+    AggregatedConvictionInputs,
+    BoNCandidate,
+    ConvictionInputSample,
+    UsageRecord,
+    VerifierPick,
+    aggregate_conviction_inputs,
+    attempt_cost_usd,
+    bon_cache_digest,
+    bon_input_sha,
+    composite_quality,
+    deserialize_bon_result,
+    extract_usage,
+    mad_allowed,
+    self_consistency_pick,
+    serialize_bon_result,
 )
 from ._llm import build_default_client, call_messages, extract_json
 from .phase_a_isolated import PhaseAResult
@@ -514,10 +536,462 @@ def _validate_phase_d_payload(
     )
 
 
+# --------------------------------------------------------------------------- #
+# WS-5 — Best-of-N synthesis with cross-model verifier (BoN-MAV)              #
+# --------------------------------------------------------------------------- #
+
+
+_VERIFIER_SYSTEM_PROMPT = """\
+You are the BoN VERIFIER for the PMSupervisor synthesis. You are a DIFFERENT,
+cheaper model than the synthesizer on purpose — to cut self-preference bias.
+
+You are given N candidate syntheses (each an ADD/WATCH/PASS decision with a
+dissent trace + conviction + override reasoning). RANK them and SELECT the
+single best one on these criteria, in order:
+
+  1. Faithfully preserves dissent (does NOT force consensus).
+  2. Override reasoning addresses the load-bearing dissenting claim (not just
+     "it's the weighted vote").
+  3. Conviction is consistent with the dissent spread.
+  4. Surfaces unaddressed non-negotiables.
+
+You do NOT rewrite any candidate. You only pick the best index.
+
+Return ONLY this JSON — no markdown:
+  {"selected_index": <int 0-based>, "rationale": "<= 2 sentences"}
+"""
+
+
+def _verifier_user_prompt(candidates: list[BoNCandidate]) -> str:
+    parts: list[str] = ["CANDIDATES (pick the best by index):", ""]
+    for c in candidates:
+        p = c.payload or {}
+        parts.append(f"--- INDEX {c.sample_index} ---")
+        parts.append(f"  decision: {p.get('decision')}")
+        parts.append(f"  recommended_conviction: {p.get('recommended_conviction')}")
+        parts.append(f"  override_reasoning: {p.get('override_reasoning', '')!r}")
+        dt = p.get("dissent_trace", []) or []
+        parts.append(f"  dissent_trace ({len(dt)} styles):")
+        for d in dt:
+            if isinstance(d, dict):
+                parts.append(
+                    f"    {d.get('style')}: {d.get('verdict')} "
+                    f"(w={d.get('weight')}) — {d.get('rationale', '')}"
+                )
+        parts.append("")
+    parts.append("SELECT THE BEST INDEX NOW.")
+    return "\n".join(parts)
+
+
+def _resolve_verifier_model(agent_name: str = "pm-supervisor") -> str:
+    """Resolve the verifier model from the agent header (P0-6).
+
+    Reads ``verifier_model`` from ``.claude/agents/<agent>.md`` via the P0-6
+    reader and pins it to a resolved id. Falls back to the ``sonnet`` resolved
+    id if the header (or reader) is unavailable so the verifier is ALWAYS a
+    different model than the opus synthesizer.
+    """
+    try:
+        from src.llm_cache.agent_model import VERIFIER, effective_model
+
+        resolved = effective_model(agent_name, VERIFIER)
+        if resolved:
+            return resolved
+    except Exception:  # pragma: no cover - header reader must never break runtime
+        _LOG.warning("verifier-model header read failed; defaulting to sonnet")
+    from src.llm_cache.model_pin import pin_resolved_model
+
+    return pin_resolved_model(MODEL_SONNET)
+
+
+def _conviction_inputs_from_candidate(
+    payload: Optional[dict],
+    locked: PhaseBLockedSet,
+) -> ConvictionInputSample:
+    """Derive the conviction INPUTS one candidate implies.
+
+    * ``debate_add_count`` — count of styles whose dissent-trace verdict is ADD
+      (falls back to the Phase-B locks if the candidate omitted the trace).
+    * ``kills_fired``       — candidate's ``kills_fired`` field if present.
+    * ``drift``             — candidate's ``anchor_drift_channels_triggered``
+      (a.k.a. ``drift``) field if present, clamped to 0..3.
+    """
+    add_count = 0
+    if payload and isinstance(payload.get("dissent_trace"), list):
+        for d in payload["dissent_trace"]:
+            if isinstance(d, dict) and str(d.get("verdict", "")).upper() == VERDICT_ADD:
+                add_count += 1
+    else:
+        add_count = sum(1 for lk in locked.locks.values() if lk.verdict == VERDICT_ADD)
+
+    def _int(v: Any, default: int = 0) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    kills = _int((payload or {}).get("kills_fired"), 0)
+    drift = _int(
+        (payload or {}).get("anchor_drift_channels_triggered",
+                            (payload or {}).get("drift")),
+        0,
+    )
+    drift = max(0, min(3, drift))
+    return ConvictionInputSample(
+        debate_add_count=max(0, min(5, add_count)),
+        kills_fired=max(0, kills),
+        drift=drift,
+    )
+
+
+@dataclass
+class PhaseDBoNResult:
+    """Full WS-5 BoN-MAV output: the selected synthesis + provenance."""
+
+    synthesis: PhaseDSynthesis
+    candidates: list[BoNCandidate]
+    verifier_pick: VerifierPick
+    aggregated_conviction_inputs: AggregatedConvictionInputs
+    attempt_cost_usd: float
+    n: int
+    synthesizer_model: str
+    verifier_model: str
+    cost_cap_usd: float = COST_CAP_USD
+    cost_within_cap: bool = True
+    mad_path_used: bool = False
+
+    def to_payload(self) -> dict:
+        return {
+            "synthesis": self.synthesis.to_payload(),
+            "candidates": [c.to_payload() for c in self.candidates],
+            "verifier_pick": self.verifier_pick.to_payload(),
+            "aggregated_conviction_inputs": {
+                "debate_add_count": self.aggregated_conviction_inputs.debate_add_count,
+                "kills_fired": self.aggregated_conviction_inputs.kills_fired,
+                "drift": self.aggregated_conviction_inputs.drift,
+            },
+            "attempt_cost_usd": self.attempt_cost_usd,
+            "n": self.n,
+            "synthesizer_model": self.synthesizer_model,
+            "verifier_model": self.verifier_model,
+            "cost_cap_usd": self.cost_cap_usd,
+            "cost_within_cap": self.cost_within_cap,
+            "mad_path_used": self.mad_path_used,
+        }
+
+
+def run_phase_d_bon(
+    *,
+    phase_a: PhaseAResult,
+    locked: PhaseBLockedSet,
+    judge_result: PhaseCJudgeResult,
+    negotiation: Optional[PhaseCNegotiationResult] = None,
+    mode: str,
+    sector: Optional[str] = None,
+    client: Any = None,
+    verifier_client: Any = None,
+    synthesizer_model: str = MODEL_OPUS,
+    verifier_model: Optional[str] = None,
+    agent_name: str = "pm-supervisor",
+    n: int = BON_N,
+    temperature: float = SELF_CONSISTENCY_TEMPERATURE,
+    candidate_axes: Optional[list[dict]] = None,
+    heterogeneous_models: bool = False,
+    verifiable_step: bool = False,
+) -> PhaseDBoNResult:
+    """WS-5 BoN-MAV synthesis: N=5 opus candidates + sonnet verifier select.
+
+    Flow:
+      1. Generate ``n`` (cap 5) synthesizer candidates from a SINGLE opus
+         synthesizer (self-consistency, first-pass only) at ``temperature``.
+      2. Resolve the verifier model from the agent header (P0-6) — sonnet,
+         a DIFFERENT model than the opus synthesizer.
+      3. Verifier ranks/selects the best candidate. On verifier ERROR, fall
+         back to self-consistency (majority decision); NEVER auto-PASS.
+      4. Aggregate the conviction INPUTS across the N passes BEFORE the
+         deterministic rollup (do NOT average final convictions).
+      5. Roll candidate + verifier usage into ONE ``attempt_cost_usd`` and
+         enforce the ``$15/pass`` cap.
+
+    The MAD path is gated: it runs only when BOTH ``heterogeneous_models`` AND
+    ``verifiable_step`` are set; otherwise this is pure self-consistency BoN.
+    """
+    if client is None:
+        client = build_default_client()
+    n = max(1, min(int(n), BON_N_CAP))
+
+    weights = get_weights(mode=mode, sector=sector)
+    tally = compute_weighted_vote(locked, weights)
+    user_prompt = _USER_TEMPLATE.format(
+        ticker=locked.ticker,
+        mode=mode,
+        sector=sector or "<none>",
+        weights_block=_format_weights(weights),
+        weighted_vote_block=_format_weighted_vote(tally),
+        phase_b_block=_format_phase_b(locked),
+        phase_c_needed=judge_result.phase_c_needed,
+        judge_confidence=judge_result.judge_confidence,
+        conflict_count=len(judge_result.conflicts),
+        phase_c_negotiation_block=_format_phase_c_negotiation(negotiation),
+        nons_block=_format_nons(locked),
+    )
+
+    input_sha = bon_input_sha(system=_SYSTEM_PROMPT, user=user_prompt)
+    resolved_verifier = (
+        verifier_model if verifier_model else _resolve_verifier_model(agent_name)
+    )
+
+    mad_path = mad_allowed(
+        heterogeneous_models=heterogeneous_models, verifiable_step=verifiable_step
+    )
+
+    # --- BoN-level cache (opt-in): (input_sha, model_version, n, temp) ----- #
+    #     -> {candidates, verifier_pick}. Stores BOTH the N candidates and the
+    # verifier pick as ONE value (distinct from the per-sample llm_cache key,
+    # which also carries sample_index). Default OFF; enabled via LLM_CACHE_*.
+    bon_cache = None
+    bon_key = None
+    try:
+        from src.llm_cache import cache_from_env  # noqa: WPS433
+        from src.llm_cache.cache import CacheKey
+
+        bon_cache = cache_from_env()
+        if bon_cache is not None:
+            digest = bon_cache_digest(
+                input_sha=input_sha,
+                model_version=synthesizer_model,
+                n=n,
+                temperature=temperature,
+            )
+            # Reuse the llm_cache store keyed by the BoN digest (the CacheKey's
+            # prompt_sha slot carries the full BoN digest; sample_index=-1 marks
+            # the BoN-level aggregate entry so it never collides with per-sample
+            # entries that use sample_index >= 0).
+            bon_key = CacheKey(
+                model_version=synthesizer_model,
+                prompt_sha=digest,
+                temperature=temperature,
+                max_tokens=0,
+                sample_index=-1,
+            )
+    except Exception:  # pragma: no cover - cache import must never break runtime
+        bon_cache = None
+        bon_key = None
+
+    cached_text = None
+    if bon_cache is not None and bon_key is not None:
+        cached_text = bon_cache.get(bon_key)
+
+    if cached_text is not None:
+        # Replay: rebuild candidates, the verifier pick AND the verifier usage;
+        # no model is called. BUG 2 fix: verifier usage is now PERSISTED in the
+        # BoN cache and replayed here, instead of being hardcoded to zero. This
+        # makes attempt_cost_usd on a replay identical to the recorded run
+        # (candidate usages already replayed their recorded token counts).
+        candidates, pick, verifier_usage = deserialize_bon_result(cached_text)
+    else:
+        # --- 1. generate N synthesizer candidates (self-consistency) ------- #
+        candidates = []
+        for i in range(n):
+            # BUG 2 fix (cost reproducibility): clear last_response BEFORE the
+            # call so usage extraction is strictly per-call. On a per-sample
+            # CACHE HIT, call_messages returns text WITHOUT invoking
+            # _raw_call_messages, so last_response is never refreshed; without
+            # this reset, a STALE last_response from a prior loop iteration (or
+            # a prior run) would leak into this candidate's usage, making
+            # attempt_cost_usd call-order dependent and non-reproducible on
+            # replay. Cleared -> a cache-hit candidate deterministically
+            # records ZERO usage, which the BoN-level cache then serializes and
+            # faithfully replays.
+            try:
+                client.last_response = None
+            except Exception:  # pragma: no cover - read-only client object
+                pass
+            raw = call_messages(
+                client,
+                synthesizer_model,
+                _SYSTEM_PROMPT,
+                user_prompt,
+                max_tokens=3072,
+                temperature=temperature,
+                sample_index=i,
+            )
+            # extract_usage reads the last raw response object when the fake/SDK
+            # exposes it; call_messages only returns text, so we read usage off
+            # the client's recorded call when available (test doubles attach
+            # .last_response, _llm._raw_call_messages stashes it in prod). On a
+            # per-sample cache hit last_response stays None (cleared above) ->
+            # deterministic zero usage rather than a stale carry-over.
+            last_resp = getattr(client, "last_response", None)
+            usage = extract_usage(synthesizer_model, last_resp)
+            payload = extract_json(raw)
+            axes = (
+                candidate_axes[i] if candidate_axes and i < len(candidate_axes) else {}
+            ) or {}
+            cand = BoNCandidate(
+                sample_index=i,
+                raw_text=raw,
+                payload=payload,
+                conviction_inputs=_conviction_inputs_from_candidate(payload, locked),
+                usage=usage,
+                axes=axes,
+                composite_quality=composite_quality(axes) if axes else 0.0,
+            )
+            candidates.append(cand)
+
+        # --- 2 + 3. verifier select (sonnet) w/ self-consistency fallback -- #
+        vclient = verifier_client if verifier_client is not None else client
+        # BUG 2 fix (cost reproducibility): clear last_response BEFORE the
+        # verifier call for the same reason as the candidate loop — a verifier
+        # cache hit (or a fallback that issues no call) must not inherit a
+        # stale last_response. Cleared -> deterministic zero verifier usage on
+        # a cache hit / fallback, serialized + replayed via the BoN cache.
+        try:
+            vclient.last_response = None
+        except Exception:  # pragma: no cover - read-only client object
+            pass
+        pick = _verify_select(
+            candidates=candidates,
+            verifier_client=vclient,
+            verifier_model=resolved_verifier,
+        )
+        verifier_usage = UsageRecord(
+            model=resolved_verifier, input_tokens=0, output_tokens=0
+        )
+        if pick.method == "verifier":
+            verifier_usage = extract_usage(
+                resolved_verifier, getattr(vclient, "last_response", None)
+            )
+
+        # Store candidates, the verifier pick AND the verifier usage under the
+        # BoN key. Persisting verifier_usage (BUG 2) lets a replay reproduce the
+        # exact attempt_cost_usd recorded here.
+        if bon_cache is not None and bon_key is not None:
+            bon_cache.put(
+                bon_key, serialize_bon_result(candidates, pick, verifier_usage)
+            )
+
+    # --- 4. aggregate conviction INPUTS BEFORE the deterministic rollup --- #
+    aggregated = aggregate_conviction_inputs([c.conviction_inputs for c in candidates])
+
+    # --- 5. cost rollup + cap -------------------------------------------- #
+    usages = [c.usage for c in candidates] + [verifier_usage]
+    cost = attempt_cost_usd(usages)
+    within_cap = cost <= COST_CAP_USD
+    if not within_cap:
+        _LOG.warning(
+            "BoN attempt_cost_usd=%.4f exceeds cap $%.2f", cost, COST_CAP_USD
+        )
+
+    # Build the selected synthesis (re-validate through the existing validator,
+    # which enforces the dissent-preservation invariant + backfill).
+    selected = next(
+        (c for c in candidates if c.sample_index == pick.selected_index), candidates[0]
+    )
+    if selected.payload is not None:
+        synthesis = _validate_phase_d_payload(
+            parsed=selected.payload,
+            ticker=locked.ticker,
+            locked=locked,
+            mode=mode,
+            sector=sector,
+            weights=weights,
+            raw_text=selected.raw_text,
+        )
+    else:
+        # NEVER auto-PASS on a parse failure: mark invalid for operator review.
+        synthesis = PhaseDSynthesis(
+            ticker=locked.ticker,
+            decision=VERDICT_PASS,
+            recommended_conviction=0.0,
+            mode=mode,
+            sector=sector,
+            weights_used=weights,
+            raw_text=selected.raw_text,
+            valid=False,
+            invalid_reason="selected BoN candidate failed JSON parse",
+        )
+    synthesis.model = synthesizer_model
+
+    return PhaseDBoNResult(
+        synthesis=synthesis,
+        candidates=candidates,
+        verifier_pick=pick,
+        aggregated_conviction_inputs=aggregated,
+        attempt_cost_usd=cost,
+        n=n,
+        synthesizer_model=synthesizer_model,
+        verifier_model=resolved_verifier,
+        cost_within_cap=within_cap,
+        mad_path_used=mad_path,
+    )
+
+
+def _verify_select(
+    *,
+    candidates: list[BoNCandidate],
+    verifier_client: Any,
+    verifier_model: str,
+) -> VerifierPick:
+    """Run the sonnet verifier; fall back to self-consistency on ANY error.
+
+    The verifier picks the best candidate index. On verifier error (exception,
+    unparseable output, out-of-range index) we degrade to
+    ``self_consistency_pick`` — NEVER auto-PASS.
+    """
+    try:
+        raw = call_messages(
+            verifier_client,
+            verifier_model,
+            _VERIFIER_SYSTEM_PROMPT,
+            _verifier_user_prompt(candidates),
+            max_tokens=512,
+            temperature=0.0,
+        )
+    except Exception as exc:  # verifier round-trip failed
+        _LOG.warning("verifier call raised %r; falling back to self-consistency", exc)
+        return self_consistency_pick(
+            candidates,
+            fallback_reason=f"verifier exception: {type(exc).__name__}",
+            verifier_model=verifier_model,
+        )
+
+    parsed = extract_json(raw)
+    if not isinstance(parsed, dict) or "selected_index" not in parsed:
+        return self_consistency_pick(
+            candidates,
+            fallback_reason="verifier returned unparseable / missing selected_index",
+            verifier_model=verifier_model,
+        )
+    try:
+        idx = int(parsed["selected_index"])
+    except (TypeError, ValueError):
+        return self_consistency_pick(
+            candidates,
+            fallback_reason="verifier selected_index not an int",
+            verifier_model=verifier_model,
+        )
+    valid_indices = {c.sample_index for c in candidates}
+    if idx not in valid_indices:
+        return self_consistency_pick(
+            candidates,
+            fallback_reason=f"verifier selected out-of-range index {idx}",
+            verifier_model=verifier_model,
+        )
+    return VerifierPick(
+        selected_index=idx,
+        method="verifier",
+        rationale=str(parsed.get("rationale", "")),
+        verifier_model=verifier_model,
+    )
+
+
 __all__ = [
     "DissentEntry",
     "UnaddressedNonNegotiable",
     "PhaseDSynthesis",
+    "PhaseDBoNResult",
     "compute_weighted_vote",
     "run_phase_d",
+    "run_phase_d_bon",
 ]

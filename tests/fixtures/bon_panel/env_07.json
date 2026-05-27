@@ -1,0 +1,301 @@
+{
+  "ticker": "TSLA",
+  "as_of": "2026-05-23",
+  "tier": "speculative_optionality",
+  "mode": "optionality_bet",
+  "decision_cell_matrix": {
+    "fund_axis_verdict": "negative",
+    "fund_axis_signals": [
+      "iv_band_supports",
+      "reinvestment_quality_high"
+    ],
+    "tech_axis_verdict": "neutral",
+    "tech_axis_signals": [
+      "above_50dma",
+      "12m_excess_positive"
+    ],
+    "matrix_cell": "TRIM",
+    "matrix_cell_narrative": "TSLA: fund=negative, tech=neutral -> TRIM cell.",
+    "consistency_check": "divergent",
+    "migration_triggers": [
+      "margin_compression",
+      "moat_erosion"
+    ],
+    "fundamental_track": {
+      "entry_usd": 400.0,
+      "exit_usd": 320.0
+    },
+    "technical_track": {
+      "entry_usd": 412.0,
+      "exit_usd": 385.0
+    },
+    "null_reason": null
+  },
+  "tl_dr": {
+    "decision_headline": "TRIM MEDIUM",
+    "scenarios_quant": "bull/base/bear DCFs",
+    "scenarios_strategic": "wide moat held",
+    "operating_ranges": "11% growth, 35% margin",
+    "top_catalysts_90d": "Q4 print",
+    "reevaluation_triggers": "margin compression"
+  },
+  "report": {
+    "sentiment": {
+      "reading": "neutral",
+      "detail": "AAII 45%",
+      "evidence_refs": [
+        "evidence://tsla/sentiment"
+      ],
+      "framework_keys": [
+        "sentiment"
+      ],
+      "cdd_memo_refs": [
+        "cdd://msft/memo-1"
+      ]
+    },
+    "trend": {
+      "reading": "positive",
+      "detail": "12m excess +18%",
+      "evidence_refs": [
+        "evidence://tsla/trend"
+      ],
+      "framework_keys": [
+        "antonacci"
+      ],
+      "cdd_memo_refs": []
+    },
+    "structural_theory": {
+      "reading": "wide_moat",
+      "detail": "switching_costs held",
+      "evidence_refs": [
+        "evidence://tsla/structural_theory"
+      ],
+      "framework_keys": [
+        "helmer"
+      ],
+      "cdd_memo_refs": [
+        "cdd://msft/memo-2"
+      ]
+    },
+    "technical_entry": {
+      "reading": "ready",
+      "detail": "above 50dma",
+      "evidence_refs": [
+        "evidence://tsla/technical_entry"
+      ],
+      "framework_keys": [
+        "donchian_55_20_turtle"
+      ],
+      "cdd_memo_refs": []
+    },
+    "technical_exit": {
+      "reading": "trail",
+      "detail": "below 200dma",
+      "evidence_refs": [
+        "evidence://tsla/technical_exit"
+      ],
+      "framework_keys": [],
+      "cdd_memo_refs": []
+    },
+    "reasoning": {
+      "reading": "BUY-HIGH",
+      "detail": "conviction high; valuation within IV band",
+      "evidence_refs": [
+        "evidence://tsla/reasoning"
+      ],
+      "framework_keys": [
+        "dcf"
+      ],
+      "cdd_memo_refs": [
+        "cdd://msft/memo-3"
+      ]
+    }
+  },
+  "audit_trail_hint": {
+    "instructions_for_operator": "review at next 13F print",
+    "cross_run_artifact_ids": [
+      "run-msft-2026-05-23"
+    ],
+    "evidence_index_query_template": "SELECT * FROM evidence_index WHERE run_id=:run_id"
+  },
+  "summary_code": "TRIM",
+  "conviction": "MEDIUM",
+  "size_band_if_long": null,
+  "size_band_pre_modifier_midpoint_pp": null,
+  "sleeve_cap_check": {
+    "violated": false
+  },
+  "counterfactual_top3_summary": [
+    "moat erosion would invert structural verdict",
+    "rate shock would compress the IV band",
+    "AI capex overrun would cut FCF conversion"
+  ],
+  "adversarial_stress_test": {
+    "kills_fired": 0,
+    "kills_fired_evidence": []
+  },
+  "catalyst_modifier_applied": {
+    "direction": 0,
+    "magnitude": "low"
+  },
+  "veto_reason": null,
+  "conviction_rationale": "TSLA TRIM/MEDIUM: fund negative, tech neutral.",
+  "evidence_index_refs": [
+    "evidence://tsla/cdd",
+    "evidence://tsla/dcf"
+  ],
+  "rule_engine_version": "v1.1",
+  "conviction_from_rule": "MEDIUM",
+  "conviction_emitted": "MEDIUM",
+  "conviction_override": false,
+  "reasoning_path_taken": [
+    "load_cdd_integrated_memo",
+    "load_tactical_envelope",
+    "load_catalyst_envelope",
+    "classify_mode",
+    "compose_tl_dr",
+    "compose_report_sentiment_row",
+    "compose_report_trend_row",
+    "compose_report_structural_theory_row",
+    "compose_report_technical_entry_row",
+    "compose_report_technical_exit_row",
+    "compose_report_reasoning_row",
+    "compose_adversarial_stress_test",
+    "evaluate_counterfactual_veto",
+    "compute_sleeve_cap_check",
+    "compute_conviction_from_rule",
+    "compute_conviction_emitted",
+    "derive_summary_code",
+    "derive_size_band_if_long",
+    "compose_counterfactual_top3_summary",
+    "compose_audit_trail_hint",
+    "emit_envelope"
+  ],
+  "reasoning_trace": [
+    {
+      "op": "load_cdd_integrated_memo",
+      "rationale": "Loaded CDD integrated memo for TSLA speculative_optionality tier."
+    },
+    {
+      "op": "load_tactical_envelope",
+      "rationale": "Pulled tactical overlay: positive bin, BUY-HIGH cell."
+    },
+    {
+      "op": "load_catalyst_envelope",
+      "rationale": "Catalyst overlay neutral; modifier magnitude low."
+    },
+    {
+      "op": "classify_mode",
+      "rationale": "Classified as core_compounder per tier + moat profile."
+    },
+    {
+      "op": "compose_tl_dr",
+      "rationale": "Headline BUY HIGH; quant/strategic scenarios aligned."
+    },
+    {
+      "op": "compose_report_sentiment_row",
+      "rationale": "Sentiment neutral; AAII 45pct cited."
+    },
+    {
+      "op": "compose_report_trend_row",
+      "rationale": "Trend positive; 12m excess +18pct."
+    },
+    {
+      "op": "compose_report_structural_theory_row",
+      "rationale": "Wide-moat thesis via switching costs (Helmer)."
+    },
+    {
+      "op": "compose_report_technical_entry_row",
+      "rationale": "Entry ready above 50dma."
+    },
+    {
+      "op": "compose_report_technical_exit_row",
+      "rationale": "Trailing exit below 200dma."
+    },
+    {
+      "op": "compose_report_reasoning_row",
+      "rationale": "Synthesis: BUY-HIGH, valuation within IV band."
+    },
+    {
+      "op": "compose_adversarial_stress_test",
+      "rationale": "Ran stress battery; zero kills fired."
+    },
+    {
+      "op": "evaluate_counterfactual_veto",
+      "rationale": "No counterfactual veto triggered."
+    },
+    {
+      "op": "compute_sleeve_cap_check",
+      "rationale": "Sleeve cap not violated."
+    },
+    {
+      "op": "compute_conviction_from_rule",
+      "rationale": "Rule engine yields HIGH conviction."
+    },
+    {
+      "op": "compute_conviction_emitted",
+      "rationale": "No override; emitted conviction = HIGH."
+    },
+    {
+      "op": "derive_summary_code",
+      "rationale": "HIGH conviction long => BUY summary code."
+    },
+    {
+      "op": "derive_size_band_if_long",
+      "rationale": "Size band 4-8pct for HIGH core_fundamental."
+    },
+    {
+      "op": "compose_counterfactual_top3_summary",
+      "rationale": "Top-3 counterfactual risks summarized."
+    },
+    {
+      "op": "compose_audit_trail_hint",
+      "rationale": "Operator instructions + evidence query template set."
+    },
+    {
+      "op": "emit_envelope",
+      "rationale": "Serialized validated pm-supervisor envelope."
+    }
+  ],
+  "axis_a": {
+    "faithfulness": 0.81,
+    "answer_relevancy": 0.79,
+    "citation_precision": 0.84,
+    "citation_recall": 0.72,
+    "veriscore": 0.73,
+    "coherence": 0.75,
+    "clarity": 0.78,
+    "mode": "advisory"
+  },
+  "axis_b": {
+    "roscoe": 0.64,
+    "receval": 0.58,
+    "cot_faithfulness_flag": false,
+    "novelty_percentile": 0.45,
+    "surprise": 0.38,
+    "mode": "advisory"
+  },
+  "gate_decision": {
+    "verdict": "PASS",
+    "deterministic": {
+      "shape": "pass",
+      "citation_present": "pass",
+      "master_key_trap": "pass"
+    },
+    "advisory": {
+      "judge": "agree",
+      "judge_model": "claude-sonnet-4-5-20250514"
+    },
+    "escalated": false
+  },
+  "calibration_emission": {
+    "rec_id": "rec-bon-tsla-07",
+    "as_of_ts": "2026-05-23T00:00:00Z",
+    "primary_horizon": "30d",
+    "benchmark_id": "SPY",
+    "p_beat_benchmark": 0.47,
+    "label_method_version": "v1",
+    "continuous_score": 0.44,
+    "model_version": "claude-opus-4-7-20260101"
+  }
+}

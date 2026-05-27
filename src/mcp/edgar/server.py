@@ -25,7 +25,9 @@ Scope notes:
 
 from __future__ import annotations
 
+import importlib.util as _importlib_util
 import os
+import sys as _sys
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,29 @@ from mcp.server.fastmcp import FastMCP
 # Walk: server.py → edgar/ → mcp/ → src/ → repo root
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
+
+
+def _load_evidence_persistence():
+    """Load the shared fail-soft evidence_documents persistence helper.
+
+    Loaded by file path (under a unique module name) so it works whether this
+    server is launched as an MCP process or imported by file path in tests —
+    ``src/mcp`` is not guaranteed to be on ``sys.path``. Fail-soft: if the
+    helper cannot be loaded, persistence becomes a no-op.
+    """
+    if "_mcp_evidence_persistence" in _sys.modules:
+        return _sys.modules["_mcp_evidence_persistence"]
+    helper_path = Path(__file__).resolve().parents[1] / "evidence_persistence.py"
+    try:
+        spec = _importlib_util.spec_from_file_location(
+            "_mcp_evidence_persistence", helper_path
+        )
+        module = _importlib_util.module_from_spec(spec)
+        _sys.modules["_mcp_evidence_persistence"] = module
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # pragma: no cover - persistence is best-effort
+        return None
 
 
 _TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -281,11 +306,22 @@ def get_filing_text(primary_doc_url: str) -> dict:
         resp.raise_for_status()
         content_bytes = resp.content
         content_type = resp.headers.get("content-type", "").split(";")[0].strip()
+        text = resp.text
+
+        # P0-3: persist the fetched filing body to evidence_documents, keyed to
+        # the document URL (== source_uri vocabulary). Fail-soft & additive —
+        # the return shape below is unchanged.
+        _persist = _load_evidence_persistence()
+        if _persist is not None:
+            _persist.persist_document(
+                source_uri=primary_doc_url, body=text, fetched_by="edgar"
+            )
+
         return {
             "url": primary_doc_url,
             "content_type": content_type,
             "length": len(content_bytes),
-            "text": resp.text,
+            "text": text,
         }
 
 

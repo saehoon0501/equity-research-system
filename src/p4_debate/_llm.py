@@ -48,12 +48,53 @@ def call_messages(
     *,
     max_tokens: int = 2048,
     temperature: float = 0.3,
+    sample_index: int = 0,
 ) -> str:
     """One ``messages.create`` round-trip; returns the assistant text.
 
     Mirrors the helper in ``mode_classifier/stage3_overlap_tiebreaker.py``
     so the test-double surface is identical.
+
+    Opt-in response-replay cache (P0-5): when ``LLM_CACHE_ENABLED`` is set in
+    the environment, the call is routed through ``src.llm_cache`` keyed on the
+    resolved model id + ``(prompt_sha, temperature, max_tokens, sample_index)``.
+    Default OFF — absent the env flag this is a pure pass-through and runtime
+    behaviour is identical to before. ``sample_index`` lets a self-consistency
+    caller (N samples at one temperature) cache each sample distinctly.
     """
+    cache = None
+    try:
+        from src.llm_cache import cache_from_env, cached_call_messages  # noqa: WPS433
+
+        cache = cache_from_env()
+    except Exception:  # pragma: no cover - cache import must never break runtime
+        cache = None
+
+    if cache is not None:
+        return cached_call_messages(
+            cache=cache,
+            model=model,
+            system=system,
+            user=user,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            sample_index=sample_index,
+            compute=lambda: _raw_call_messages(
+                client, model, system, user, max_tokens, temperature
+            ),
+        )
+    return _raw_call_messages(client, model, system, user, max_tokens, temperature)
+
+
+def _raw_call_messages(
+    client: Any,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    """The actual ``messages.create`` round-trip (cache-agnostic)."""
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -61,6 +102,14 @@ def call_messages(
         system=system,
         messages=[{"role": "user", "content": user}],
     )
+    # Stash the raw response on the client so cost-aware callers (WS-5 BoN-MAV
+    # cost rollup) can read token usage without changing call_messages' text
+    # return contract. Best-effort: never fails the call if the client is a
+    # restricted object.
+    try:
+        client.last_response = resp
+    except Exception:  # pragma: no cover - read-only client object
+        pass
     blocks = getattr(resp, "content", None) or []
     for b in blocks:
         text = getattr(b, "text", None)

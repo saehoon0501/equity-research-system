@@ -27,6 +27,95 @@ from typing import Any, Callable
 Predicate = Callable[[dict[str, Any]], bool]
 
 
+# ---------- P0-1 insight-quality schema extension (additive) ----------
+#
+# Five OPTIONAL top-level fields added to every per-agent envelope module
+# for the insight-quality enhancement (plan 2026-05-27, P0-1). They are
+# ADDITIVE and BACKWARD-COMPATIBLE: none appears in any module's
+# ``required`` list, every one is nullable, and existing envelopes that
+# omit them all continue to validate.
+#
+#   - reasoning_trace: list[{op, rationale}] — paired 1:1 with the
+#     existing ``reasoning_path_taken`` (each entry annotates the
+#     corresponding opcode with the agent's rationale). The 1:1
+#     invariant is contract-documented but NOT enforced by a predicate
+#     yet (a length-equality predicate would reject any pre-existing
+#     envelope that has ``reasoning_path_taken`` but no
+#     ``reasoning_trace``). Enforcement is deferred to WS-2.
+#   - axis_a / axis_b — articulation / sophistication score blocks
+#     written back by the WS-1 / WS-2 scorers (permissive objects for
+#     now; concrete sub-keys land with those workstreams).
+#   - gate_decision — the hybrid-gate verdict block (WS-6).
+#   - calibration_emission — write-once emission snapshot carrying the
+#     fields Brier/log-loss labelling reproduces from (P0-2 resolver).
+#
+# Schemas keep these blocks permissive (additionalProperties: True) so
+# partially-populated envelopes validate during the parallel build.
+
+REASONING_TRACE_SCHEMA: dict[str, Any] = {
+    "type": ["array", "null"],
+    "items": {
+        "type": "object",
+        "required": ["op", "rationale"],
+        "additionalProperties": True,
+        "properties": {
+            "op": {"type": "string"},
+            "rationale": {"type": "string"},
+        },
+    },
+}
+
+AXIS_SCHEMA: dict[str, Any] = {
+    # Articulation / sophistication score block. Permissive object;
+    # sub-keys (faithfulness/citation_pr/mode/...) land with WS-1/WS-2.
+    "type": ["object", "null"],
+    "additionalProperties": True,
+}
+
+GATE_DECISION_SCHEMA: dict[str, Any] = {
+    # Hybrid-gate verdict block. Permissive object; concrete shape
+    # ({verdict, deterministic, advisory}) lands with WS-6.
+    "type": ["object", "null"],
+    "additionalProperties": True,
+}
+
+CALIBRATION_EMISSION_SCHEMA: dict[str, Any] = {
+    # Write-once emission snapshot (P0-2). Permissive object; the
+    # canonical keys are listed in ``properties`` for documentation but
+    # none is required so partially-populated snapshots still validate.
+    "type": ["object", "null"],
+    "additionalProperties": True,
+    "properties": {
+        "rec_id": {"type": ["string", "null"]},
+        "as_of_ts": {"type": ["string", "null"]},
+        "primary_horizon": {"type": ["string", "null"]},
+        "benchmark_id": {"type": ["string", "null"]},
+        "p_beat_benchmark": {"type": ["number", "null"]},
+        "label_method_version": {"type": ["string", "null"]},
+        "continuous_score": {"type": ["number", "null"]},
+        "model_version": {"type": ["string", "null"]},
+    },
+}
+
+
+def insight_quality_properties() -> dict[str, dict[str, Any]]:
+    """Return the five additive P0-1 schema properties as a fresh dict.
+
+    Returns NEW copies of the shared fragments so a per-module SCHEMA can
+    splice them into its ``properties`` without aliasing shared state.
+    All five are OPTIONAL (never added to ``required``).
+    """
+    import copy
+
+    return {
+        "reasoning_trace": copy.deepcopy(REASONING_TRACE_SCHEMA),
+        "axis_a": copy.deepcopy(AXIS_SCHEMA),
+        "axis_b": copy.deepcopy(AXIS_SCHEMA),
+        "gate_decision": copy.deepcopy(GATE_DECISION_SCHEMA),
+        "calibration_emission": copy.deepcopy(CALIBRATION_EMISSION_SCHEMA),
+    }
+
+
 @dataclass
 class EnvelopeFieldError:
     """One field-level error from JSON-Schema validation.
@@ -251,8 +340,13 @@ def _type_matches(obj: Any, t: Any) -> bool:
 
 
 __all__ = [
+    "AXIS_SCHEMA",
+    "CALIBRATION_EMISSION_SCHEMA",
     "EnvelopeFieldError",
     "EnvelopeValidationResult",
+    "GATE_DECISION_SCHEMA",
     "Predicate",
+    "REASONING_TRACE_SCHEMA",
+    "insight_quality_properties",
     "validate_envelope",
 ]

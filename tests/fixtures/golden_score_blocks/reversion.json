@@ -1,0 +1,75 @@
+{
+  "ticker": "NVDA",
+  "as_of_date": "2026-05-23",
+  "run_id": "00000000-0000-0000-0000-000000000003",
+  "reversion_signal_bin": "MR_OVERSOLD",
+  "audit_mode": "standalone",
+  "reversion_cell": null,
+  "unavailable_reason": null,
+  "components": {
+    "drawdown_from_252d_high_pct": -22.4,
+    "rsi_14": 27.1,
+    "bollinger_band_position": -1.18,
+    "ma_distance_200d_pct": -9.6
+  },
+  "sub_signal_fires": {
+    "rsi_oversold": true,
+    "bollinger_lower_breach": true,
+    "deep_drawdown": true
+  },
+  "frameworks_cited": ["bollinger_bands", "rsi_wilder_1978"],
+  "reasoning_path_taken": [
+    "load_ticker_prices",
+    "compute_drawdown_from_252d_high",
+    "compute_rsi_14",
+    "compute_bollinger_band_position",
+    "compute_ma_distance_200d",
+    "evaluate_sub_signal_fires",
+    "classify_reversion_bin",
+    "emit_envelope"
+  ],
+  "reasoning_trace": [
+    {"op": "load_ticker_prices", "rationale": "Loaded 252d NVDA closes for reversion stats."},
+    {"op": "compute_drawdown_from_252d_high", "rationale": "Price -22.4pct off the 252d high."},
+    {"op": "compute_rsi_14", "rationale": "RSI(14)=27.1, below the 30 oversold threshold."},
+    {"op": "compute_bollinger_band_position", "rationale": "Close pierces the lower band at -1.18 sigma."},
+    {"op": "compute_ma_distance_200d", "rationale": "Trades 9.6pct below the 200d MA."},
+    {"op": "evaluate_sub_signal_fires", "rationale": "RSI, Bollinger and drawdown sub-signals all fire."},
+    {"op": "classify_reversion_bin", "rationale": "Multiple oversold sub-signals => MR_OVERSOLD."},
+    {"op": "emit_envelope", "rationale": "Serialized standalone-mode reversion envelope (cell null)."}
+  ],
+  "axis_a": {
+    "faithfulness": 0.87,
+    "answer_relevancy": 0.85,
+    "citation_precision": 1.0,
+    "citation_recall": 0.8,
+    "veriscore": 0.76,
+    "coherence": 0.8,
+    "clarity": 0.83,
+    "mode": "advisory"
+  },
+  "axis_b": {
+    "roscoe": 0.69,
+    "receval": 0.62,
+    "cot_faithfulness_flag": false,
+    "novelty_percentile": 0.55,
+    "surprise": 0.47,
+    "mode": "advisory"
+  },
+  "gate_decision": {
+    "verdict": "PASS",
+    "deterministic": {"shape": "pass", "citation_present": "pass"},
+    "advisory": {"judge": "agree", "judge_model": "claude-sonnet-4-5-20250514"},
+    "escalated": false
+  },
+  "calibration_emission": {
+    "rec_id": "rec-reversion-nvda-0003",
+    "as_of_ts": "2026-05-23T00:00:00Z",
+    "primary_horizon": "30d",
+    "benchmark_id": "SPY",
+    "p_beat_benchmark": 0.57,
+    "label_method_version": "v1",
+    "continuous_score": 0.54,
+    "model_version": "claude-opus-4-7-20260101"
+  }
+}
