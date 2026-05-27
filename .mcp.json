@@ -91,6 +91,17 @@
         "server.py"
       ],
       "cwd": "."
+    },
+    "massive": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "src/mcp/massive",
+        "python",
+        "server.py"
+      ],
+      "cwd": "."
     }
   }
 }

@@ -137,6 +137,16 @@ Stage 1 of `/research-company` inlines 8–12 MCP calls (cold-start) into main s
 
 ---
 
+## Naming: "Massive" = "Polygon" (provider rebrand)
+
+Polygon.io the data provider rebranded to **Massive.com**; the wire protocol is unchanged (Massive is Polygon-compatible — see `src/mcp/massive/server.py` header, verified against massive.com docs). **Treat "Polygon" and "Massive" as the same provider/tool family** — when the user says one, they mean this family.
+
+Two MCP servers currently coexist in `.mcp.json` with different scopes but the same upstream provider:
+- `polygon` (`src/mcp/polygon`) — options-chain slow-layer (chain / IV term structure / put-call ratio / unusual activity), via `polygon-api-client`.
+- `massive` (`src/mcp/massive`) — real-time stocks for the `/micro` day-trading layer (bounded-window websocket + intraday bars).
+
+---
+
 ## Project-specific don'ts
 
 - Don't move prompts out of `.claude/agents/` into Python.

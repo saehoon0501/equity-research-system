@@ -1,0 +1,17 @@
+[project]
+name = "massive-mcp"
+version = "0.1.0"
+description = "Massive.com real-time stocks MCP for /micro. WebSocket-per-call micro-aggregates + REST intraday bars; decision-6 typed capability consumed by Claude Code (the /micro day-trading helper)."
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+    "websockets>=14.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+package = false
