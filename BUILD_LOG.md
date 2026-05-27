@@ -4,6 +4,8 @@ Step-driven build record for an **equity research system that picks good stocks*
 
 No dated cadence, no weekly diary, no commitment statement. Steps are ordered (substrate → conventions → agents → application → backtest), not scheduled. BUILD_LOG updates when steps complete, not on a calendar.
 
+**Contract: this is a decision log, not a changelog. `git log` is the changelog.** Git already records *what* changed, when, and by whom — do not mirror it here. BUILD_LOG records only what git cannot: decisions and their rationale, accepted trade-offs, what was deliberately *not* done and why (deferrals), reversibility analysis, and corrections to earlier understanding. An entry earns its place by carrying non-obvious *why* — a future session (human or agent) reads this to avoid re-deriving or re-breaking a settled decision. Mechanical commits (merges, pure renames, diff-restating "what changed" lists) do not need an entry. When in doubt, ask: "would `git log` already tell me this?" — if yes, leave it out.
+
 This is a deliberate departure from `docs/implementation-sequencing.md` §1 (calendar), §3 (weekly entries), §7 (buffer weeks), §9 (commitment statement) — see decision 5. The substantive commitments of v2-final and phasing-plan.md are unchanged; only the implementation pattern (decision 6) and the build cadence (decision 5) differ from the originals. The spec docs remain canonical for substance.
 
 ---
@@ -656,3 +658,24 @@ param snapshot, manifest, and gates resolve clean; zero refactor errors):
    git history (commits `caac428` / `19c6719` / `eb09c42`). This supersedes the reversible-archive
    posture of the decision-7 entry above; reversal is now via `git checkout <commit> -- <path>`.
 Re-add `broker` to `.mcp.json` if `broker_mcp` is restored.
+
+---
+
+## P8 enforcement gap closed — agent-validation hook was local-only (2026-05-27)
+
+Surfaced during the `/research-company` MU refactor-audit: the `post_agent_validate` hook (Layer-2 envelope validation that fires on every `Agent()` dispatch) was registered in `.claude/settings.local.json` — which is gitignored. So governance worked for the current operator only and was **silently absent for anyone cloning the repo**. That is a direct P8 violation ("governance lives in tracked config; local cannot shadow it") and it had been masked because the local file happened to be present on the dev machine.
+
+**Decision:** promote the hook to tracked `.claude/settings.json` (commits `3c41df6` → `0275340`), alongside the existing `PreToolUse[Skill]` as-of-tag gate. The deeper lesson recorded here, beyond the one-line diff: a passing local smoke test is *not* evidence governance is enforced — `hook_smoke_test.sh` Test 7 was itself reading `settings.local.json`, so it had been validating the shadow rather than the tracked config, enshrining the very violation it was meant to catch. Added Test 16 (shadow-guard mirroring Test 15) so a re-added local override now fails loudly instead of silently disabling enforcement.
+
+**Deferred / operator action:** the operator must delete the duplicate `PostToolUse[Agent]` block from their own `settings.local.json`; Test 16 stays red until they do (working as intended — it caught the shadow that motivated the fix). Unrelated: Test 11 (HMAC unset-key) was already failing pre-change.
+
+## Massive.com real-time MCP server + `/micro` day-trading helper (2026-05-27)
+
+Added a second, fast data layer (commit `af2a833`). This is deliberately **distinct from the slow-layer `market_data` server** (daily OHLCV / news that feeds `/research-company`): `/micro` operates on a ≤1-day execution horizon and needs a live tape, so it gets its own provider rather than overloading the research feed. Per decision 6, `/micro` and the `massive` server are *tools* consumed by Claude Code, not an orchestrator.
+
+**Non-obvious context worth recording (git won't tell you this):**
+- **`massive` == Polygon (provider rebrand).** Massive.com is the rebranded Polygon.io; the wire protocol is unchanged, so `src/mcp/massive` is intentionally the twin of `market_data/polygon_provider.py` (same `/v2/aggs` REST shape, same `ev`-tagged WS frames). A future session seeing both a `polygon` server and a `massive` server should treat them as the same provider family, not two unrelated vendors. (Also recorded in CLAUDE.md.)
+- **MCP is request/response — it cannot stream.** So `stream_micro_aggregate` does *not* hold a live subscription; it opens a short-lived websocket per call, drains a bounded window (`collect_seconds`, clamped 1..60), closes, and returns one snapshot. This shape is forced by the protocol, not a preference — don't "fix" it into a persistent stream.
+- **`mcp__massive` is a soft dependency** (only `/micro` uses it; every other command runs without it). Both tools degrade gracefully — structured `status` instead of raising — so `/micro` renders a "no live signal" card when the key/feed is absent. Documented in `.claude/references/mcp-required.md` §4a.
+
+MCP server count: **10** (was 9 after the broker drop). `src/micro/` (indicators, signal model, CLI) + `tests/unit/micro/` are the consuming layer.

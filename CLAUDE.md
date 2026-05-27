@@ -8,7 +8,7 @@ A two-layer equity research system: LLM-driven watchlist research (slow layer) +
 
 ## Load-bearing reading order
 
-1. `BUILD_LOG.md` — architectural decisions 1–6 and the current step list. Decision 6 governs "where does this code go?" Decision 1 (Path A) governs "which model runs this?"
+1. `BUILD_LOG.md` — architectural decisions 1–6 and the current step list. Decision 6 governs "where does this code go?" Decision 1 (Path A) governs "which model runs this?" It's a **decision log, not a changelog** (`git log` is the changelog) — read it for the *why* git can't carry. See its top-of-file contract before adding entries.
 2. `.claude/README.md` — three-layer architecture (commands / agents / references).
 3. `docs/v2-orchestrator-refactor-consensus.md` — the 2026-05-12 refactor that produced today's architecture. Names the accepted risks operator chose not to mitigate at design time.
 4. `docs/v2-final-spec.md` — canonical spec for substance (DDL, agent prompts, gate criteria).
@@ -160,3 +160,4 @@ Two MCP servers currently coexist in `.mcp.json` with different scopes but the s
 - Don't relax C3 thresholds in `docs/phasing-plan.md` §2.5.
 - Don't add Evidence Index fields "later" — schema is load-bearing for v0.5+.
 - Don't add weekly-cadence machinery — decision 5 removed BUILD_LOG weekly entries and `/weekly-buildlog`.
+- Don't mirror git history into BUILD_LOG — it's a decision log, not a changelog (see its top-of-file contract). Add an entry only for a decision/trade-off/deferral/correction `git log` won't tell you.
