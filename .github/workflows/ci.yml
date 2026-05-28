@@ -34,10 +34,14 @@ jobs:
           PYTHONPATH="$PWD" uv run \
             --with pytest \
             --with python-dotenv \
+            --with numpy \
+            --with scipy \
+            --with httpx \
+            --with pandas \
             --python 3.13 \
             pytest tests/unit \
               --ignore=tests/unit/mcp \
-              --ignore=tests/unit/regime_sidecar \
+              --ignore=tests/unit/shared/regime_sidecar \
               -m "not integration and not integration_live" \
               -q
 

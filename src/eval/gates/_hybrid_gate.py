@@ -324,7 +324,12 @@ def _judge_is_configured(judge_fn, compute_fn, cache) -> bool:
     that can serve the verdict. When none is present the judge is *deliberately
     unconfigured* — distinct from "attempted and errored".
     """
-    return judge_fn is not None or compute_fn is not None or cache is not None
+    # A cache alone cannot invoke the judge (nothing to ask it about); it
+    # supplements judge_fn/compute_fn, not substitutes. Treating cache-only as
+    # 'configured' would flip the unconfigured path to ESCALATE under
+    # LLM_CACHE_ENABLED=1 in CI (no judge_fn/compute_fn wired) — the very
+    # situation the unconfigured-judge-keeps-spine-PASS test guards against.
+    return judge_fn is not None or compute_fn is not None
 
 
 def evaluate_hybrid(
