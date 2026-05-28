@@ -110,6 +110,12 @@ The HG-23 envelope validator checks key presence, not value type. `NULLABLE_SUBK
 
 **Build order is strict: inner ring first, outer ring sits on top.** An outer-ring miss is uninterpretable without inner-ring guarantees — you can't tell whether a calibration signal is a real model failure or a refactor regression. Do not wire outer-ring scoring against any component that lacks inner-ring coverage.
 
+### P15 — Probability figures must be derived, not asserted
+
+Any probability or confidence number in analytical output must be one of: (a) **derived from a deterministic model with documented inputs** (e.g. `src/micro/signal_model.py` softmax over weighted components; `/research-company` conviction-rollup rule emitter; HG validators that re-derive expected values), (b) **derived from explicit reference-class base rates** (Mauboussin outside view with Bayesian shrinkage per `outside_view.bayesian_shrinkage_r`; Damodaran cohort lookup; Reinhart-Rogoff base-rate framework on "this time is different"), or (c) **reframed as a structured scenario with explicit numerical projections + per-assumption observable falsifiers** (e.g. bull-case FY27 EPS by segment + 10 numbered falsifiers each tied to a specific upcoming data point with a date).
+
+**If a probability cannot be derived through (a), (b), or (c), do not state a probability.** Describe the scenario, project the numbers, list the falsifiers per assumption, let the consumer judge the conditional likelihood. Pulling probability ranges out of qualitative reasoning to make analysis sound rigorous is performative — it mimics calibration without providing it. The principle applies across `/research`, `/research-company` synthesis prose, `/grill-me`, `/micro` operator narrative, intraday playbook framing, and any output touching uncertainty. Origin: operator pushback 2026-05-28 on a `/research` synthesis that ended with verdict probabilities like `P(H1) ≈ 15-20%` pulled from qualitative reasoning — operator: "Your probability doesn't have any ground, unlike /micro."
+
 ---
 
 ## Accepted tradeoffs (operator-acknowledged, not bugs)
@@ -161,3 +167,4 @@ Two MCP servers currently coexist in `.mcp.json` with different scopes but the s
 - Don't add Evidence Index fields "later" — schema is load-bearing for v0.5+.
 - Don't add weekly-cadence machinery — decision 5 removed BUILD_LOG weekly entries and `/weekly-buildlog`.
 - Don't mirror git history into BUILD_LOG — it's a decision log, not a changelog (see its top-of-file contract). Add an entry only for a decision/trade-off/deferral/correction `git log` won't tell you.
+- Don't emit performative probabilities (P15) — derive from a model, derive from base rates, or reframe as a structured scenario with falsifiable observables; never assert `P(X) ≈ N%` from qualitative reasoning to mimic rigor.
