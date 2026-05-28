@@ -4,6 +4,31 @@
 > +320 tests green on the OLD layout) onto `main`, which was reorganized after this branched.
 > Status: PLAN (not yet executed). PR #6 already preserves the work on origin; main is untouched.
 
+## Recommended resolution (TL;DR)
+
+main deliberately diverged architecturally, so this is **not a full port** — it's a **partial landing of
+the foundation-intact subset, dropping the superseded half.**
+
+**LAND (port onto main's taxonomy → clean PR → merge):** the coherent, foundation-intact chain whose
+dependencies all still exist on main:
+- Envelope schema extension (`axis_a`/`axis_b`/`gate_decision`/`reasoning_trace`) → `shared/agent_harness/envelopes/`
+- Gate registry refactor + **WS-6 hybrid gate** → `eval/gates/`
+- Orchestrator post-step (persist `gate_decision`, opt-in scoring) → `shared/agent_harness/`
+- Evidence persistence + market-data PIT/total-return fix → `mcp/`
+- **WS-1 articulation + WS-2 sophistication scorers** → `eval/scoring/`; **WS-4 calibration** → `eval/calibration/`; **WS-3 conformal** → `overlays/conformal/`; **`llm_cache`** → `shared/llm_cache/` (consumed by WS-1)
+- Migrations 045/046/047 (no collision; main is at 044)
+
+**DROP as superseded (do NOT re-introduce — main removed/deferred the foundation):**
+- **WS-5 BoN-MAV** — main has no synthesis subsystem (only deterministic `conviction_rollup`)
+- **WS-7 sizing dims + `risk_overlay`** — main's `supervisor/sizing.py` explicitly defers the composable formula
+- **P0-5/A1 rubric cache wiring** — main has no LLM rubric scorer (the `llm_cache` module still ports; only its rubric wiring is dropped)
+
+**Sequence:** Phase 0 (freeze the old→new map — done) → Phase 1 (new branch from `origin/main`; relocate LAND set + import rewrites + place new pkgs) → Phase 3 (re-establish main's regression baseline, port the LAND set's tests) → Phase 4 (clean PR → merge). Each implementation phase: advisor-before / review-after. **No force-merge; main is written only via a normal clean-merge of a green branch.**
+
+**Operator decisions before execution:** (1) confirm DROP set is acceptable (vs. wanting main to adopt the composable formula / a synthesis subsystem later); (2) confirm Class-3 taxonomy homes; (3) authorize execution (last explicit instruction was "plan," so a port-and-merge needs an explicit go).
+
+**Lower-effort alternative:** keep PR #6 as the reference and cherry-port only the envelope-schema + WS-6 gate later, if even the LAND set isn't worth the porting cost now.
+
 ## The situation (verified)
 
 `main` (`a1b3f2e`) diverged from our branch point (`94c23b8`) by **400 files / +3398 / −52273** — a
@@ -93,8 +118,11 @@ Reading main's replacements changes Class-2 from "reconcile" to "main intentiona
 - **WS-5 BoN-MAV → DROP/re-scope (recommended).** main has no `p4_debate` / phase-D synthesis at all —
   only deterministic `conviction_rollup.roll_up_conviction`. Our BoN built on `phase_d_pm_supervisor.py`,
   which main removed. Re-basing BoN would graft a synthesis subsystem main doesn't have.
-- **P0-5 cache wiring + A1 fix → OBSOLETE on main.** No `p3_mechanical_scorer` / LLM rubric exists on
-  main (`rubric|mechanical|llm` → ∅). `llm_cache` (Class-3) would have no consumer.
+- **P0-5/A1 rubric wiring → OBSOLETE; but `llm_cache` itself → PORT.** No `p3_mechanical_scorer` / LLM
+  rubric exists on main (`rubric|mechanical|llm` → ∅), so the *stage2-rubric-specific* cache wiring + the
+  A1 cache-miss fix are obsolete. BUT `llm_cache` is also consumed by the **WS-1 articulation scorer**
+  (RAGAS self-consistency), which is foundation-intact → so `llm_cache` ports (its live consumer is
+  scoring, not the removed rubric).
 
 **Net:** a *correct* push-to-main is NOT a mechanical port. ~half the work rests on subsystems main
 deliberately removed/deferred; porting it fights main's architecture. Only **Class-1 relocations**
