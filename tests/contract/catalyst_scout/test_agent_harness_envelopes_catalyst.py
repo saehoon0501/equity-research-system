@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import sys
 
-from src.agent_harness.delta_prompt import build_delta_prompt
-from src.agent_harness.dispatch_template import (
+from src.shared.agent_harness.delta_prompt import build_delta_prompt
+from src.shared.agent_harness.dispatch_template import (
     EvidenceRef,
     lint_dispatch_prompt,
     render_dispatch_prompt,
 )
-from src.agent_harness.envelopes import to_gate_outcome
-from src.agent_harness.envelopes import catalyst as catalyst_envelope
-from src.evaluator_gates import AggregateValidationResult
-from src.evaluator_gates.catalyst_memo_shape import validate_catalyst_memo_shape
+from src.shared.agent_harness.envelopes import to_gate_outcome
+from src.shared.agent_harness.envelopes import catalyst as catalyst_envelope
+from src.eval.gates import AggregateValidationResult
+from src.eval.gates.catalyst_memo_shape import validate_catalyst_memo_shape
 
 
 _RUN_ID = "22222222-3333-4444-8555-666666666666"

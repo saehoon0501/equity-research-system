@@ -45,7 +45,7 @@ def test_four_key_dict_satisfies_gate_decision():
 def test_producer_output_keys_match_typeddict():
     """to_gate_decision()'s output key set == the GateDecision TypedDict key
     set, so the contract is not stale against its producer."""
-    from src.evaluator_gates._hybrid_gate import HybridResult
+    from src.eval.gates._hybrid_gate import HybridResult
 
     result = HybridResult(
         spine_valid=True,

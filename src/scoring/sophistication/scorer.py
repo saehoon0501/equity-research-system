@@ -46,7 +46,20 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
-from src.l4_daily_monitor.drift_detector import _percentile
+# _percentile inlined (src.l4_daily_monitor.drift_detector removed in main's
+# reorg). Linear-interpolation percentile, p in [0,100].
+def _percentile(xs: list[float], p: float) -> float:
+    if not xs:
+        return 0.0
+    s = sorted(xs)
+    if len(s) == 1:
+        return s[0]
+    k = (len(s) - 1) * (p / 100.0)
+    f = int(k)
+    c = min(f + 1, len(s) - 1)
+    if f == c:
+        return s[f]
+    return s[f] + (s[c] - s[f]) * (k - f)
 from src.scoring.contracts import ScoreResult
 
 from . import faithfulness as _faith

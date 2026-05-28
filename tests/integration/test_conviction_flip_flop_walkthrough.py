@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from src.p7_recommendation_emitter.hysteresis import (
+from src.supervisor.hysteresis import (
     CONVICTION_HIGH,
     CONVICTION_MEDIUM,
     HysteresisInputs,

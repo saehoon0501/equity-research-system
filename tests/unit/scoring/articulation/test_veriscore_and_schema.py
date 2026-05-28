@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from src.agent_harness.envelopes._base import AXIS_SCHEMA, validate_envelope
+from src.shared.agent_harness.envelopes._base import AXIS_SCHEMA, validate_envelope
 from src.scoring.articulation.scorer import ArticulationScorer
 from src.scoring.articulation.veriscore import score_veriscore
 

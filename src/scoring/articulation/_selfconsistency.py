@@ -17,11 +17,10 @@ from __future__ import annotations
 import statistics
 from typing import Callable
 
-# LOCKED constants reused by import (do NOT redefine).
-from src.p3_mechanical_scorer import (
-    SELF_CONSISTENCY_N,
-    SELF_CONSISTENCY_TEMP,
-)
+# LOCKED constants (formerly imported from src.p3_mechanical_scorer, which
+# main removed in its reorg; inlined to preserve the N=5 @ temp 0.7 contract).
+SELF_CONSISTENCY_N = 5
+SELF_CONSISTENCY_TEMP = 0.7
 
 __all__ = [
     "SELF_CONSISTENCY_N",

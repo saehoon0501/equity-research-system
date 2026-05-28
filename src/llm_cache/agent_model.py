@@ -124,9 +124,16 @@ def read_agent_header(
     ``.md`` filename and the ``name:`` field.
     """
     base = Path(agents_dir) if agents_dir is not None else _DEFAULT_AGENTS_DIR
+    # Flat layout (.claude/agents/<name>.md) first; fall back to a recursive
+    # search for the nested layout main's reorg introduced
+    # (.claude/agents/<group>/<name>.md, e.g. supervisor/pm-supervisor.md).
     path = base / f"{agent_name}.md"
     if not path.is_file():
-        raise FileNotFoundError(f"agent definition not found: {path}")
+        matches = sorted(base.rglob(f"{agent_name}.md"))
+        if matches:
+            path = matches[0]
+        else:
+            raise FileNotFoundError(f"agent definition not found: {agent_name}.md under {base}")
     fm = _parse_frontmatter(path.read_text(encoding="utf-8"))
     return AgentModelHeader(
         name=fm.get("name", agent_name),

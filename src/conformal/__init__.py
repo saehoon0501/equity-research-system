@@ -1,8 +1,8 @@
 """Conformal overlay wrapper (WS-3) for the insight-quality enhancement.
 
 Wraps the three overlay classifier outputs
-(src.p8_tactical_overlay...classify, src.p9_flow_overlay...classify_flow,
-src.p10_reversion_overlay...classify_reversion) with an Adaptive Conformal
+(src.overlays.tactical...classify, src.overlays.flow...classify_flow,
+src.overlays.reversion...classify_reversion) with an Adaptive Conformal
 Inference / Conformal-PID layer. It does not fork or edit the classifiers.
 
 Public API:

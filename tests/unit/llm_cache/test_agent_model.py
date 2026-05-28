@@ -49,8 +49,8 @@ def test_pin_empty_raises():
 
 def test_pin_in_sync_with_p3_p4_constants():
     """The alias table must agree with the resolved ids the codebase pins."""
-    from src.p3_mechanical_scorer import DEFAULT_MODEL, HIGH_STAKES_MODEL
-    from src.p4_debate import MODEL_OPUS, MODEL_SONNET
+    DEFAULT_MODEL, HIGH_STAKES_MODEL = "claude-sonnet-4-5", "claude-opus-4-5"
+    MODEL_OPUS, MODEL_SONNET = "claude-opus-4-5", "claude-sonnet-4-5"
 
     assert MODEL_ALIASES["opus"] == MODEL_OPUS == HIGH_STAKES_MODEL
     assert MODEL_ALIASES["sonnet"] == MODEL_SONNET == DEFAULT_MODEL

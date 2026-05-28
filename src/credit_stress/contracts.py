@@ -6,7 +6,7 @@ Phase 3 (OPTIONAL coverage gaps): WS-7.3 adds a ``credit_stress`` block to the
 quantitative-analyst envelope covering interest coverage, the debt maturity
 wall vs the current rate curve, and cash runway.
 
-Structural mirror of ``src/p10_reversion_overlay/contracts.py`` — same
+Structural mirror of ``src/overlays/reversion/contracts.py`` — same
 ``Literal`` vocabulary discipline, same frozen-dataclass injectable seams.
 
 The Python package here is the PURE COMPUTE layer. The live EDGAR (financials)

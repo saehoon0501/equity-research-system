@@ -11,7 +11,7 @@
 #   - Extracts `tool_input.subagent_type` and the dispatch prompt.
 #   - Pulls `run_id: <uuid>` from the prompt (orchestrator MUST include).
 #   - Locates the envelope at memos/envelopes/<agent_type>__<run_id>.json.
-#   - Invokes src.agent_harness.orchestrator_step for validation.
+#   - Invokes src.shared.agent_harness.orchestrator_step for validation.
 #   - Exit semantics (per Claude Code hook docs):
 #       0  — silent success, orchestrator proceeds.
 #       2  — block with stderr fed to LLM as feedback. Used for both
@@ -233,7 +233,7 @@ TMP_OUT="$(mktemp -t post_agent_validate.XXXXXX.json)"
 trap 'rm -f "$TMP_OUT"' EXIT
 
 set +e
-"$PY" -m src.agent_harness.orchestrator_step \
+"$PY" -m src.shared.agent_harness.orchestrator_step \
     --envelope "$ENVELOPE_PATH" \
     --run-id "$RUN_ID" \
     --agent-type "$SUBAGENT_TYPE" \

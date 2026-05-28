@@ -10,6 +10,16 @@ A two-layer investment research system combining LLM-driven watchlist research (
 
 **Substrate:** Claude Code (Path A — see [`BUILD_LOG.md`](BUILD_LOG.md) decision 1).
 
+> **2026-05 — packaged as the `equity-research` Claude Code plugin + decision-7 scope collapse + stakeholder regroup.**
+> The surface is now the single `/research-company` workflow (+ `/evaluate`); off-critical-path
+> machinery (daily-monitor, alerts, drift, premortem, sizing/disposition/watchlist, backtesting,
+> governance ceremonies, `/run`) was removed (recoverable via git history). The operator UI
+> (`dashboard/`) and the `/research-company` pipeline are retained; `src/` is grouped by stakeholder
+> (see [`STAKEHOLDERS.md`](STAKEHOLDERS.md)).
+> The "12 commands / `/run` orchestrator" and `backtesting/` descriptions below are **historical**.
+> Authoritative current structure: [`.claude/README.md`](.claude/README.md) and the derived sweep
+> [`docs/decision-7-sweep-set.md`](docs/decision-7-sweep-set.md).
+
 ---
 
 ## Documents

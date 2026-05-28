@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import Any
 
 # Pure-stdlib dual-read accessor (no LLM / DB). Reused, not redefined.
-from src.evaluator_gates._frameworks_cited_shim import get_framework_keys
+from src.eval.gates._frameworks_cited_shim import get_framework_keys
 
 # Identifies this sub-metric as never an LLM path.
 CITATION_METHOD = "alce-setoverlap-v1"

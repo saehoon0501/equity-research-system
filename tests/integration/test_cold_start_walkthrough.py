@@ -33,7 +33,7 @@ Reproduces ``docs/superpowers/launch-walkthroughs/cold-start-day-1.md``.
 
 from __future__ import annotations
 
-from src.p7_recommendation_emitter.conviction_rollup import (
+from src.supervisor.conviction_rollup import (
     CONVICTION_HIGH,
     CONVICTION_MEDIUM,
     ConvictionInputs,

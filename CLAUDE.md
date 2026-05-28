@@ -8,7 +8,7 @@ A two-layer equity research system: LLM-driven watchlist research (slow layer) +
 
 ## Load-bearing reading order
 
-1. `BUILD_LOG.md` — architectural decisions 1–6 and the current step list. Decision 6 governs "where does this code go?" Decision 1 (Path A) governs "which model runs this?"
+1. `BUILD_LOG.md` — architectural decisions 1–6 and the current step list. Decision 6 governs "where does this code go?" Decision 1 (Path A) governs "which model runs this?" It's a **decision log, not a changelog** (`git log` is the changelog) — read it for the *why* git can't carry. See its top-of-file contract before adding entries.
 2. `.claude/README.md` — three-layer architecture (commands / agents / references).
 3. `docs/v2-orchestrator-refactor-consensus.md` — the 2026-05-12 refactor that produced today's architecture. Names the accepted risks operator chose not to mitigate at design time.
 4. `docs/v2-final-spec.md` — canonical spec for substance (DDL, agent prompts, gate criteria).
@@ -48,7 +48,7 @@ These are the load-bearing rules of the system. Read them before changing anythi
 
 Slash-command specs in `.claude/commands/` hold control flow. Python lives in two places only: **MCP server implementations** (`src/mcp/<server>/`, each with its own `pyproject.toml`, launched via `uv` per `.mcp.json`) and **skill helpers** (`src/skills/<command>/`, created when first needed). Agent prompts are markdown in `.claude/agents/`, versioned via git. If you find yourself writing a Python file that makes routing decisions or dispatches subagents, step back — it likely shouldn't exist.
 
-`src/agent_harness/` is **not** an orchestrator despite the name. It is the per-attempt retry state machine consumed by the PostToolUse hook (see P5). Do not extend it with orchestration logic.
+`src/shared/agent_harness/` is **not** an orchestrator despite the name. It is the per-attempt retry state machine consumed by the PostToolUse hook (see P5). Do not extend it with orchestration logic.
 
 ### P2 — Pin ground truth at the boundary; propagate by value
 
@@ -64,7 +64,7 @@ Subagent output → JSON envelope on disk **before return**. Cross-stage communi
 
 ### P5 — PostToolUse hooks enforce what the spec only asks for
 
-If a contract matters (envelope persisted, `run_id` present, shape valid, cost under ceiling), enforce it at the hook seam — the orchestrator cannot forget. `scripts/post_agent_validate.sh` fires after every `Agent` dispatch, locates the envelope by `run_id`, invokes `src/agent_harness/orchestrator_step.py` (deterministic state machine: fingerprint dedup + cost ledger + 3-strike cap; per-(run_id, agent) cumulative ceiling $60 default), exits 0 PASS / 10 RETRY (with delta-prompt on stderr) / 11 ESCALATE.
+If a contract matters (envelope persisted, `run_id` present, shape valid, cost under ceiling), enforce it at the hook seam — the orchestrator cannot forget. `scripts/post_agent_validate.sh` fires after every `Agent` dispatch, locates the envelope by `run_id`, invokes `src/shared/agent_harness/orchestrator_step.py` (deterministic state machine: fingerprint dedup + cost ledger + 3-strike cap; per-(run_id, agent) cumulative ceiling $60 default), exits 0 PASS / 10 RETRY (with delta-prompt on stderr) / 11 ESCALATE.
 
 This is the canonical place for "logic too deterministic for LLM prose, but too small for a service": push it to Python, leave the re-dispatch decision in Claude Code.
 
@@ -90,7 +90,7 @@ Main session has no `Agent()` to hook into when it emits its own artifact (e.g.,
 
 ### P11 — Each agent owns its envelope schema and its own HG validator
 
-Do not propose a shared base envelope interface for multi-agent communication. LLM consumers read heterogeneous shapes natively; cross-agent persistent state goes through DB tables, not envelope inheritance. Each agent: own spec → own envelope → own HG validator in `src/evaluator_gates/`.
+Do not propose a shared base envelope interface for multi-agent communication. LLM consumers read heterogeneous shapes natively; cross-agent persistent state goes through DB tables, not envelope inheritance. Each agent: own spec → own envelope → own HG validator in `src/eval/gates/`.
 
 ### P12 — Spec changes touching agent emission require a smoke test
 
@@ -137,6 +137,16 @@ Stage 1 of `/research-company` inlines 8–12 MCP calls (cold-start) into main s
 
 ---
 
+## Naming: "Massive" = "Polygon" (provider rebrand)
+
+Polygon.io the data provider rebranded to **Massive.com**; the wire protocol is unchanged (Massive is Polygon-compatible — see `src/mcp/massive/server.py` header, verified against massive.com docs). **Treat "Polygon" and "Massive" as the same provider/tool family** — when the user says one, they mean this family.
+
+Two MCP servers currently coexist in `.mcp.json` with different scopes but the same upstream provider:
+- `polygon` (`src/mcp/polygon`) — options-chain slow-layer (chain / IV term structure / put-call ratio / unusual activity), via `polygon-api-client`.
+- `massive` (`src/mcp/massive`) — real-time stocks for the `/micro` day-trading layer (bounded-window websocket + intraday bars).
+
+---
+
 ## Project-specific don'ts
 
 - Don't move prompts out of `.claude/agents/` into Python.
@@ -150,3 +160,4 @@ Stage 1 of `/research-company` inlines 8–12 MCP calls (cold-start) into main s
 - Don't relax C3 thresholds in `docs/phasing-plan.md` §2.5.
 - Don't add Evidence Index fields "later" — schema is load-bearing for v0.5+.
 - Don't add weekly-cadence machinery — decision 5 removed BUILD_LOG weekly entries and `/weekly-buildlog`.
+- Don't mirror git history into BUILD_LOG — it's a decision log, not a changelog (see its top-of-file contract). Add an entry only for a decision/trade-off/deferral/correction `git log` won't tell you.

@@ -25,9 +25,9 @@ from src.conformal import (
     ConformalResult,
     ConformalWrapper,
 )
-from src.p8_tactical_overlay.bin_classifier import classify
-from src.p9_flow_overlay.bin_classifier import classify_flow
-from src.p10_reversion_overlay.bin_classifier import classify_reversion
+from src.overlays.tactical.bin_classifier import classify
+from src.overlays.flow.bin_classifier import classify_flow
+from src.overlays.reversion.bin_classifier import classify_reversion
 
 # Label spaces per classifier (p8/p9 share one; p10 has its own vocabulary).
 PN_LABELS = ["positive", "neutral", "negative", "unavailable"]

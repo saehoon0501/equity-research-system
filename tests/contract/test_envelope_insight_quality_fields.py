@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from src.agent_harness.envelopes import flow as flow_env
-from src.agent_harness.envelopes import reversion as reversion_env
-from src.agent_harness.envelopes import tactical as tactical_env
+from src.shared.agent_harness.envelopes import flow as flow_env
+from src.shared.agent_harness.envelopes import reversion as reversion_env
+from src.shared.agent_harness.envelopes import tactical as tactical_env
 
 
 # ---------- canonical valid envelopes (no new fields) ------------------
@@ -235,7 +235,7 @@ def test_reversion_envelope_with_new_fields_validates():
 
 def test_reversion_reuses_existing_contract():
     # Must reuse, not recreate: ReversionSignal is the p10 dataclass.
-    from src.p10_reversion_overlay.contracts import ReversionSignal as Canonical
+    from src.overlays.reversion.contracts import ReversionSignal as Canonical
 
     assert reversion_env.ReversionSignal is Canonical
 

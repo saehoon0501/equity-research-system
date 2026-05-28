@@ -61,6 +61,18 @@ Skills and subagents in this repo assume specific MCP servers are connected to e
 
 **Provider selection:** deferred per BUILD_LOG.md Day 1. Commit before sample memo generation step (per the BUILD_LOG.md step list).
 
+### 4a. `mcp__massive` (Massive.com real-time stocks — `/micro` only)
+
+**Purpose:** Real-time US-equities tape for the `/micro` intraday (≤1-day) day-trading helper. Distinct from `mcp__market_data` (that is the slow layer's daily OHLCV/news; this is the execution layer's live feed).
+
+**Expected tools:**
+- `stream_micro_aggregate(ticker, collect_seconds, channels)` — websocket-per-call micro-aggregate (last/vwap/tick-velocity/spread/hi-lo)
+- `get_intraday_bars(ticker, multiplier, timespan, lookback_minutes)` — REST intraday bar series for the indicator panel
+
+**Why soft:** only `/micro` uses it; every other command runs without it. Massive's wire protocol is Polygon-compatible. Both tools degrade gracefully (structured `status` instead of raising) so `/micro` renders a "no live signal" card when the key/feed is absent.
+
+**Connection:** `MASSIVE_API_KEY` + `MASSIVE_WS_URL` (default `wss://socket.massive.com`, real-time; `wss://delayed.massive.com` for delayed) + `MASSIVE_REST_URL` in `.env`. Verify with `src/mcp/massive/smoke_test.py`.
+
 ### 5. `mcp__fred` (Federal Reserve Economic Data)
 
 **Purpose:** Macro indicators for MacroCycleAgent.

@@ -158,13 +158,16 @@ if [ "$RETRY_OK" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Test 7: settings.local.json contains a PostToolUse → Agent hook entry
-# pointing at post_agent_validate.sh.
+# Test 7: tracked .claude/settings.json registers PostToolUse[Agent] hook
+# pointing at post_agent_validate.sh. Per P8 (CLAUDE.md): governance hooks
+# live in tracked config so they persist across operators / fresh clones.
+# Prior versions of this test read settings.local.json (gitignored) — that
+# enshrined a P8 violation. Test 16 below guards the shadow direction.
 # ---------------------------------------------------------------------------
-echo "Test 7: settings.local.json has PostToolUse → Agent → post_agent_validate.sh"
-SETTINGS="$REPO_ROOT/.claude/settings.local.json"
+echo "Test 7: tracked settings.json has PostToolUse → Agent → post_agent_validate.sh"
+SETTINGS="$REPO_ROOT/.claude/settings.json"
 if [ ! -f "$SETTINGS" ]; then
-    fail "settings file not found: $SETTINGS"
+    fail "tracked settings file not found: $SETTINGS"
 else
     HOOK_REGISTERED="$(jq -r '
         (.hooks.PostToolUse // [])
@@ -176,9 +179,9 @@ else
         | length
     ' "$SETTINGS")"
     if [ "$HOOK_REGISTERED" != "0" ] && [ -n "$HOOK_REGISTERED" ]; then
-        pass "settings.local.json registers post_agent_validate hook on Agent"
+        pass "tracked settings.json registers post_agent_validate hook on Agent"
     else
-        fail "settings.local.json does NOT register post_agent_validate on Agent — hook will NOT fire"
+        fail "tracked settings.json does NOT register post_agent_validate on Agent — hook will NOT fire on a fresh clone (P8 violation)"
     fi
 fi
 
@@ -326,6 +329,29 @@ else
         pass "settings.local.json has no PreToolUse[Skill] override — gate intact"
     else
         fail "settings.local.json defines PreToolUse[matcher=Skill] — this silently overrides the tracked governance hook. Remove the local override or rename the local matcher."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Test 16 (LOAD-BEARING): .claude/settings.local.json MUST NOT shadow the
+# tracked PostToolUse[Agent] governance hook. Mirrors Test 15 for the Agent
+# validation path. Per P8: governance lives in tracked config; local
+# settings.local.json shadows tracked settings and would silently disable
+# the post_agent_validate hook for any operator with a local override.
+# ---------------------------------------------------------------------------
+echo "Test 16: settings.local.json does NOT shadow PostToolUse[Agent] gate"
+if [ ! -f "$LOCAL_SETTINGS" ]; then
+    pass "no settings.local.json present — no shadow risk"
+else
+    SHADOW="$(jq -r '
+        (.hooks.PostToolUse // [])
+        | map(select(.matcher == "Agent"))
+        | length
+    ' "$LOCAL_SETTINGS" 2>/dev/null || echo "0")"
+    if [ "$SHADOW" = "0" ]; then
+        pass "settings.local.json has no PostToolUse[Agent] override — gate intact"
+    else
+        fail "settings.local.json defines PostToolUse[matcher=Agent] — this silently overrides the tracked governance hook. Remove the local override or rename the local matcher."
     fi
 fi
 

@@ -4,6 +4,8 @@ Step-driven build record for an **equity research system that picks good stocks*
 
 No dated cadence, no weekly diary, no commitment statement. Steps are ordered (substrate → conventions → agents → application → backtest), not scheduled. BUILD_LOG updates when steps complete, not on a calendar.
 
+**Contract: this is a decision log, not a changelog. `git log` is the changelog.** Git already records *what* changed, when, and by whom — do not mirror it here. BUILD_LOG records only what git cannot: decisions and their rationale, accepted trade-offs, what was deliberately *not* done and why (deferrals), reversibility analysis, and corrections to earlier understanding. An entry earns its place by carrying non-obvious *why* — a future session (human or agent) reads this to avoid re-deriving or re-breaking a settled decision. Mechanical commits (merges, pure renames, diff-restating "what changed" lists) do not need an entry. When in doubt, ask: "would `git log` already tell me this?" — if yes, leave it out.
+
 This is a deliberate departure from `docs/implementation-sequencing.md` §1 (calendar), §3 (weekly entries), §7 (buffer weeks), §9 (commitment statement) — see decision 5. The substantive commitments of v2-final and phasing-plan.md are unchanged; only the implementation pattern (decision 6) and the build cadence (decision 5) differ from the originals. The spec docs remain canonical for substance.
 
 ---
@@ -598,3 +600,82 @@ The PIT dimensions (`ARY`/`ARQ`) and full history are gated to the paid SF1 subs
 - Phase 2 calibration workstream needs explicit owner — `/calibrate-forensics` skill not yet drafted; surfacing here so it doesn't disappear into "we'll calibrate later" rot.
 
 **Next:** integration test on a watchlist ticker (likely MU — recurring test case across design) to verify quant emits all five schema blocks and pm-supervisor's outside-view check fires correctly. No further file edits expected pre-test; if test surfaces a gap, address as a follow-on edit, not a redesign.
+
+---
+
+## Plugin restructure + decision-7 archive (2026-05-26)
+
+Packaged the repo as a single Claude Code plugin (`equity-research`, `.claude-plugin/plugin.json`)
+and **executed** decision 7's long-documented-but-never-run scope collapse — as a reversible
+`git mv` to `archive/_retired/` (operator chose archive over decision 7's original `git rm`).
+
+**What changed:**
+1. **`.claude-plugin/plugin.json`** — new single-plugin manifest. Declares the two keep-set commands
+   (`research-company`, `evaluate`), the `agents/` dir (8 agents), and `mcpServers: ./.mcp.json`.
+   Files were **not moved**: command/agent `.md` stay in `.claude/`, so they auto-load as project
+   scope (today's behavior) and the manifest is dormant until the plugin is explicitly loaded
+   (`claude --plugin-dir ./`) or installed. `research-company.md` and all agent specs are byte-identical.
+2. **Archived to `archive/_retired/`** (see `docs/decision-7-sweep-set.md` for the full derived sweep):
+   16 `src/` modules (incl. `mcp/broker_mcp`), 22 commands, 16 `tests/unit/<module>` dirs + 7
+   integration/regression tests exercising retired pipelines, 2 dead one-off scripts, and off-path
+   UI (`dashboard/`, `provider_verification/`, root `LivePanel.tsx`).
+3. **`.mcp.json`** — dropped the `broker` server (impl archived). 9 servers remain.
+
+**Decision-7 retire-set corrections (the literal list was stale).** The mandated grep-trace of the
+`/research-company` keep-set found decision 7 would have deleted modules the pipeline depends on.
+KEPT against the literal retire-set: `regime_sidecar` (imported by p8 tactical `bin_classifier`),
+`audit_trail` (imported by p7 `emitter`), `mode_classifier` (evaluator HG-26 Check 3), plus
+`eval/` and `p10_reversion_overlay`/`mean-reversion-overlay` which post-date decision 7. The keep-set
+is therefore 12 `src/` modules + the 9 MCP servers, not decision 7's narrower literal list.
+
+**Deferred (NOT done this run):** DB-migration retirement (moving numbered `.sql` breaks replay
+ordering; `system_errors` mig 014 is still used — decision 7's "drop 014" is wrong; needs DB-state
+analysis). And the research-company flow's internal protocol/boilerplate consolidation — operator
+chose "reorg only," so the orchestration spec is left byte-identical; consolidation remains a future
+refactor.
+
+**Reversal:** `git mv archive/_retired/<path> <original>`; history preserved via `git log --follow`.
+
+---
+
+## Stakeholder regroup + archive removal (2026-05-27)
+
+Two follow-ons after the plugin restructure, both verified by post-change `/research-company`
+structural audits (GOOGL then MU — all MCP servers, every new-path embedded agent/hook command, the
+param snapshot, manifest, and gates resolve clean; zero refactor errors):
+
+1. **Stakeholder regroup** (commit `eb09c42`) — `src/` reorganized by pipeline stakeholder:
+   `overlays/{tactical,flow,reversion}`, `supervisor` (was p7), `eval/{scorer,gates}` (gates was
+   evaluator_gates), `shared/{agent_harness,data_layer,evidence_index,audit_trail,regime_sidecar,mode_classifier}`,
+   `mcp/` unchanged. `.claude/agents/` grouped into `analysts/overlays/catalyst/supervisor/eval/`
+   (recursive discovery; identity = `name:` frontmatter). Every import/path/`python -m` reference
+   rewritten. See `STAKEHOLDERS.md`.
+2. **`dashboard/` restored** (commit `3e3814c`) — wrongly archived in the decision-7 sweep; it is
+   the operator UI (reads memos/envelopes + `.claude/agents/` recursively + DB). Imports no `src/`
+   Python, so the regroup didn't affect it.
+3. **`archive/_retired/` removed entirely** (this commit) — after the audits passed and the dashboard
+   was recovered, the 201-file / 2.7 MB archive was `git rm`'d. All content remains recoverable via
+   git history (commits `caac428` / `19c6719` / `eb09c42`). This supersedes the reversible-archive
+   posture of the decision-7 entry above; reversal is now via `git checkout <commit> -- <path>`.
+Re-add `broker` to `.mcp.json` if `broker_mcp` is restored.
+
+---
+
+## P8 enforcement gap closed — agent-validation hook was local-only (2026-05-27)
+
+Surfaced during the `/research-company` MU refactor-audit: the `post_agent_validate` hook (Layer-2 envelope validation that fires on every `Agent()` dispatch) was registered in `.claude/settings.local.json` — which is gitignored. So governance worked for the current operator only and was **silently absent for anyone cloning the repo**. That is a direct P8 violation ("governance lives in tracked config; local cannot shadow it") and it had been masked because the local file happened to be present on the dev machine.
+
+**Decision:** promote the hook to tracked `.claude/settings.json` (commits `3c41df6` → `0275340`), alongside the existing `PreToolUse[Skill]` as-of-tag gate. The deeper lesson recorded here, beyond the one-line diff: a passing local smoke test is *not* evidence governance is enforced — `hook_smoke_test.sh` Test 7 was itself reading `settings.local.json`, so it had been validating the shadow rather than the tracked config, enshrining the very violation it was meant to catch. Added Test 16 (shadow-guard mirroring Test 15) so a re-added local override now fails loudly instead of silently disabling enforcement.
+
+**Deferred / operator action:** the operator must delete the duplicate `PostToolUse[Agent]` block from their own `settings.local.json`; Test 16 stays red until they do (working as intended — it caught the shadow that motivated the fix). Unrelated: Test 11 (HMAC unset-key) was already failing pre-change.
+
+## Massive.com real-time MCP server + `/micro` day-trading helper (2026-05-27)
+
+Added a second, fast data layer (commit `af2a833`). This is deliberately **distinct from the slow-layer `market_data` server** (daily OHLCV / news that feeds `/research-company`): `/micro` operates on a ≤1-day execution horizon and needs a live tape, so it gets its own provider rather than overloading the research feed. Per decision 6, `/micro` and the `massive` server are *tools* consumed by Claude Code, not an orchestrator.
+
+**Non-obvious context worth recording (git won't tell you this):**
+- **`massive` == Polygon (provider rebrand).** Massive.com is the rebranded Polygon.io; the wire protocol is unchanged, so `src/mcp/massive` is intentionally the twin of `market_data/polygon_provider.py` (same `/v2/aggs` REST shape, same `ev`-tagged WS frames). A future session seeing both a `polygon` server and a `massive` server should treat them as the same provider family, not two unrelated vendors. (Also recorded in CLAUDE.md.)
+- **MCP is request/response — it cannot stream.** So `stream_micro_aggregate` does *not* hold a live subscription; it opens a short-lived websocket per call, drains a bounded window (`collect_seconds`, clamped 1..60), closes, and returns one snapshot. This shape is forced by the protocol, not a preference — don't "fix" it into a persistent stream.
+- **`mcp__massive` is a soft dependency** (only `/micro` uses it; every other command runs without it). Both tools degrade gracefully — structured `status` instead of raising — so `/micro` renders a "no live signal" card when the key/feed is absent. Documented in `.claude/references/mcp-required.md` §4a.
+
+MCP server count: **10** (was 9 after the broker drop). `src/micro/` (indicators, signal model, CLI) + `tests/unit/micro/` are the consuming layer.

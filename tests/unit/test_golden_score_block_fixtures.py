@@ -7,7 +7,7 @@ WS-5 ``bon_panel/`` quality-lift baseline panel (exactly 10 envelopes).
 
 All fixtures are validated through the SAME entrypoint the contract test
 uses: ``<module>.validate(envelope)`` from
-``src.agent_harness.envelopes.*``.
+``src.shared.agent_harness.envelopes.*``.
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from src.agent_harness.envelopes import flow as flow_env
-from src.agent_harness.envelopes import pm_supervisor as pm_env
-from src.agent_harness.envelopes import reversion as reversion_env
-from src.agent_harness.envelopes import tactical as tactical_env
+from src.shared.agent_harness.envelopes import flow as flow_env
+from src.shared.agent_harness.envelopes import pm_supervisor as pm_env
+from src.shared.agent_harness.envelopes import reversion as reversion_env
+from src.shared.agent_harness.envelopes import tactical as tactical_env
 
 _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 _GOLDEN_DIR = _FIXTURES / "golden_score_blocks"
