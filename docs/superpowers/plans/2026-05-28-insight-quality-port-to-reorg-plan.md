@@ -81,6 +81,27 @@ No main equivalent; land fresh. Proposed homes (confirm before porting):
 - **Phase 4 — Land.** Open a fresh PR from the rebuilt branch → main (now cleanly mergeable, non-
   destructive); merge.
 
+## Phase-0 recon findings (2026-05-28) — Class-2 bases were DELIBERATELY removed
+
+Reading main's replacements changes Class-2 from "reconcile" to "main intentionally diverged":
+
+- **WS-7 sizing → DROP/defer (recommended).** main's `src/supervisor/sizing.py` is the v0.1 overlay
+  model (`compute_sizing`/`SizingSuggestion`) and **explicitly comments "v0.5+ deferred: composable
+  formula (weighted multipliers — conviction…)"**. Our WS-7 extended the v0.5 `composable.py` formula —
+  which main has NO copy of and explicitly deferred. Porting WS-7 re-introduces a formula main chose not
+  to adopt. `risk_overlay` (Class-3) depends on it → same fate.
+- **WS-5 BoN-MAV → DROP/re-scope (recommended).** main has no `p4_debate` / phase-D synthesis at all —
+  only deterministic `conviction_rollup.roll_up_conviction`. Our BoN built on `phase_d_pm_supervisor.py`,
+  which main removed. Re-basing BoN would graft a synthesis subsystem main doesn't have.
+- **P0-5 cache wiring + A1 fix → OBSOLETE on main.** No `p3_mechanical_scorer` / LLM rubric exists on
+  main (`rubric|mechanical|llm` → ∅). `llm_cache` (Class-3) would have no consumer.
+
+**Net:** a *correct* push-to-main is NOT a mechanical port. ~half the work rests on subsystems main
+deliberately removed/deferred; porting it fights main's architecture. Only **Class-1 relocations**
+(envelopes, gates, emitter, overlays) and the **foundation-intact Class-3 packages** (scoring,
+calibration, conformal — their deps envelopes/mcp/overlays still exist) could land cleanly; WS-5, WS-7,
+P0-5/A1, risk_overlay, llm_cache should likely be **dropped as superseded**, pending operator confirmation.
+
 ## Risks / decisions for the operator
 
 1. **Class-2 is the real risk** — main may have *intentionally removed* `composable.py`/`p4_debate`/
