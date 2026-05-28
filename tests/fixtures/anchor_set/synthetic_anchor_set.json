@@ -1,0 +1,135 @@
+{
+  "set_id": "synthetic_anchor_set_v1",
+  "synthetic": true,
+  "frozen_at": null,
+  "baseline_kappa": null,
+  "notes": [
+    "SYNTHETIC fixture for WS-6 unit tests ONLY. Not the operator reference.",
+    "12 balanced PASS/ESCALATE anchors. Each envelope carries a _judge_hint",
+    "that the test mock judge echoes (perfect baseline agreement). The real",
+    "30-50 operator-labelled anchor set is a DEFERRED operator task.",
+    "load_anchor_set(require_operator=True) rejects this file."
+  ],
+  "items": [
+    {
+      "anchor_id": "synthetic-00",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000000",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-01",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000001",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    },
+    {
+      "anchor_id": "synthetic-02",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000002",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-03",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000003",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    },
+    {
+      "anchor_id": "synthetic-04",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000004",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-05",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000005",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    },
+    {
+      "anchor_id": "synthetic-06",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000006",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-07",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000007",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    },
+    {
+      "anchor_id": "synthetic-08",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000008",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-09",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000009",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    },
+    {
+      "anchor_id": "synthetic-10",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000010",
+        "_judge_hint": "PASS"
+      },
+      "operator_label": "PASS"
+    },
+    {
+      "anchor_id": "synthetic-11",
+      "artifact_type": "reversion_envelope",
+      "envelope": {
+        "ticker": "SYN",
+        "run_id": "00000000-0000-0000-0000-000000000011",
+        "_judge_hint": "ESCALATE"
+      },
+      "operator_label": "ESCALATE"
+    }
+  ]
+}

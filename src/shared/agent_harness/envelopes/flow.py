@@ -24,6 +24,7 @@ from typing import Any
 from src.shared.agent_harness.envelopes._base import (
     EnvelopeValidationResult,
     Predicate,
+    insight_quality_properties,
     validate_envelope,
 )
 
@@ -183,6 +184,12 @@ SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+# P0-1 (additive, backward-compatible): splice the five OPTIONAL
+# insight-quality fields into ``properties``. REQUIRED — the top-level
+# schema is ``additionalProperties: False``, so without this the new keys
+# would be rejected as unknown. None is added to ``required``.
+SCHEMA["properties"].update(insight_quality_properties())
 
 
 # ---------- Cross-field predicates ------------------------------------

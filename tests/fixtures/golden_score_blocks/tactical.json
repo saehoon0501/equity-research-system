@@ -1,0 +1,71 @@
+{
+  "ticker": "AAPL",
+  "as_of_date": "2026-05-23",
+  "run_id": "00000000-0000-0000-0000-000000000002",
+  "tactical_signal_bin": "positive",
+  "rf_degenerate": false,
+  "unavailable_reason": null,
+  "tactical_cell": {
+    "conviction": "HIGH",
+    "tactical_bin": "positive",
+    "cell_size_pct": 6.0,
+    "cell_disposition": "BUY-HIGH"
+  },
+  "frameworks_cited": ["antonacci_dual_momentum_2014"],
+  "reasoning_path_taken": [
+    "load_ticker_prices",
+    "load_spy_prices",
+    "resolve_risk_free_at_helper",
+    "compute_12m_excess_return",
+    "compare_to_antonacci_thresholds",
+    "classify_tactical_bin",
+    "lookup_tactical_cell_disposition",
+    "compute_tactical_cell_size_pct",
+    "emit_envelope"
+  ],
+  "reasoning_trace": [
+    {"op": "load_ticker_prices", "rationale": "Loaded 13-month AAPL adjusted closes."},
+    {"op": "load_spy_prices", "rationale": "Loaded 13-month SPY closes for relative-strength baseline."},
+    {"op": "resolve_risk_free_at_helper", "rationale": "Resolved 3M T-bill at 4.3pct from helper; not degenerate."},
+    {"op": "compute_12m_excess_return", "rationale": "12m return minus risk-free = +14.2pct excess."},
+    {"op": "compare_to_antonacci_thresholds", "rationale": "Excess return exceeds absolute-momentum threshold."},
+    {"op": "classify_tactical_bin", "rationale": "Positive absolute + positive relative => positive bin."},
+    {"op": "lookup_tactical_cell_disposition", "rationale": "HIGH x positive => BUY-HIGH disposition."},
+    {"op": "compute_tactical_cell_size_pct", "rationale": "Cell sizing rule yields 6.0pct allocation."},
+    {"op": "emit_envelope", "rationale": "Serialized validated tactical envelope."}
+  ],
+  "axis_a": {
+    "faithfulness": 0.89,
+    "answer_relevancy": 0.9,
+    "citation_precision": 1.0,
+    "citation_recall": 0.75,
+    "veriscore": 0.82,
+    "coherence": 0.78,
+    "clarity": 0.84,
+    "mode": "advisory"
+  },
+  "axis_b": {
+    "roscoe": 0.71,
+    "receval": 0.65,
+    "cot_faithfulness_flag": false,
+    "novelty_percentile": 0.38,
+    "surprise": 0.29,
+    "mode": "advisory"
+  },
+  "gate_decision": {
+    "verdict": "PASS",
+    "deterministic": {"shape": "pass", "citation_present": "pass"},
+    "advisory": {"judge": "agree", "judge_model": "claude-sonnet-4-5-20250514"},
+    "escalated": false
+  },
+  "calibration_emission": {
+    "rec_id": "rec-tactical-aapl-0002",
+    "as_of_ts": "2026-05-23T00:00:00Z",
+    "primary_horizon": "30d",
+    "benchmark_id": "SPY",
+    "p_beat_benchmark": 0.6,
+    "label_method_version": "v1",
+    "continuous_score": 0.58,
+    "model_version": "claude-opus-4-7-20260101"
+  }
+}

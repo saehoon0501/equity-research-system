@@ -38,8 +38,10 @@ Two tools:
 from __future__ import annotations
 
 import datetime as _dt
+import importlib.util as _importlib_util
 import json
 import os
+import sys as _sys
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,29 @@ from mcp.server.fastmcp import FastMCP
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_REPO_ROOT / ".env")
+
+
+def _load_evidence_persistence():
+    """Load the shared fail-soft evidence_documents persistence helper.
+
+    Loaded by file path (unique module name) so it works whether this server is
+    launched as an MCP process or imported by file path in tests. Fail-soft: a
+    load failure makes persistence a no-op.
+    """
+    if "_mcp_evidence_persistence" in _sys.modules:
+        return _sys.modules["_mcp_evidence_persistence"]
+    helper_path = Path(__file__).resolve().parents[1] / "evidence_persistence.py"
+    try:
+        spec = _importlib_util.spec_from_file_location(
+            "_mcp_evidence_persistence", helper_path
+        )
+        module = _importlib_util.module_from_spec(spec)
+        _sys.modules["_mcp_evidence_persistence"] = module
+        spec.loader.exec_module(module)
+        return module
+    except Exception:  # pragma: no cover - persistence is best-effort
+        return None
+
 
 mcp = FastMCP("fundamentals")
 
@@ -222,7 +247,20 @@ def get_fundamentals(ticker: str, as_of_date: str) -> dict:
         as_of = _dt.date.fromisoformat(as_of_date)
     except ValueError:
         raise ValueError(f"as_of_date must be ISO 'YYYY-MM-DD'; got {as_of_date!r}")
-    return _fetch_edgar_pit(ticker, as_of)
+    result = _fetch_edgar_pit(ticker, as_of)
+
+    # P0-3: persist the PIT fundamentals payload to evidence_documents, keyed to
+    # a synthetic source_uri (same vocabulary as evidence_index). Fail-soft &
+    # additive — the return shape below is unchanged.
+    _persist = _load_evidence_persistence()
+    if _persist is not None:
+        _persist.persist_document(
+            source_uri=f"fundamentals://edgar-pit/{ticker.upper()}/{as_of.isoformat()}",
+            body=result,
+            fetched_by="fundamentals",
+        )
+
+    return result
 
 
 @mcp.tool()

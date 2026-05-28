@@ -17,6 +17,7 @@ from typing import Any
 from src.shared.agent_harness.envelopes._base import (
     EnvelopeValidationResult,
     Predicate,
+    insight_quality_properties,
     validate_envelope,
 )
 from src.eval.gates.quant_memo_shape import (
@@ -121,6 +122,13 @@ def _is_skip_sentinel(v: object) -> bool:
     return isinstance(v, str) and v.strip().upper().startswith(
         SPECULATIVE_SKIP_SENTINEL.split(" ")[0].upper()
     )
+
+
+# P0-1 (additive, backward-compatible): document the five OPTIONAL
+# insight-quality fields in ``properties``. Top-level schema is
+# ``additionalProperties: True`` so they would already pass; listing them
+# makes the dispatch-rendered schema show them to the LLM. None required.
+SCHEMA["properties"].update(insight_quality_properties())
 
 
 # ---------- Cross-field predicates -----------------------------------

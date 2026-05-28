@@ -20,7 +20,7 @@
 #       other non-zero — surfaced to user but does not block tool use.
 #
 # Defensive defaults (fail-safe, not fail-secure):
-#   - Tool name != "Agent" → silent exit 0 (other tools untouched).
+#   - Tool name not in {"Task","Agent"} → silent exit 0 (other tools untouched).
 #   - subagent_type ∈ {evaluator, general-purpose} → silent exit 0
 #     (don't recurse into our own validator; don't gate ad-hoc agents).
 #   - Missing run_id in prompt → exit 2 with a "you must include run_id"
@@ -62,7 +62,9 @@ if [ -z "$PAYLOAD" ]; then
 fi
 
 TOOL_NAME="$(printf '%s' "$PAYLOAD" | jq -r '.tool_name // empty')"
-if [ "$TOOL_NAME" != "Agent" ]; then
+# Subagent-dispatch tool is "Task" in current Claude Code; accept legacy "Agent" too.
+# Must stay in sync with the PostToolUse `matcher` in .claude/settings.json.
+if [ "$TOOL_NAME" != "Task" ] && [ "$TOOL_NAME" != "Agent" ]; then
     exit 0
 fi
 

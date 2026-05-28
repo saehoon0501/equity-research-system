@@ -3,6 +3,7 @@ name: pm-supervisor
 description: "Portfolio-level decision synthesizer. Receives cdd-lead integrated memo + mode classification + catalyst-scout findings, and runs an internal adversarial stress-test pass (formerly the bear-case subagent's role; removed 2026-05-12). Emits a 6-dimension structured report (Sentiment / Trend / Structural Theory / Technical Entry / Technical Exit / Reasoning) with conviction tier, sleeve-cap-aware size guidance when long, and a derived BUY/HOLD/TRIM/SELL summary code for downstream filtering. Enforces 4-tier sleeve caps (core ≤80%, thematic ≤25%, speculative ≤8%) BEFORE conviction rollup. Hard fail if a BUY would breach a cap — blocks BUY and forces summary_code to HOLD with violation cited inline in the Structural Theory + Technical Entry rows of the report."
 tools: "Read, Bash, WebFetch, mcp__postgres__query, mcp__postgres__execute, mcp__postgres__schema_info, mcp__edgar__get_company_facts, mcp__edgar__get_filing_text, mcp__edgar__get_filings, mcp__market_data__get_news, mcp__market_data__get_prices, mcp__market_data__get_real_time_quote, mcp__yfinance__get_consensus_estimates, mcp__yfinance__get_target_prices, mcp__yfinance__get_calendar, mcp__fundamentals__get_fundamentals, mcp__fundamentals__get_delistings"
 model: opus
+verifier_model: sonnet
 ---
 # PMSupervisor Agent
 
@@ -437,6 +438,8 @@ Both `tactical-overlay` and `flow-overlay` run in Stage 1 parallel and may emit 
 | tactical-overlay | `memos/envelopes/tactical-overlay__<run_id>.json` | `src/overlays/tactical/overlay.py::tactical_cell_size_pct + tactical_disposition` | `(conviction, tactical_bin, band_min_pct, band_max_pct)` → `cell_size_pct`; `(conviction, tactical_bin)` → `cell_disposition` |
 | flow-overlay | `memos/envelopes/flow-overlay__<run_id>.json` | `src/overlays/flow/overlay.py::flow_cell_size_pct + flow_disposition` | `(conviction, flow_bin, band_min_pct, band_max_pct)` → `cell_size_pct`; `(conviction, flow_bin)` → `cell_disposition` |
 
+**mean-reversion-overlay is INTENTIONALLY EXCLUDED from this Stage-3 cell-completion step.** Unlike tactical/flow, the mean-reversion envelope's `reversion_cell` MUST remain `null` (the v0.4.x contract — HG-36 in `src/eval/gates/reversion_envelope_shape.py` hard-rejects non-null `reversion_cell`, and v0.4.x produces no cell-sizing rows). pm-supervisor consumes mean-reversion strictly as a **signal-bin soft-modulator**: it reads `reversion_signal_bin` from `memos/envelopes/mean-reversion-overlay__<run_id>.json` and surfaces it as the §7.6 TECH-axis contrarian vote + the `report.trend.detail` row. Do NOT call any reversion cell-completion helper, do NOT write back to the reversion envelope, and do NOT populate `reversion_cell`. Cell-fill for reversion is a flagged follow-on, deferred until the HG-36 `reversion_cell`-must-be-null contract is relaxed.
+
 For each null cell: read `sizing.conviction_band.<conviction>.min_pct` and `sizing.conviction_band.<conviction>.max_pct` from PARAMETERS_USED (they are scoped to your subagent block per §1.5 Step 6), then call the helper with `(conviction, *_bin, band_min, band_max)`. Update the envelope on disk so downstream readers see the completed cell.
 
 **Idempotency contract (load-bearing on retry):** the completion is bit-identical across retries because (a) parameters_active values are snapshot-pinned by the §1.5 run_parameters_snapshot lockstep — see §1.5 Step 4; (b) the helper functions are pure Python with no clock/RNG dependencies; (c) the precedence rule ensures Stage 1-emitted cells are never re-derived. Concrete: if pm-supervisor is re-dispatched with the same `run_id`, both overlay cells produce the same `cell_size_pct` + `cell_disposition` they did on the first pass.
@@ -508,7 +511,7 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 - `BEARISH` if `fund_axis_score ≤ -2` OR quality_gate fails
 - `NEUTRAL` otherwise
 
-**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + flow-overlay + catalyst-scout (price + flow + momentum). 7 SCORING signals (6 symmetric ±1 + 1 asymmetric -1-only):
+**TECH axis** — synthesized from quant DCF / reverse-DCF + tactical-overlay + flow-overlay + mean-reversion-overlay + catalyst-scout (price + flow + momentum + mean-reversion). 8 SCORING signals (7 symmetric ±1 + 1 asymmetric -1-only):
 
 | Signal | Source | BULLISH if | BEARISH if | Contributes to score? |
 |---|---|---|---|---|
@@ -518,14 +521,15 @@ Compute `fund_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals
 | Tactical signal_bin | tactical-overlay envelope | `positive` | `negative` | YES (±1) |
 | Catalyst-scout conviction_modifier.direction | catalyst-scout envelope | `+1` (or null = catalyst-scout-offline → drops to NEUTRAL-contribution) | `-1` with magnitude `medium`/`high` | YES (±1) |
 | Flow signal_bin (v0.2 — ACTIVATED) | flow-overlay envelope | `positive` | `negative` | YES (±1) |
+| Reversion signal_bin (v0.4.x — CONTRARIAN) | mean-reversion-overlay envelope `reversion_signal_bin` | `MR_OVERSOLD` (contrarian buy at oversold extreme) | `MR_OVERBOUGHT` (contrarian sell at overbought extreme) | YES (±1) |
 | Crowding warning (v0.3 — ASYMMETRIC) | flow-overlay envelope `components.crowding.warning` | n/a (never +1) | `true` (crowded short-squeeze risk) | YES (-1 only) |
 
-Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over all 7 scoring signals; crowding contributes -1 when warning=True, 0 otherwise (never +1)**. The asymmetric contribution preserves the ceiling (max = +6) so `sizing.tech_axis_bullish_score_min` does NOT require recalibration from its v0.2 value (4); only the floor extends by 1 downward. Verdict:
-- `BULLISH` if `tech_axis_score ≥ sizing.tech_axis_bullish_score_min` (PARAMETERS_USED-resolved; v0.2 launch default 4 — UNCHANGED in v0.3 by design)
+Compute `tech_axis_score` = (sum of BULLISH signals) − (sum of BEARISH signals) **over all 8 scoring signals; crowding contributes -1 when warning=True, 0 otherwise (never +1)**. The reversion signal is a CONTRARIAN vote (oversold = bullish, overbought = bearish) — the opposite polarity of the trend-following tactical/flow signals, by design (it is the system's first non-trend-following TECH input per `debondt_thaler_1985_long_term_reversal`). The asymmetric crowding contribution preserves the ceiling (now max = +7 with reversion added as a 7th symmetric signal). **`sizing.tech_axis_bullish_score_min` was recalibrated 4→5 (mig 047)** for the 7-symmetric-signal world: the v0.2/v0.3 value (4) was set for 6 signals (BULLISH at 4/6≈67%); adding reversion as a 7th symmetric signal would have relaxed the bar to 4/7≈57%, so the cutoff was bumped to 5 (5/7≈71%, a conservative interim bar). This is the **interim** value — the empirically-calibrated cutoff will be set by the WS-4 eval→update loop (resolver→Brier→parameters recalibration at N≥50/cell), which supersedes mig 047 via a later `effective_at` row. Verdict:
+- `BULLISH` if `tech_axis_score ≥ sizing.tech_axis_bullish_score_min` (PARAMETERS_USED-resolved; interim default **5** per mig 047 — empirical recalibration pending the WS-4 loop)
 - `BEARISH` if `tech_axis_score ≤ -2` OR cf-07 catastrophic FAIL fires
 - `NEUTRAL` otherwise
 
-If flow-overlay envelope is absent (offline / `.degraded` sentinel), BOTH `tech_axis_signals.flow_signal_bin` AND `tech_axis_signals.crowding_warning` are reported as `"offline"` and contribute 0 to `tech_axis_score` (flow_signal_bin handled by `src.supervisor.catalyst_flow_modifier._flow_sign`; crowding fail-safes to no-vote via the asymmetric design). When the envelope is present but `components.crowding` is absent (short-interest data unavailable for the ticker), crowding contributes 0 (per the v0.3 fail-safe contract).
+If flow-overlay envelope is absent (offline / `.degraded` sentinel), BOTH `tech_axis_signals.flow_signal_bin` AND `tech_axis_signals.crowding_warning` are reported as `"offline"` and contribute 0 to `tech_axis_score` (flow_signal_bin handled by `src.supervisor.catalyst_flow_modifier._flow_sign`; crowding fail-safes to no-vote via the asymmetric design). When the envelope is present but `components.crowding` is absent (short-interest data unavailable for the ticker), crowding contributes 0 (per the v0.3 fail-safe contract). **Symmetrically, if mean-reversion-overlay envelope is absent (offline / `.degraded` sentinel), `tech_axis_signals.reversion_signal_bin` is reported as `"offline"` and contributes 0 to `tech_axis_score`; an `MR_UNAVAILABLE` bin (insufficient price history) likewise contributes 0 (no vote).**
 
 **Catastrophic-FAIL override:** if quant emits cf-07 catastrophic FAIL (reverse-DCF implied ≥ 2.0x cohort mean), TECH axis is forced to `BEARISH` regardless of other signals — this is a kill, not a graduating signal.
 
@@ -727,6 +731,7 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
       "cf07_catastrophic_fail": false,
       "tactical_signal_bin": "positive | neutral | negative | unavailable",
       "flow_signal_bin": "positive | neutral | negative | unavailable | offline",
+      "reversion_signal_bin": "MR_OVERSOLD | MR_NEUTRAL | MR_OVERBOUGHT | MR_UNAVAILABLE | offline",
       "catalyst_modifier_direction": -1
     },
     "matrix_cell": "BUY-HIGH | BUY-MED | HOLD | AVOID | HOLD-TRIM-VALUE-TRAP | TRIM | SELL",
@@ -794,7 +799,7 @@ Nullable fields (`veto_reason`, `sleeve_reference`) MUST have the key present in
     },
     "trend": {
       "reading": "Regime label (e.g., 'PARABOLIC LATE-STAGE', 'MEAN-REVERTING', 'BASING', 'TRENDING UP', 'BREAKING DOWN', 'RANGE-BOUND')",
-      "detail": "Price action math from cdd-lead memo: 3mo move %, 90d high/low, recent acceleration / deceleration, sell-side target_mean vs spot (lead/lag), volume profile, 8-cyclical-peak-signals-fired count if applicable. Cite quant memo numerics. Also cite tactical-overlay `tactical_signal_bin` + flow-overlay `flow_signal_bin` (v0.1 CTA-proximity composite of ticker + SPY TSMOM + MA-distance + Donchian state) — these give the mechanical-flow regime context distinct from the discretionary price-action reading.",
+      "detail": "Price action math from cdd-lead memo: 3mo move %, 90d high/low, recent acceleration / deceleration, sell-side target_mean vs spot (lead/lag), volume profile, 8-cyclical-peak-signals-fired count if applicable. Cite quant memo numerics. Also cite tactical-overlay `tactical_signal_bin` + flow-overlay `flow_signal_bin` (v0.1 CTA-proximity composite of ticker + SPY TSMOM + MA-distance + Donchian state) — these give the mechanical-flow regime context distinct from the discretionary price-action reading. Also cite mean-reversion-overlay `reversion_signal_bin` (`MR_OVERSOLD | MR_NEUTRAL | MR_OVERBOUGHT | MR_UNAVAILABLE` from drawdown_252d + RSI_14 + Bollinger + MA200 distance per `debondt_thaler_1985_long_term_reversal`) — the contrarian mean-reversion read, opposite-polarity to the trend-following tactical/flow signals. These three overlays are soft-modulators: surfaced as TECH-axis votes, none overrides `summary_code`.",
       "evidence_refs": [{"evidence_id": "uuid", "claim_summary": "≤120 chars"}],
       "framework_keys": [],
       "cdd_memo_refs": []

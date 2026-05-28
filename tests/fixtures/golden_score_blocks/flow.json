@@ -1,0 +1,81 @@
+{
+  "ticker": "GOOGL",
+  "as_of_date": "2026-05-23",
+  "run_id": "00000000-0000-0000-0000-000000000001",
+  "flow_signal_bin": "positive",
+  "unavailable_reason": null,
+  "components": {
+    "ticker_score": 3,
+    "market_score": 2,
+    "composite_score_normalized": 0.625
+  },
+  "flow_cell": {
+    "conviction": "HIGH",
+    "flow_bin": "positive",
+    "cell_size_pct": 6.0,
+    "cell_disposition": "BUY-HIGH"
+  },
+  "frameworks_cited": ["donchian_55_20_turtle"],
+  "reasoning_path_taken": [
+    "load_ticker_prices",
+    "load_spy_prices",
+    "compute_ticker_tsmom_12mo",
+    "compute_ticker_donchian_state",
+    "compute_market_tsmom_12mo",
+    "aggregate_composite_score",
+    "classify_flow_bin",
+    "lookup_flow_cell_disposition",
+    "compute_flow_cell_size_pct",
+    "fetch_short_interest",
+    "classify_crowding_warning",
+    "emit_envelope"
+  ],
+  "reasoning_trace": [
+    {"op": "load_ticker_prices", "rationale": "Fetched 252d adjusted price window for GOOGL."},
+    {"op": "load_spy_prices", "rationale": "Fetched 252d SPY window as market proxy."},
+    {"op": "compute_ticker_tsmom_12mo", "rationale": "12-month TSMOM +18% places ticker in top quartile."},
+    {"op": "compute_ticker_donchian_state", "rationale": "Price above 55d Donchian high; uptrend confirmed."},
+    {"op": "compute_market_tsmom_12mo", "rationale": "Market TSMOM positive; no risk-off override."},
+    {"op": "aggregate_composite_score", "rationale": "Composite normalized to +0.625, above positive-bin threshold."},
+    {"op": "classify_flow_bin", "rationale": "Composite above threshold => positive flow bin."},
+    {"op": "lookup_flow_cell_disposition", "rationale": "HIGH conviction x positive bin maps to BUY-HIGH."},
+    {"op": "compute_flow_cell_size_pct", "rationale": "Cell sizing rule yields 6.0pct allocation."},
+    {"op": "fetch_short_interest", "rationale": "Short interest fetched; days-to-cover low."},
+    {"op": "classify_crowding_warning", "rationale": "Days-to-cover below threshold; no crowding warning."},
+    {"op": "emit_envelope", "rationale": "Serialized validated flow envelope."}
+  ],
+  "axis_a": {
+    "faithfulness": 0.92,
+    "answer_relevancy": 0.88,
+    "citation_precision": 1.0,
+    "citation_recall": 0.83,
+    "veriscore": 0.79,
+    "coherence": 0.81,
+    "clarity": 0.86,
+    "mode": "advisory"
+  },
+  "axis_b": {
+    "roscoe": 0.74,
+    "receval": 0.68,
+    "cot_faithfulness_flag": false,
+    "novelty_percentile": 0.41,
+    "surprise": 0.33,
+    "mode": "advisory"
+  },
+  "gate_decision": {
+    "verdict": "PASS",
+    "deterministic": {"shape": "pass", "citation_present": "pass"},
+    "advisory": {"judge": "agree", "judge_model": "claude-sonnet-4-5-20250514"},
+    "escalated": false
+  },
+  "calibration_emission": {
+    "rec_id": "rec-flow-googl-0001",
+    "as_of_ts": "2026-05-23T00:00:00Z",
+    "primary_horizon": "30d",
+    "benchmark_id": "SPY",
+    "p_beat_benchmark": 0.64,
+    "label_method_version": "v1",
+    "continuous_score": 0.62,
+    "model_version": "claude-opus-4-7-20260101"
+  }
+}

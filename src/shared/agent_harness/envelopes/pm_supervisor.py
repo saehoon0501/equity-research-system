@@ -18,6 +18,7 @@ from typing import Any
 from src.shared.agent_harness.envelopes._base import (
     EnvelopeValidationResult,
     Predicate,
+    insight_quality_properties,
     validate_envelope,
 )
 from src.eval.gates.envelope_shape import (
@@ -161,6 +162,13 @@ SCHEMA: dict[str, Any] = {
         },
     },
 }
+
+
+# P0-1 (additive, backward-compatible): document the five OPTIONAL
+# insight-quality fields in ``properties``. Top-level schema is
+# ``additionalProperties: True`` so they would already pass; listing them
+# makes the dispatch-rendered schema show them to the LLM. None required.
+SCHEMA["properties"].update(insight_quality_properties())
 
 
 # ---------- Cross-field predicates -----------------------------------

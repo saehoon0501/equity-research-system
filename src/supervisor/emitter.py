@@ -45,6 +45,9 @@ from src.shared.audit_trail.hmac_verify import (
     canonical_payload_dict,
     compute_signature_dict,
 )
+from src.supervisor.continuous_conviction import (
+    score_conviction,
+)
 from src.supervisor.conviction_rollup import (
     ConvictionInputs,
     ConvictionRollup,
@@ -146,6 +149,18 @@ class EmitInputs:
     model_version: str = "claude-opus-4-7[1m]"
     parameters_version: Optional[UUID] = None
 
+    # Calibration-emission snapshot (P0-2 / mig-045): the model's emitted
+    # probability that the rec beats its benchmark over the primary horizon.
+    # SOURCE: this value originates on the upstream envelope score block
+    # (``agent_harness/envelopes`` — see the ``p_beat_benchmark`` key in
+    # the score blocks / bon_panel fixtures), NOT computed inside P7 today.
+    # The caller threads it from that score block. When the upstream WS that
+    # produces it has not yet wired it through, we fall back to the
+    # emission-time ``continuous_score`` as a DOCUMENTED proxy (both live in
+    # [0, 1]; the snapshot column is NOT NULL so a value is required). See
+    # the proxy fallback in ``_build_calibration_snapshot``.
+    p_beat_benchmark: Optional[float] = None
+
     # Optional override: explicit emit timestamp; defaults to NOW() UTC.
     now: Optional[_dt.datetime] = None
 
@@ -172,6 +187,11 @@ class EmitOutcome:
     trigger_metadata: dict = field(default_factory=dict)
     execution_context: dict = field(default_factory=dict)
     escalate_m2: bool = False  # per hysteresis flip-frequency
+    # Write-once calibration-emission snapshot payload (P0-2 / mig-045).
+    # Populated in BOTH the dry-run and persist paths so it is testable
+    # offline. In the persist path this exact payload is INSERTed into
+    # calibration_emission_snapshot in the SAME transaction as the rec.
+    calibration_emission_snapshot: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +318,58 @@ def _build_audit_chain(
 
 
 # ---------------------------------------------------------------------------
+# Calibration-emission snapshot (P0-2 / migration 045)
+# ---------------------------------------------------------------------------
+
+
+def _build_calibration_snapshot(
+    *,
+    rec_id: UUID,
+    as_of_ts: _dt.datetime,
+    continuous_score: float,
+    p_beat_benchmark: Optional[float],
+    model_version: str,
+) -> dict:
+    """Compose the write-once ``calibration_emission_snapshot`` payload.
+
+    Mirrors the column set of ``calibration_emission_snapshot`` from
+    ``db/migrations/045_calibration_resolver.sql``:
+        (rec_id, as_of_ts, continuous_score, p_beat_benchmark, model_version)
+
+    Field provenance (per task / mig-045 comments):
+      * ``rec_id``           — the emitted recommendation_id.
+      * ``as_of_ts``         — the emission timestamp (``now``). This is the
+        seam the WS-4 resolver relies on; a backdated ``inp.now`` flows
+        straight through so a backfilled rec is picked up at its true date.
+      * ``continuous_score`` — emission-time continuous conviction in [0, 1]
+        from ``continuous_conviction.score_conviction`` (also mirrored into
+        ``conviction_breakdown.continuous_score``).
+      * ``p_beat_benchmark`` — the model's emitted probability the rec beats
+        its benchmark over the primary horizon. This value lives on the
+        upstream envelope score block (see ``agent_harness/envelopes`` /
+        the ``p_beat_benchmark`` key in score-block fixtures) and is threaded
+        in via ``EmitInputs.p_beat_benchmark``. If the caller did not supply
+        it (upstream WS not yet wired), we fall back to ``continuous_score``
+        as a DOCUMENTED proxy — the snapshot column is NOT NULL, and both
+        quantities are calibrated probabilities in [0, 1]. Never fabricated.
+      * ``model_version``    — the resolved/pinned model id on the envelope
+        (``EmitInputs.model_version``), mirroring P0-5 pinning.
+    """
+    p_beat = (
+        float(p_beat_benchmark)
+        if p_beat_benchmark is not None
+        else float(continuous_score)
+    )
+    return {
+        "rec_id": str(rec_id),
+        "as_of_ts": as_of_ts,
+        "continuous_score": float(continuous_score),
+        "p_beat_benchmark": p_beat,
+        "model_version": model_version,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entrypoint
 # ---------------------------------------------------------------------------
 
@@ -313,7 +385,14 @@ def emit_recommendation(
     Args:
         inp: bundle of upstream inputs.
         conn: psycopg-style connection. None → dry-run; HMAC computed and
-            EmitOutcome returned but no DB write.
+            EmitOutcome returned but no DB write. When NOT None (persisting),
+            migration 045 is a HARD precondition: the rec + audit chain +
+            calibration_emission_snapshot all INSERT in ONE atomic txn, so
+            db/migrations/045_calibration_resolver.sql MUST be applied first.
+            If calibration_emission_snapshot is missing, emission fails (the
+            whole txn rolls back) with a clear RuntimeError naming mig-045 —
+            it is NOT skipped, because the snapshot is load-bearing for the
+            WS-4 calibration loop.
         hmac_key: explicit HMAC key bytes. Falls back to AUDIT_HMAC_KEY env.
 
     Per v3 spec Section 4.6 Q1 + Section 5 Q1 + Section 7 Q4.
@@ -339,6 +418,9 @@ def emit_recommendation(
         anchor_drift_channels_triggered=inp.anchor_drift_channels_triggered,
     )
     conv: ConvictionRollup = roll_up_conviction(conv_in)
+    # Continuous conviction score in [0, 1] from the SAME inputs (v3 §6.4).
+    # Stored in conviction_breakdown.continuous_score and snapshotted below.
+    continuous_score = score_conviction(conv_in).score
 
     # 3. Hysteresis.
     hyst_in = HysteresisInputs(
@@ -393,6 +475,8 @@ def emit_recommendation(
         "rolled_up_via": conv.breakdown.get("rolled_up_via"),
         "hysteresis_rationale": hyst.rationale,
         "triggered_rules": conv.triggered_rules,
+        # Continuous score lives here per continuous_conviction.py §docstring.
+        "continuous_score": round(continuous_score, 4),
     }
 
     # 7. Compose row.
@@ -454,6 +538,17 @@ def emit_recommendation(
         key=key,
     )
 
+    # 10. Compose the write-once calibration-emission snapshot (P0-2).
+    #     as_of_ts == now, so a backdated inp.now flows straight into the
+    #     snapshot (the seam the WS-4 resolver depends on).
+    calibration_snapshot = _build_calibration_snapshot(
+        rec_id=rec_id,
+        as_of_ts=now,
+        continuous_score=continuous_score,
+        p_beat_benchmark=inp.p_beat_benchmark,
+        model_version=inp.model_version,
+    )
+
     outcome = EmitOutcome(
         recommendation_id=rec_id,
         ticker=inp.ticker,
@@ -466,12 +561,13 @@ def emit_recommendation(
         trigger_metadata=row["trigger_metadata"],
         execution_context=row["execution_context"],
         escalate_m2=hyst.escalate_m2,
+        calibration_emission_snapshot=dict(calibration_snapshot),
     )
 
     if conn is None:
         return outcome
 
-    _persist(conn, row, audit_rows)
+    _persist(conn, row, audit_rows, calibration_snapshot)
     return outcome
 
 
@@ -480,17 +576,24 @@ def emit_recommendation(
 # ---------------------------------------------------------------------------
 
 
-def _persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
+def _persist(
+    conn: Any,
+    row: dict,
+    audit_rows: list[dict],
+    calibration_snapshot: Optional[dict] = None,
+) -> None:
     """Write execution_recommendations + audit_provenance rows atomically.
 
     Atomicity contract (per Section 5 Q1 audit-chain lock):
         The execution_recommendations row + ALL N audit_provenance chain
-        rows MUST commit together or not at all. A partial write (e.g.,
-        the recommendation row commits but the chain breaks midway through
-        the per-stage INSERTs) leaves an unverifiable audit chain — an
-        operator running ``/audit-trail`` would see a recommendation with
-        a missing parent link, which the tamper-evidence verifier would
-        flag as ``audit-chain-broken``.
+        rows + the one calibration_emission_snapshot row (P0-2) MUST commit
+        together or not at all. A partial write (e.g., the recommendation
+        row commits but the chain breaks midway through the per-stage
+        INSERTs) leaves an unverifiable audit chain — an operator running
+        ``/audit-trail`` would see a recommendation with a missing parent
+        link, which the tamper-evidence verifier would flag as
+        ``audit-chain-broken``. The snapshot is part of the same atomic
+        unit so a rec and its calibration snapshot always commit together.
 
     We wrap the writes in an explicit transaction:
       * psycopg3 (``conn.transaction()`` available) — preferred. The
@@ -506,7 +609,7 @@ def _persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
     if callable(txn):
         # psycopg3 path — atomic block.
         with txn():
-            _do_persist(conn, row, audit_rows)
+            _do_persist(conn, row, audit_rows, calibration_snapshot)
         return
 
     # psycopg2 / legacy path.
@@ -520,11 +623,14 @@ def _persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
         except Exception:  # pragma: no cover - test conn may not allow toggling
             began = False
 
-    raised = False
     try:
-        _do_persist(conn, row, audit_rows)
+        _do_persist(conn, row, audit_rows, calibration_snapshot)
+        # Commit the multi-row write as a unit. The explicit commit() — NOT
+        # the autocommit toggle in `finally` — is the transaction boundary,
+        # so commit MUST happen before autocommit is restored (A3 fix).
+        if hasattr(conn, "commit"):
+            conn.commit()
     except Exception:
-        raised = True
         if hasattr(conn, "rollback"):
             try:
                 conn.rollback()
@@ -533,26 +639,22 @@ def _persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
         raise
     finally:
         # Restore autocommit setting either way (don't leak our toggling).
+        # This runs AFTER the explicit commit/rollback above, so the toggle
+        # never issues an implicit commit ahead of our real commit boundary.
         if began:
             try:
                 conn.autocommit = True
             except Exception:  # pragma: no cover
                 pass
-    if raised:
-        # Defensive: should not reach here because `raise` above re-raised,
-        # but keeps the type-flow explicit.
-        return  # pragma: no cover
-
-    # Clean path — commit the multi-row write as a unit.
-    if hasattr(conn, "commit"):
-        try:
-            conn.commit()
-        except Exception:  # pragma: no cover
-            pass
 
 
-def _do_persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
-    """Inner write routine — the actual N+1 INSERTs."""
+def _do_persist(
+    conn: Any,
+    row: dict,
+    audit_rows: list[dict],
+    calibration_snapshot: Optional[dict] = None,
+) -> None:
+    """Inner write routine — the actual N+1 (+1 snapshot) INSERTs."""
     cur = conn.cursor()
     try:
         cur.execute(
@@ -606,6 +708,52 @@ def _do_persist(conn: Any, row: dict, audit_rows: list[dict]) -> None:
                 row["created_at"],
             ),
         )
+        # Write-once calibration_emission_snapshot (P0-2 / mig-045), in the
+        # SAME transaction as the rec so they commit atomically. Plain INSERT
+        # — NO ON CONFLICT: a second emit for the same rec_id MUST be rejected
+        # by the DB's PK (write-once guarantee), not silently overwritten.
+        if calibration_snapshot is not None:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO calibration_emission_snapshot (
+                        rec_id, as_of_ts, continuous_score,
+                        p_beat_benchmark, model_version
+                    ) VALUES (
+                        %s, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        str(calibration_snapshot["rec_id"]),
+                        calibration_snapshot["as_of_ts"],
+                        calibration_snapshot["continuous_score"],
+                        calibration_snapshot["p_beat_benchmark"],
+                        calibration_snapshot["model_version"],
+                    ),
+                )
+            except Exception as exc:
+                # Migration 045 is a HARD precondition (see emit_recommendation
+                # docstring). If the snapshot table is missing, the driver
+                # raises an undefined-table error (psycopg pgcode 42P01 /
+                # "relation ... does not exist"). Re-raise as a CLEAR,
+                # actionable RuntimeError naming the migration — re-raising
+                # (not swallowing) keeps the whole txn rolling back, so a rec
+                # is NOT persisted when its calibration precondition is unmet.
+                # Catch ONLY the undefined-table case; everything else
+                # propagates unchanged.
+                pgcode = getattr(exc, "pgcode", None)
+                msg = str(exc).lower()
+                if (
+                    pgcode == "42P01"
+                    or "does not exist" in msg
+                    or "undefined" in msg
+                ):
+                    raise RuntimeError(
+                        "calibration_emission_snapshot missing — apply "
+                        "db/migrations/045_calibration_resolver.sql before "
+                        "emitting"
+                    ) from exc
+                raise
         for ar in audit_rows:
             cur.execute(
                 """
