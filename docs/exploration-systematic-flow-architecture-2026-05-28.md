@@ -1,0 +1,179 @@
+# Exploration: Systematic-Flow Architecture for the Equity-Research System
+
+**Date captured:** 2026-05-28
+**Status:** EXPLORATION — not a decision. Operator surfaced strategic direction during a live session; saving here for a future planning conversation. Promotion to `BUILD_LOG.md` (decision log) only after operator commits, outcome scoping is done, and the architectural change passes the inner-ring → outer-ring discipline of P14.
+**Trigger:** Operator-driven 4-layer pushback during a live MU position discussion. The MU trade detail is ephemeral; the architectural arc surfaced is what's worth preserving.
+
+---
+
+## 1. What this document is
+
+A self-contained capture of a strategic conversation that walked the operator from "is my probability framework grounded?" to "should the system predict the systematic players rather than the market?" The conversation produced an architectural endpoint worth considering — but no commitment was made. This doc preserves the strategic reasoning so a future session can pick it up cold.
+
+It is **not** a spec, **not** a decision log entry, and **not** a build plan. It is a pre-decision strategic record.
+
+---
+
+## 2. The 4-layer ladder of operator pushback
+
+Each rung was a strict superset of the one below. Each pushback rejected the previous answer as insufficient and forced a higher-order framing.
+
+| Layer | Operator pushback | Strategic answer that emerged |
+|---|---|---|
+| **L0 — Fundamentals** | "Probability percentages from qualitative reasoning have no empirical grounding (cf. P15). Replace with projected numbers applied to valuation." | Bull scenario as testable structure: FY27/FY28 segment-level revenue + OM projections → derived EPS → applied to P/E framework → 10 named falsifiers per assumption. Grounded, falsifiable, auditable. |
+| **L1 — "Right but unrewarded"** | "Being right on fundamentals doesn't get paid in momentum regimes (cf. PLTR $18→$200). System keeps me out of rallies." | Use the sleeve architecture already in CLAUDE.md (core ≤80%, thematic ≤25%, speculative ≤8%). Momentum participation lives in `speculative_optionality` with defined-risk instruments (spreads, LEAPs) and time-stops. The slow-layer governs 92% of book; the other 8% is explicitly off-leash for momentum. |
+| **L2 — Weight drift / non-stationarity** | "What if the fundamental weights themselves have shifted? Detection lag exceeds regime persistence." | Demote slow-layer from "the brain" to one ensemble input. Build framework attribution loop on `counterfactual_ledger` (already exists per P14). Reweight ensemble vote by 90d realized P&L by framework. Default to defined-risk instruments. Response-not-prediction. |
+| **L3 — Predict the predictors** | "Rather than predict the market, predict what CTAs / systematic players will be forced to do." | Yes — this is **second-order systematic flow modeling**, an institutional-tier discipline. Build `systematic-flow-overlay` agent emitting price-conditional flow forecasts (CTA flip points, vol-target deleveraging triggers, dealer gamma flip prices, passive index flows, buyback windows). Position around their forced flows. |
+
+**Strongest framing of the conclusion (operator-confirmed):**
+> "The market isn't trying to price assets correctly — it's a chain of systematic players executing their decision rules in sequence. If you can model the decision rules and their trigger points, you don't need to predict fundamentals at all. You just need to position into the next forced flow."
+
+---
+
+## 3. Architectural endpoint (if pursued)
+
+A 5-signal ensemble feeding pm-supervisor's `summary_code`, weighted dynamically by realized P&L attribution. **Slow-layer keeps its seat at the table but no longer holds the final vote.**
+
+```
+              ┌─ slow-layer fundamental (existing /research-company)  ─┐
+              ├─ tactical-overlay / Antonacci (existing)               ─┤
+ensemble vote ├─ flow-overlay v0.2 / dealer gamma (existing)           ─┤── weighted by
+              ├─ mean-reversion-overlay (existing)                     ─┤   90d realized
+              └─ systematic-flow-overlay (NEW — to build)              ─┘   P&L attribution
+                       │
+                       ▼
+              pm-supervisor: summary_code = weighted ensemble vote
+              (was: slow-layer-anchored single-brain emission)
+                       │
+                       ▼
+              instrument recommender: cash+leverage / debit spread / LEAP / collar
+              (chosen by ensemble agreement strength and IV regime)
+                       │
+                       ▼
+              sleeve allocation: core (≤80%) / thematic (≤25%) / speculative (≤8%)
+                       │
+                       ▼
+              position sized by ENSEMBLE AGREEMENT, not by individual conviction
+              (agreement <40% → defined-risk only; agreement >80% → cash+leverage allowed)
+```
+
+---
+
+## 4. Three load-bearing builds (if pursued)
+
+### Build A — `systematic-flow-overlay` agent
+
+New peer to tactical/flow/mean-reversion overlays. Emits **price-conditional** flow forecasts over 5/20-day horizons:
+
+- **CTA positioning estimate** — aggregate of AQR-canonical multi-horizon TSMOM signals (1/3/12-month lookbacks per Hurst/Ooi/Pedersen) and Turtle-canonical Donchian breakouts (20d/55d per Dennis 1983), weighted toward SG Trend Index reverse-engineering. Practitioner systems also commonly use 50/100/200d MA crossover filters as a complementary signal lineage.
+- **CTA flip points** — at what price does the next signal flip occur in each system
+- **Vol-target deleveraging trigger** — implied VIX threshold at which vol-target funds cut exposure
+- **Dealer gamma flip price** — where dealer hedging flow direction reverses
+- **Passive index events** — next inclusion / rebalance dates with estimated net flow
+- **Buyback window state** — corporate blackout/open periods with estimated daily demand
+- **Month/quarter-end rebal estimate** — net pension flow into laggards/out of winners
+
+Output envelope shape would follow P11 (per-agent ownership) and pass an HG validator following the existing pattern at `src/eval/gates/`. Stage placement TBD — likely Stage 1 parallel with the other overlays.
+
+### Build B — Framework attribution on `counterfactual_ledger`
+
+`counterfactual_ledger` (mig 030) already exists per P14. Extend it:
+
+- Add `framework_attribution` field per closed trade: which framework drove the conviction (value-DCF / momentum / flow / regime / systematic-flow)
+- 90-day rolling P&L attribution by framework
+- pm-supervisor reads attribution at ensemble-vote time, dynamically resizes weights
+- Frameworks losing money for 90+ days drop to ~5% of the vote; winning frameworks climb
+
+This is the load-bearing piece that addresses L2 (non-stationarity). Without it, the ensemble is just multiple opinions; with it, the system *empirically* knows which framework to trust this regime, regardless of whether weights have philosophically shifted.
+
+### Build C — Instrument recommender
+
+Shift the default instrument from cash + leverage to defined-risk:
+
+- Ensemble agreement >80% AND IV percentile <40 → cash+leverage allowed
+- Ensemble agreement 40–80% OR IV percentile 40–70 → debit spread / collar
+- Ensemble agreement <40% OR IV percentile >70 → LEAP only, or no trade
+- Output integrated into pm-supervisor's structured report as a new dimension
+
+The intent: structure absorbs framework error. A spread risks premium; cash + leverage risks principal. Non-stationary regimes manifest as ensemble disagreement → system automatically routes to less-fragile instruments.
+
+---
+
+## 5. What already exists vs. what's missing
+
+| Component | Status | Source |
+|---|---|---|
+| Slow-layer fundamental (DCF, Helmer, F-score, Z'') | EXISTING | `/research-company` |
+| Tactical-overlay (Antonacci dual momentum) | EXISTING | Stage 1 parallel agent |
+| Flow-overlay (CTA-proximity composite; v0.2 adds GEX) | EXISTING | Stage 1 parallel agent |
+| Mean-reversion-overlay (drawdown + RSI + Bollinger + MA-distance) | EXISTING | Stage 1 parallel agent |
+| pm-supervisor 6-dim report + sleeve cap enforcement | EXISTING | Stage 3 |
+| `counterfactual_ledger` for outcome tracking | EXISTING (mig 030) | P14 outer ring |
+| Multi-overlay soft-modulator ingestion in pm-supervisor | EXISTING | per CLAUDE.md Section 2.1 v5-final |
+| **systematic-flow-overlay (CTA flip points + vol-target + buyback windows + 0DTE gamma)** | **MISSING** | Build A |
+| **Framework P&L attribution on counterfactual_ledger** | **MISSING** | Build B |
+| **Instrument recommender (defined-risk default)** | **MISSING** | Build C |
+| **Dynamic ensemble reweighting in pm-supervisor** | **MISSING** | follows from B |
+
+The architecture is roughly 70% there. Three builds close the gap.
+
+---
+
+## 6. The Lucas-critique / shelf-life concern
+
+Second-order systematic flow modeling is institutionally recognized. Goldman (trading-desk flows notes — historically Rubner, now Flood-desk), Nomura (QIS CTA model — McElligott), Deutsche Bank ("Positioning and Flows" by Chadha/Thatte, which includes CTA exposure as one component), and Société Générale (SG CTA Index — Bloomberg ticker NEIXCTA, the only daily-published official benchmark) all surface CTA positioning analytics; macro funds explicitly trade against them. This means:
+
+- **The edge is real but partially crowded.** AQR and Man AHL document CTA evolution toward multi-horizon filtering and regime-aware vol-targeting; recent evidence shows widening dispersion between managers (~65pp spread between best and worst in 2022) rather than uniform decay. 2022 was actually a banner year for trend (SG CTA Trend +27.4% vs S&P 500 −19.5%), so "CTA capitulation always works" / "CTAs are dead" are both wrong framings.
+- **Shelf life is finite.** Whatever flow model gets built will need recalibration every 3–6 months as the systematic players evolve.
+- **Single-stock applications are weaker than index-level.** SPY/QQQ have rich, easily-modeled CTA positioning. Single names get diluted signal — works for Mag-7 + heavily-optioned semis, gets thin for idiosyncratic small/mid caps.
+- **Reflexivity risk.** If the system becomes a popular pattern, the very flows being predicted shift to defeat the prediction.
+
+The architectural answer to shelf-life is the framework attribution loop (Build B). When a flow model stops working, attribution drops its weight automatically. Ensemble survives even when individual models decay.
+
+---
+
+## 7. Open questions to resolve before commit
+
+If a future planning conversation decides to pursue this direction, these need answers:
+
+1. **Stage placement of `systematic-flow-overlay`** — Stage 1 parallel? Or post-overlay aggregation stage? Affects dispatch budget and latency.
+2. **Ensemble weighting algorithm** — simple 90d Sharpe? Bayesian shrinkage on framework win rates? Operator policy on minimum weight floor (don't let any framework drop below 5%?) and ceiling (no framework above 60%?).
+3. **Data sourcing for CTA positioning** — proxy via SG Trend Index + price-action reconstruction? Pay for Nomura QIS feed? Build from scratch via Polygon options + market data?
+4. **Defined-risk default scope** — apply to all sleeves or just speculative? Some operators run defined-risk for everything (Taleb-style barbell); others only for non-core.
+5. **Calibration cadence** — how often is the framework-attribution loop recomputed and reweighted? Daily? Weekly? At trade close only?
+6. **Promotion criteria** — what hold-out evidence converts this exploration to a `BUILD_LOG.md` decision? Suggest: 6 months of paper-trading the ensemble alongside the current pm-supervisor, with framework attribution showing the ensemble's Sharpe beats slow-layer-only by ≥X.
+7. **Sleeve cap modulation by regime** — does `speculative_optionality` cap dynamically scale by detected regime (8% baseline → 15% momentum-extended → 4% mean-reversion)? Operator policy decision.
+8. **Backward compatibility with existing eval-loop** — `counterfactual_ledger` currently scores final 4-bin label vs sector-ETF-excess returns (per P14). Adding framework attribution requires schema extension without breaking existing scoring.
+
+---
+
+## 8. What this is NOT
+
+Per operator's framing ("not decided yet"):
+
+- **Not a `BUILD_LOG.md` entry** — would need promotion through decision review first
+- **Not a spec** — would need design doc following v2-final-spec.md pattern
+- **Not a trade decision** — the MU $917 context that triggered the conversation is ephemeral and intentionally not surfaced in this architectural record
+- **Not a refactor of CLAUDE.md principles** — P1, P9, P11, P14, P15 all remain load-bearing under this architecture; ensemble voting is composable with them, not in conflict
+- **Not a rejection of slow-layer research** — slow-layer keeps its seat in the ensemble; it just no longer holds the final vote
+
+---
+
+## 9. Pointers to load-bearing reading
+
+If a future session picks this up cold:
+
+- `CLAUDE.md` — architectural principles, especially P7 (downstream conservatism), P11 (per-agent envelope ownership), P14 (test surface rings), P15 (no performative probabilities)
+- `BUILD_LOG.md` — architectural decisions 1–6, especially decision 6 ("where does this code go?")
+- `docs/v2-orchestrator-refactor-consensus.md` — 2026-05-12 refactor that produced today's pm-supervisor + overlay architecture
+- `docs/v2-final-spec.md` — canonical spec for agent emissions
+- `docs/phasing-plan.md` §2.5 — C3 gate thresholds (must not be relaxed)
+- `.claude/agents/tactical-overlay.md`, `.claude/agents/flow-overlay.md`, `.claude/agents/mean-reversion-overlay.md` — existing overlay agents to mirror for `systematic-flow-overlay`
+- `src/eval/gates/` — existing HG validator pattern for envelope shape
+- `counterfactual_ledger` schema (mig 030) — extension target for framework attribution
+
+---
+
+## 10. One-paragraph summary for cold pickup
+
+The current equity-research system anchors final decisions on slow-layer fundamental research (DCF + Helmer + quality gate) with tactical/flow/mean-reversion overlays as soft modulators. Operator surfaced that this architecture under-rewards in momentum regimes (L1), fails under fundamental-weight non-stationarity (L2), and ignores the higher-order edge of modeling systematic players' forced flows (L3). The exploration endpoint is a 5-signal ensemble where slow-layer is one input among peers, weighted dynamically by framework-attributed realized P&L; instrument choice defaults to defined-risk; position size scales with ensemble agreement. Three builds close the gap: (A) `systematic-flow-overlay` agent emitting price-conditional flow forecasts, (B) framework attribution on `counterfactual_ledger` with dynamic ensemble reweighting, (C) instrument recommender. Status as of 2026-05-28: exploration only — no commitment, no build started, several open policy questions unresolved.
