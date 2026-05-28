@@ -118,7 +118,8 @@ Write the gathered inputs to a scratch JSON file, then run the signal model (P1:
 # payload.json = {"ticker": "<TICKER>", "bars": <full-day bars>, "live": <micro-aggregate>,
 #                 "prior": <prior-or-null>, "daily_atr": <ATR14 of daily bars>,
 #                 "horizon_minutes": <60..390>,   # 1h floor → 1 trading-day cap; default 120 (2h)
-#                 "session": "regular"}           # default; "extended" | "all" to include pre/after-hours
+#                 "session": "regular",           # default; "extended" | "all" to include pre/after-hours
+#                 "spy_bars": <SPY full-day bars>}  # OPTIONAL market overlay (relative-strength + late-session SPY-r1 confidence gate)
 python -m src.micro.cli signal --input payload.json
 ```
 
@@ -148,8 +149,9 @@ This is `/micro`'s private lane. **Do not** write `execution_recommendations`, `
 /MICRO — <TICKER>   <UTC timestamp>   (horizon: intraday ≤1d)
 
 REFERENCE PRICE: $X.XX   (live: ok / no_ticks — market closed?)
-SESSION: regular (NN bars; pre/after-hours excluded)
+SESSION: regular (NN bars in the LATEST session; pre/after-hours excluded; older days dropped)
 AFTER-HOURS: $X.XX (+X.XX% vs regular close $Y.YY, N bars) — flagged, NOT in the signal   [omit if none]
+MARKET CONTEXT: RS +X.XX (β X.X, residual +X.XX%) · SPY r1 ±X.XX% · late-gate X.XX · conv×X.XX   [omit if no spy_bars]
 SLOW-LAYER PRIOR: <BUY/HOLD/TRIM/SELL @ research date> (source: PM Recommendation | PM report)  |  prior-free
 LIVE TAPE: tick velocity X.X/s · spread X.X bps · liquidity ok/THIN
 

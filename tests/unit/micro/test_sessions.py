@@ -37,6 +37,18 @@ def test_filter_session_regular_drops_pre_and_after():
     assert len(sessions.filter_session(bars, "all")) == 4
 
 
+def test_filter_session_regular_keeps_only_latest_day():
+    # Two days of bars; "regular" must keep ONLY the latest day's regular session
+    # — a multi-day fetch must never be stitched across the overnight gap.
+    day1 = [_bar("2026-05-26T14:00:00Z", 100), _bar("2026-05-26T19:59:00Z", 102)]  # regular
+    day1_after = [_bar("2026-05-26T21:00:00Z", 105)]                                # after
+    day2 = [_bar("2026-05-27T14:00:00Z", 110), _bar("2026-05-27T19:59:00Z", 115)]  # regular
+    bars = day1 + day1_after + day2
+    reg = sessions.filter_session(bars, "regular")
+    # Only the May 27 regular bars; day1 regular and day1 after-hours are dropped.
+    assert [b["close"] for b in reg] == [110, 115]
+
+
 def test_filter_session_no_timestamps_returns_all():
     # ts-less bars can't be classified -> not filtered (keeps existing callers working).
     bars = [{"close": 100, "high": 100, "low": 100, "volume": 1}, {"close": 101, "high": 101, "low": 101, "volume": 1}]

@@ -87,6 +87,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         kwargs["daily_atr"] = float(payload["daily_atr"])
     if payload.get("session") is not None:
         kwargs["session"] = str(payload["session"])
+    if payload.get("spy_bars") is not None:
+        kwargs["spy_bars"] = payload["spy_bars"]
     result = compute_signal(**kwargs)
     result["ticker"] = (payload.get("ticker") or "").upper() or None
     result["as_of"] = _now_iso()
