@@ -105,7 +105,7 @@ jobs:
             --with pytest \
             --with python-dotenv \
             --python 3.13 \
-            pytest tests/unit/evaluator_gates/test_hybrid_gate.py \
+            pytest tests/unit/eval/gates/test_hybrid_gate.py \
               -q
 
       - name: Anchor-set kappa quarantine check (each cycle)
