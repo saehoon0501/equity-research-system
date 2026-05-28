@@ -134,10 +134,14 @@ VALID_ARTIFACT_TYPES = (
     "reversion_envelope",
 )
 
-assert set(VALID_ARTIFACT_TYPES) == set(REGISTRY), (
-    "VALID_ARTIFACT_TYPES and the gate REGISTRY have drifted; "
-    f"tuple={set(VALID_ARTIFACT_TYPES)} registry={set(REGISTRY)}"
-)
+# Invariant: VALID_ARTIFACT_TYPES and REGISTRY share the same key set. This is
+# enforced by ``tests/unit/eval/gates/test_gate_registry.py::
+# test_valid_artifact_types_matches_registry_keys`` rather than an import-time
+# ``assert`` — assertions are stripped under ``python -O`` (silently passing),
+# and a failing import-time assert would cascade through every module that
+# imports ``src.eval.gates`` (orchestrator_step, the hook, every gate test),
+# making a one-line drift look like a total package outage. The test catches
+# the drift loudly without taking the package hostage.
 
 
 @dataclass

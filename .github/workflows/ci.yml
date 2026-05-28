@@ -117,7 +117,7 @@ jobs:
         run: |
           PYTHONPATH="$PWD" uv run --python 3.13 python - <<'PY'
           import os
-          from src.evaluator_gates import _anchor_set as a
+          from src.eval.gates import _anchor_set as a
 
           path = os.environ.get("ANCHOR_SET_PATH")  # None -> synthetic fixture
           aset = a.load_anchor_set(path)

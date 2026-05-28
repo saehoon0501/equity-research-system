@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 
 from ._selfconsistency import (
     SELF_CONSISTENCY_N,
-    SELF_CONSISTENCY_TEMP,
+    SELF_CONSISTENCY_TEMPERATURE,
     median_self_consistency,
 )
 from .faithfulness import ArticulationMetricError, LLMCaller, _coerce_unit
@@ -40,7 +40,7 @@ class ClarityScore:
         return {
             "clarity": self.clarity,
             "n_self_consistency": len(self.samples),
-            "temperature": SELF_CONSISTENCY_TEMP,
+            "temperature": SELF_CONSISTENCY_TEMPERATURE,
             "method": self.method,
             "mode": self.mode,
             "advisory_only": self.advisory_only,
@@ -71,7 +71,7 @@ def score_clarity(
     *,
     model: str = "claude-sonnet-4-5",
     n: int = SELF_CONSISTENCY_N,
-    temperature: float = SELF_CONSISTENCY_TEMP,
+    temperature: float = SELF_CONSISTENCY_TEMPERATURE,
     llm_caller: Optional[LLMCaller] = None,
 ) -> ClarityScore:
     """G-Eval clarity (advisory only) with N=5 self-consistency."""

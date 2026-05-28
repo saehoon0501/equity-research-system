@@ -129,11 +129,24 @@ def read_agent_header(
     # (.claude/agents/<group>/<name>.md, e.g. supervisor/pm-supervisor.md).
     path = base / f"{agent_name}.md"
     if not path.is_file():
-        matches = sorted(base.rglob(f"{agent_name}.md"))
-        if matches:
-            path = matches[0]
-        else:
+        matches = list(base.rglob(f"{agent_name}.md"))
+        if not matches:
             raise FileNotFoundError(f"agent definition not found: {agent_name}.md under {base}")
+        if len(matches) > 1:
+            # Multi-match => prefer the DEEPEST path. A stale flat-layout
+            # copy alongside the canonical nested one would silently
+            # shadow it under naive sorted()[0] selection (shorter path
+            # wins lexicographically). Loud warning either way.
+            import warnings as _w
+            _w.warn(
+                f"agent_model: {len(matches)} candidates for {agent_name}.md: "
+                f"{matches}; using deepest",
+                stacklevel=2,
+            )
+            matches.sort(key=lambda m: len(m.parts), reverse=True)
+        else:
+            matches.sort()
+        path = matches[0]
     fm = _parse_frontmatter(path.read_text(encoding="utf-8"))
     return AgentModelHeader(
         name=fm.get("name", agent_name),

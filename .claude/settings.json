@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Tracked project settings (committed). Governance hooks live here so they persist across operators. NEVER move a governance hook to .claude/settings.local.json — local settings shadow tracked settings and would silently disable governance. See scripts/hook_smoke_test.sh Test-AsOfTag for the assertion that catches local-shadow drift.",
+  "$schema_note": "Tracked project settings (committed). Governance hooks live here so they persist across operators. NEVER move a governance hook to .claude/settings.local.json \u2014 local settings shadow tracked settings and would silently disable governance. See scripts/hook_smoke_test.sh Test-AsOfTag for the assertion that catches local-shadow drift.",
   "hooks": {
     "PreToolUse": [
       {
@@ -15,6 +15,15 @@
     "PostToolUse": [
       {
         "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/post_agent_validate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
         "hooks": [
           {
             "type": "command",

@@ -143,3 +143,19 @@ def test_every_artifact_type_has_at_least_one_runner():
     for artifact_type, runners in REGISTRY.items():
         assert runners, f"{artifact_type} has an empty runner list"
         assert all(callable(r) for r in runners)
+
+
+def test_valid_artifact_types_matches_registry_keys():
+    """VALID_ARTIFACT_TYPES and REGISTRY must share the same key set.
+
+    Replaces a former import-time ``assert`` in ``src/eval/gates/__init__.py``
+    (which would have cascaded a one-line drift into a total package-import
+    outage, and is also stripped under ``python -O``). This test surfaces the
+    drift loudly without taking the package hostage.
+    """
+    from src.eval.gates import REGISTRY, VALID_ARTIFACT_TYPES
+
+    assert set(VALID_ARTIFACT_TYPES) == set(REGISTRY.keys()), (
+        "VALID_ARTIFACT_TYPES and the gate REGISTRY have drifted; "
+        f"tuple={set(VALID_ARTIFACT_TYPES)} registry={set(REGISTRY)}"
+    )

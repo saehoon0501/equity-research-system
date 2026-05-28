@@ -20,11 +20,11 @@ from typing import Callable
 # LOCKED constants (formerly imported from src.p3_mechanical_scorer, which
 # main removed in its reorg; inlined to preserve the N=5 @ temp 0.7 contract).
 SELF_CONSISTENCY_N = 5
-SELF_CONSISTENCY_TEMP = 0.7
+SELF_CONSISTENCY_TEMPERATURE = 0.7
 
 __all__ = [
     "SELF_CONSISTENCY_N",
-    "SELF_CONSISTENCY_TEMP",
+    "SELF_CONSISTENCY_TEMPERATURE",
     "median_self_consistency",
 ]
 

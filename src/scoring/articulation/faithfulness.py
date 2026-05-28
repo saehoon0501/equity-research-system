@@ -39,7 +39,7 @@ from typing import Any, Callable, Optional
 
 from ._selfconsistency import (
     SELF_CONSISTENCY_N,
-    SELF_CONSISTENCY_TEMP,
+    SELF_CONSISTENCY_TEMPERATURE,
     median_self_consistency,
 )
 
@@ -75,7 +75,7 @@ class FaithfulnessScore:
             "n_unsupported_flagged": self.n_unsupported_flagged,
             "unsupported_detection_rate": self.unsupported_detection_rate,
             "n_self_consistency": len(self.samples_faithfulness),
-            "temperature": SELF_CONSISTENCY_TEMP,
+            "temperature": SELF_CONSISTENCY_TEMPERATURE,
             "method": self.method,
             "mode": self.mode,
         }
@@ -201,7 +201,7 @@ def score_faithfulness(
     *,
     model: str = "claude-sonnet-4-5",
     n: int = SELF_CONSISTENCY_N,
-    temperature: float = SELF_CONSISTENCY_TEMP,
+    temperature: float = SELF_CONSISTENCY_TEMPERATURE,
     llm_caller: Optional[LLMCaller] = None,
 ) -> FaithfulnessScore:
     """RAGAS faithfulness + answer-relevancy with N=5 self-consistency.
