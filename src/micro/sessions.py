@@ -64,11 +64,32 @@ def classify(ts: Any) -> str:
     return "closed"
 
 
+def _et_date(ts: Any) -> str | None:
+    """ET calendar date (YYYY-MM-DD) for a bar timestamp, or None."""
+    if not ts:
+        return None
+    try:
+        d = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=_dt.timezone.utc)
+    if _ET is not None:
+        d = d.astimezone(_ET)
+    else:
+        offset = -4 if 3 <= d.astimezone(_dt.timezone.utc).month <= 10 else -5
+        d = d.astimezone(_dt.timezone.utc) + _dt.timedelta(hours=offset)
+    return d.date().isoformat()
+
+
 def filter_session(bars: Sequence[dict], session: str = "regular") -> list[dict]:
     """Filter bars to a session scope: 'regular' | 'extended' | 'all'.
 
-    'extended' keeps pre+regular+after (drops overnight). If NO bar has a
-    classifiable timestamp, the series is returned unchanged (can't filter).
+    'extended' keeps pre+regular+after (drops overnight). 'regular' keeps ONLY
+    the LATEST regular session's bars — a multi-day fetch (lookback >1 session)
+    must not be silently stitched across the overnight gap, which contaminates
+    the session VWAP/opening-range and breaks cross-asset beta over the gap.
+    If NO bar has a classifiable timestamp, the series is returned unchanged.
     """
     if session == "all":
         return list(bars)
@@ -76,7 +97,18 @@ def filter_session(bars: Sequence[dict], session: str = "regular") -> list[dict]
     if not any(c != "unknown" for _, c in classified):
         return list(bars)  # no timestamps -> cannot determine sessions
     keep = {"pre", "regular", "after"} if session == "extended" else {"regular"}
-    return [b for b, c in classified if c in keep]
+    in_scope = [b for b, c in classified if c in keep]
+    if session == "regular":
+        # Restrict to the LATEST regular session's date — a multi-day fetch
+        # otherwise stitches two sessions across the overnight gap.
+        latest = None
+        for b in in_scope:
+            d = _et_date(b.get("ts"))
+            if d is not None and (latest is None or d > latest):
+                latest = d
+        if latest is not None:
+            in_scope = [b for b in in_scope if _et_date(b.get("ts")) == latest]
+    return in_scope
 
 
 def after_hours_annotation(bars: Sequence[dict]) -> dict | None:
@@ -85,10 +117,15 @@ def after_hours_annotation(bars: Sequence[dict]) -> dict | None:
     Returns {regular_close, after_hours_last, change_pct, after_hours_bars}.
     None when there are no after-hours bars (or no timestamps).
     """
-    reg = [b for b in bars if classify(b.get("ts")) == "regular"]
-    aft = [b for b in bars if classify(b.get("ts")) == "after"]
-    if not aft:
+    aft_all = [b for b in bars if classify(b.get("ts")) == "after"]
+    if not aft_all:
         return None
+    # Latest after-hours session only (avoid stitching multiple days' AH bars).
+    latest_aft_date = max((_et_date(b.get("ts")) for b in aft_all if _et_date(b.get("ts"))), default=None)
+    aft = [b for b in aft_all if _et_date(b.get("ts")) == latest_aft_date] if latest_aft_date else aft_all
+    # Regular close that PAIRS with that after-hours date (same calendar day).
+    reg = [b for b in bars if classify(b.get("ts")) == "regular"
+           and _et_date(b.get("ts")) == latest_aft_date]
     try:
         aft_last = float(aft[-1].get("close"))
     except (TypeError, ValueError):

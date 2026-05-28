@@ -31,6 +31,7 @@ import math
 from typing import Any, Sequence
 
 from src.micro import indicators as ind
+from src.micro import market_context
 from src.micro import sessions
 
 # Slow-layer 4-bin prior -> intraday directional tilt in [-1, +1].
@@ -52,6 +53,7 @@ _W_MOMENTUM = 0.20
 _W_VWAP = 0.15
 _W_MEANREV = 0.10
 _W_FLOW = 0.20
+_W_RELATIVE_STRENGTH = 0.10  # idiosyncratic move vs SPY (beta-residual); optional
 _W_PRIOR = 0.10
 
 # Softmax temperature: higher => probabilities closer to uniform (less decisive).
@@ -230,6 +232,7 @@ def compute_signal(
     horizon_minutes: float = _DEFAULT_HORIZON_MINUTES,
     daily_atr: float | None = None,
     session: str = "regular",
+    spy_bars: Sequence[dict] | None = None,
 ) -> dict[str, Any]:
     """Produce the probabilistic intraday signal payload.
 
@@ -302,12 +305,19 @@ def compute_signal(
     if trend is not None and meanrev is not None:
         meanrev = meanrev * max(0.30, 1.0 - abs(trend))
 
+    # Market-overlay: relative-strength = beta-residual sign vs SPY over the
+    # latest session, in [-1, +1]. Independent of price-only trend/momentum
+    # (it brings in another asset). Only present when spy_bars supplied.
+    rs_payload = market_context.relative_strength(bars, spy_bars) if spy_bars else None
+    rs_score = rs_payload["score"] if rs_payload else None
+
     components: dict[str, float | None] = {
         "trend": trend,
         "momentum": _momentum_score(cl),
         "vwap": _vwap_score(bars, cl, daily_atr),
         "meanrev": meanrev,
         "flow": ind.flow_pressure(bars, 20),  # synthesized Flow-Pressure indicator
+        "relative_strength": rs_score,
     }
     prior_tilt = _PRIOR_TILT.get(prior_code, 0.0) if prior_code else 0.0
 
@@ -317,6 +327,7 @@ def compute_signal(
         "vwap": _W_VWAP,
         "meanrev": _W_MEANREV,
         "flow": _W_FLOW,
+        "relative_strength": _W_RELATIVE_STRENGTH,
     }
     used_w = 0.0
     raw = 0.0
@@ -361,6 +372,21 @@ def compute_signal(
     # Logits: directional magnitude splits long/short; a HOLD floor rises as
     # conviction (|directional| * agreement) falls and when liquidity is poor.
     conviction = abs(directional) * (0.5 + 0.5 * agreement)
+
+    # Market-intraday-momentum CONFIDENCE GATE (Gao-Han-Li-Zhou JFE 2018): SPY's
+    # first-30min return predicts the LAST 30 min. Applied asymmetrically —
+    # only as a multiplicative conviction tweak, never as an additive directional
+    # bias — and gated by `late_session_gate` so the boost ramps 0 -> 1 between
+    # 14:30 and 15:30 ET (faithful to the last-30-min mechanism, not extrapolated
+    # across the afternoon). Same-sign agreement boosts conviction; disagreement
+    # reduces it (raising the implicit HOLD floor).
+    spy_r1_payload = market_context.spy_first30_return(spy_bars) if spy_bars else None
+    gate = market_context.late_session_gate(bars[-1].get("ts") if bars else None)
+    conv_scale = market_context.conviction_scale_from_agreement(
+        directional, spy_r1_payload["r1"] if spy_r1_payload else None, gate
+    )
+    conviction = max(0.0, min(1.0, conviction * conv_scale))
+
     long_l = max(0.0, directional)
     short_l = max(0.0, -directional)
     hold_l = (1.0 - conviction) * (1.0 if liquidity_ok else 1.4)
@@ -406,6 +432,14 @@ def compute_signal(
             "bars_used": len(bars),
             "bars_available": full_bar_count,
             "after_hours": after_hours,
+        },
+        "market_context": {
+            "relative_strength": rs_payload,
+            "spy_first30": spy_r1_payload,
+            "late_session_gate": round(gate, 3),
+            "conviction_scale": round(conv_scale, 4),
+            "note": "RS = beta-residual sign (additive component); SPY first-30min "
+            "gates conviction in the last hour only (Gao et al. JFE 2018).",
         },
         "indicators": {
             "rsi14": _round(ind.rsi(cl, 14)),
