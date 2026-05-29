@@ -11,7 +11,7 @@
   - _Requirements: 1.4, 3.1, 8.2_
   - _Boundary: schema_
 
-- [ ] 1.2 (P) Author the append-only storage migration (048)
+- [x] 1.2 (P) Author the append-only storage migration (048)
   - Create `decision_process_trace`: a client-minted UUID primary key (no default), a kind discriminator constrained to decision/fill, a nullable self-referencing parent id (set on fill rows), an event timestamp, the four typed correlation-key columns, a JSONB payload, and a created-at default.
   - Add the four lookup indexes (run; code+param+window; event timestamp; parent) and a strict append-only guard that rejects UPDATE, DELETE, **and TRUNCATE** — the row-level `BEFORE UPDATE OR DELETE` trigger plus a separate `BEFORE TRUNCATE FOR EACH STATEMENT` trigger, both using the same guard function (it raises unconditionally on `TG_OP` and references no `NEW`/`OLD`, so it serves both). This makes the trace truly append-only — stricter than the ledger, whose TRUNCATE carve-out is left unchanged (out of boundary; additive-only on the ledger).
   - Extend `counterfactual_ledger` additively: three nullable version columns (code version, parameter version, walk-forward window) plus a version+window index.
@@ -83,3 +83,8 @@
   - Observable: the suite passes against live Postgres, demonstrating the decision→fill join, the event-timestamp firewall exclusion with decision-window attribution, and the idempotent re-send.
   - _Requirements: 1.4, 3.2, 5.1, 5.2, 6.1, 9.3_
   - _Depends: 1.2, 1.3, 2.1, 2.2_
+
+## Implementation Notes
+- Test/DB env: the repo has NO root `pyproject.toml`; run tests via `PYTHONPATH="$PWD" uv run --with pytest --with python-dotenv --with "psycopg[binary]" --python 3.13 pytest …` (CI convention). Imports use `from src.reactive.telemetry…` under repo-root PYTHONPATH; no `src/reactive/__init__.py` needed (repo uses PEP 420 namespace packages, like `src/shared`/`src/overlays`).
+- `.env` has an unquoted value on line 6 (`EDGAR_USER_AGENT`) that breaks bash `set -a; . ./.env` sourcing. Use `python-dotenv` (`load_dotenv`) for DB creds (as `tests/integration/test_contamination_check.py::_dsn` does), or `eval $(grep -E '^POSTGRES_(USER|DB|PASSWORD)=' .env)` in shell — NOT `set -a` sourcing. (1.3 harness + 3.x tests.)
+- Live dev DB is SHARED across worktrees (container `equity-research-db`, started by another compose project `refactorplugin-restructure`). It is up/healthy on 127.0.0.1:5432. Migration 048 is additive + idempotent; never `docker compose down`/wipe. The `003→030→048` chain is applied (1.2 applied it live).
