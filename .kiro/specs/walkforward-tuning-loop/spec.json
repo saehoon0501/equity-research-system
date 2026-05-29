@@ -1,0 +1,23 @@
+{
+  "feature_name": "walkforward-tuning-loop",
+  "created_at": "2026-05-29T16:54:14Z",
+  "updated_at": "2026-05-29T17:13:09Z",
+  "language": "en",
+  "phase": "requirements-generated",
+  "notes": "Initialized from discovery brief (re-entry; roadmap.md already listed this spec). §14.11's six operator questions all RESOLVED 2026-05-29, grounded in docs/research-walkforward-tuning-loop-2026-05-29.md. Promotion gate = DSR + PSR/MinTRL + PBO on survival-net risk-adjusted return; autonomous (no human sign-off, §14.11 #2); never gate on IS Sharpe. Dependencies: decision-trace-telemetry (mid-implementation, mig 048 landed — read substrate via reader.query_trace + 4-key correlation contract) + execution-daemon (requirements + design APPROVED 2026-05-30, landed via git — emits the event queue this loop drains; assembles trace rows incl. run_id/walk_forward_window; adopts published versions via atomic hot-swap + owns the full version-pinned lifecycle per operator override; promote/deploy split confirmed: this loop publishes the version + advances the window vs daemon adopts/deploys). Seams RESOLVED by daemon design: event queue = append-only execution_daemon_event_queue table (mig 051), SELECT+watermark drain, this loop sets drained_at; daemon re-sources the advanced walk_forward_window at hot-swap (this loop owns the window-advance forward contract). Migration coordination: tuner-action-audit table must claim 053+ (048 telemetry / 049-050 survival-gate / 051-052 daemon taken). Open items for requirements: CPCV-vs-walk-forward (touches spec name; may amend §14.6), operator-calibrated decision-rule knobs (OOS margin / consecutive-window count / anti-churn hysteresis), provisional anchored/rolling split, refuted ML-ops champion/challenger pattern.",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
