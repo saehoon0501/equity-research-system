@@ -56,7 +56,7 @@
 
 - [ ] 3. Symbol cache, validation, and paper simulation
 
-- [ ] 3.1 (P) Build the symbol metadata cache and ticker mapping
+- [x] 3.1 (P) Build the symbol metadata cache and ticker mapping
   - Load and cache per-symbol detail (leverage, trade mode, min/max volume, swap rates, price precision, session status, next open time) via authenticated detail reads in batches of at most ten symbols.
   - Map and validate instruments by US ticker only; never use the free-text description for identity; restrict the tradable set to the US-stock CFD category.
   - Provide a freshness/refresh policy (refresh on a validation miss) so trade mode and session status stay current.
