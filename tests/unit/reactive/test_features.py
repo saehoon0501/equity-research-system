@@ -353,3 +353,270 @@ def test_determinism_identical_inputs_identical_featureset():
     a = compute_features(bars, spy, rf_yield_pct=4.0)
     b = compute_features(bars, spy, rf_yield_pct=4.0)
     assert a == b
+
+
+# ===========================================================================
+# ADDED (task 3.2). Everything ABOVE this banner PRE-EXISTED from the task-2.1
+# TDD pass. The 3.2 coverage-completion additions below are: (1) the leaf
+# import-surface ISOLATION check (R8.2/R8.3 — the real gap, with a self-proving
+# negative case), (2) explicit EXCLUSION-of-intraday/fundamental assertions
+# traced to R1.3/R1.4, (3) the MR_UNAVAILABLE unreachable-path proof (P14
+# reversion-core coverage documentation), and (4) additive DETERMINISM angles
+# (input-immutability + multi-regime repeat-equality) that the single-input
+# `a == b` above does not assert.
+# ===========================================================================
+
+import ast
+import inspect
+import sys
+from pathlib import Path
+
+import src.reactive.features as features_mod
+
+# LLM/MCP/network/DB families that would break the "pure leaf, no LLM/MCP/live-DB"
+# contract if imported DIRECTLY by features.py (R8.2). numpy/scipy/pandas are the
+# reused CORES' transitive deps — legitimate downstream, but features.py must not
+# import them directly (it passes plain Python lists/dicts to the cores). The
+# stdlib allowlist below is the load-bearing general check; this list is the
+# reviewer-legible guard against the named offenders (mirrors test_params.py).
+_FORBIDDEN_IMPORT_SUBSTRINGS = (
+    "psycopg",
+    "sqlalchemy",
+    "httpx",
+    "requests",
+    "urllib3",
+    "aiohttp",
+    "mcp",
+    "llm",
+    "anthropic",
+    "openai",
+    "boto3",
+    "numpy",
+    "scipy",
+    "pandas",
+)
+
+# The EXACT intra-`src` modules features.py is permitted to depend on (design
+# §Allowed Dependencies: the overlay cores + indicators.atr + reactive.types).
+# Deliberately exact-match, NOT a `src.micro.*` / `src.overlays.*` prefix: a
+# prefix allowlist would let `from src.micro.signal_model import ...` (the live
+# INTRADAY model R1.3 excludes) or a future `src.reactive.db` slip through
+# silently. Tightness here is what makes the isolation + exclusion tests
+# non-vacuous.
+_ALLOWED_SRC_MODULES = frozenset(
+    {
+        "src.micro.indicators",
+        "src.overlays.flow.bin_classifier",
+        "src.overlays.reversion.bin_classifier",
+        "src.overlays.tactical.bin_classifier",
+        "src.reactive.types",
+    }
+)
+
+
+def _check_import_surface(source: str) -> list[str]:
+    """Return a list of isolation violations for `source` (empty = clean).
+
+    AST over the *source text* — NOT `sys.modules` — because the test harness
+    itself loads numpy/scipy/httpx/pandas (see the validation command), so a
+    `sys.modules` probe would be polluted and report false positives. This
+    inspects what features.py actually declares as direct imports.
+
+    A violation is any import whose top-level root is neither stdlib nor `src`,
+    OR any `src.`-prefixed import not in the exact `_ALLOWED_SRC_MODULES` set.
+    """
+    allowed_roots = set(sys.stdlib_module_names) | {"__future__", "src"}
+    violations: list[str] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in allowed_roots:
+                    violations.append(f"import {alias.name}")
+                elif root == "src" and alias.name not in _ALLOWED_SRC_MODULES:
+                    # Plain `import src.micro.signal_model` must be caught too —
+                    # not only the `from ... import` form. The exact-allowlist is
+                    # enforced in BOTH branches (else the intraday model could
+                    # slip in via the plain-import style).
+                    violations.append(f"import {alias.name} (src not in allowlist)")
+        elif isinstance(node, ast.ImportFrom):
+            if node.level != 0 or node.module is None:
+                violations.append("relative import (level>0 or no module)")
+                continue
+            root = node.module.split(".")[0]
+            if root not in allowed_roots:
+                violations.append(f"from {node.module}")
+            elif root == "src" and node.module not in _ALLOWED_SRC_MODULES:
+                violations.append(f"from {node.module} (src not in allowlist)")
+    return violations
+
+
+# --- Isolation (R8.2 / R8.3): features.py's OWN import surface --------------
+
+
+def test_features_module_import_surface_is_stdlib_plus_allowed_src_only():
+    """R8.2/R8.3: features.py is a pure leaf. Its DIRECT import surface must be
+    confined to stdlib + the exact allowed `src` cores (overlays / indicators /
+    reactive.types) — no LLM/MCP/network/DB, and crucially no intraday
+    `src.micro.signal_model` or any fundamental core. `sys.stdlib_module_names`
+    is the robust general allowlist (catches ANY third-party import, incl.
+    numpy/scipy/pandas, not only the enumerated offenders)."""
+    source = Path(features_mod.__file__).read_text()
+    violations = _check_import_surface(source)
+    assert violations == [], (
+        f"features.py has forbidden direct imports {violations} — breaks the "
+        "pure-leaf isolation contract (R8.2/R8.3)"
+    )
+
+
+def test_features_import_surface_check_actually_catches_violations():
+    """Self-proving: the isolation predicate is not vacuous — it FLAGS each
+    forbidden form. Run it over a crafted bad source (without touching src/):
+    a third-party import, the EXCLUDED intraday model, and a non-allowlisted
+    `src` module must all be reported. If this test passes, the green result of
+    the real-surface test above is meaningful."""
+    bad_source = (
+        "import numpy\n"
+        "from src.micro.signal_model import softmax3\n"  # excluded intraday (from-form)
+        "import src.micro.signal_model\n"  # excluded intraday (plain-import form)
+        "from src.reactive.db import write_row\n"
+        "import os\n"  # stdlib — must NOT be flagged
+        "from src.micro.indicators import atr\n"  # allowed — must NOT be flagged
+    )
+    violations = _check_import_surface(bad_source)
+    assert "import numpy" in violations
+    assert "from src.micro.signal_model (src not in allowlist)" in violations
+    # The plain `import src.micro.signal_model` form must ALSO be caught — the
+    # exact-allowlist is enforced in both AST branches, not just `ImportFrom`.
+    assert "import src.micro.signal_model (src not in allowlist)" in violations
+    assert "from src.reactive.db (src not in allowlist)" in violations
+    # The clean stdlib + allowed-src imports must NOT be reported.
+    assert not any("os" in v for v in violations)
+    assert not any("indicators" in v for v in violations)
+
+
+def test_features_module_has_no_forbidden_io_imports():
+    """R8.2: explicit, reviewer-legible guard against the named LLM/MCP/network/
+    DB + heavy-numeric families as DIRECT features.py imports. Redundant with the
+    stdlib allowlist above by design — documents that R8.2's specific offenders
+    (incl. numpy/scipy/pandas, which are the cores' transitive deps, not
+    features' own) are absent from the direct surface."""
+    source = Path(features_mod.__file__).read_text()
+    tree = ast.parse(source)
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module:
+                roots.add(node.module.split(".")[0])
+    for root in roots:
+        for forbidden in _FORBIDDEN_IMPORT_SUBSTRINGS:
+            assert forbidden not in root, (
+                f"features imports forbidden I/O/LLM/heavy-numeric family "
+                f"{root!r} (matched {forbidden!r}) — violates R8.2 (no LLM/MCP/"
+                "live-DB; numpy/scipy/pandas are the cores' transitive deps, not "
+                "features' direct imports)"
+            )
+
+
+# --- Exclusion of intraday-microstructure / fundamental inputs (R1.3/R1.4) --
+
+
+def test_excludes_intraday_and_fundamental_cores_by_import():
+    """R1.3 (exclude intraday-microstructure inputs) / R1.4 (exclude fundamental
+    or slow-layer prior): features.py consults ONLY the daily overlay cores +
+    indicators.atr. It must NOT import the live intraday `src.micro.signal_model`
+    (its microstructure features) nor any fundamentals core. Traced to R1.3/R1.4;
+    enforced by the exact-match src allowlist (a prefix allowlist would let the
+    intraday model through)."""
+    source = Path(features_mod.__file__).read_text()
+    tree = ast.parse(source)
+    src_modules = {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.level == 0
+        and node.module
+        and node.module.split(".")[0] == "src"
+    }
+    # The intraday signal model and any fundamentals/edgar/yfinance core are out.
+    assert "src.micro.signal_model" not in src_modules, (
+        "features.py imports the live INTRADAY signal_model — R1.3 excludes "
+        "intraday-microstructure inputs (the /micro module is a sibling, untouched)"
+    )
+    for m in src_modules:
+        assert not any(
+            tok in m for tok in ("fundamental", "edgar", "yfinance", "macro")
+        ), f"features.py imports a fundamental/slow-layer core {m!r} — R1.4 excludes it"
+    # Positive complement: every src import is one of the explicitly allowed cores.
+    assert src_modules <= set(_ALLOWED_SRC_MODULES)
+
+
+def test_compute_features_signature_takes_no_fundamental_inputs():
+    """R1.3/R1.4: the input contract is exactly the daily-bar adapter's
+    arguments — `ticker_bars`, `spy_close`, `rf_yield_pct`, `atr_period`. No
+    intraday-microstructure feed and no fundamental/earnings/slow-layer input is
+    accepted, so one cannot leak in via the call surface. Guards against a
+    fundamental parameter being silently added later."""
+    params = list(inspect.signature(compute_features).parameters)
+    assert params == ["ticker_bars", "spy_close", "rf_yield_pct", "atr_period"]
+
+
+# --- Reversion-core P14: MR_UNAVAILABLE is unreachable past the global gate --
+
+
+def test_reversion_mr_unavailable_is_preempted_by_global_history_gate():
+    """P14 reversion-core coverage / executable documentation: MR_UNAVAILABLE is
+    the reversion core's insufficient-price-history bin. The core returns it only
+    when `len(prices) < 252` — but `compute_features`' global insufficient_history
+    gate ALSO trips at `len < LONGEST_WINDOW (252)` and short-circuits BEFORE any
+    core is called. So MR_UNAVAILABLE is UNREACHABLE through `compute_features`
+    (task 2.1's note). We do NOT fake it: assert the real core emits it on a short
+    series, AND that the same short series makes `compute_features` fail globally
+    with insufficient_history first. The other three reversion bins (MR_OVERSOLD,
+    MR_OVERBOUGHT, MR_NEUTRAL) ARE exercised through compute_features above."""
+    short_closes = _steady_uptrend(LOOKBACK - 1)  # 251 < 252
+    # The reversion core itself returns the UNAVAILABLE bin on this short series.
+    assert classify_reversion(short_closes)["bin"] == "MR_UNAVAILABLE"
+    # But compute_features never reaches the core: the global gate pre-empts it.
+    bars = _bars_from_closes(short_closes)
+    spy = _steady_uptrend(LOOKBACK)
+    result = compute_features(bars, spy, rf_yield_pct=4.0)
+    assert isinstance(result, FeatureFailure)
+    assert result.reason == "insufficient_history"
+
+
+# --- Determinism (R8.1): additive angles beyond the single-input a==b above --
+
+
+def test_determinism_does_not_mutate_inputs():
+    """R8.1: `compute_features` reads its inputs by value and never mutates the
+    caller's bars / SPY list. (The single-input `a == b` test above asserts
+    repeat-equality but not input-immutability — a routine that sorted or
+    appended in place could still return equal objects yet corrupt the caller.)"""
+    closes = _oversold_closes()
+    bars = _bars_from_closes(closes)
+    spy = _flat_closes(300.0, LOOKBACK)
+    bars_snapshot = [dict(b) for b in bars]
+    spy_snapshot = list(spy)
+    result = compute_features(bars, spy, rf_yield_pct=4.0)
+    assert isinstance(result, FeatureSet)
+    assert bars == bars_snapshot, "compute_features mutated the input bars"
+    assert spy == spy_snapshot, "compute_features mutated the input SPY closes"
+
+
+def test_determinism_repeat_equality_across_regimes():
+    """R8.1: repeated calls on identical synthetic bars return identical
+    FeatureSets across MULTIPLE distinct regimes (not just the one oversold case
+    the existing single-input test uses) — extends the determinism guarantee to
+    the oversold / overbought / uptrend bins."""
+    for closes in (_oversold_closes(), _overbought_closes(), _steady_uptrend(LOOKBACK)):
+        bars = _bars_from_closes(closes)
+        spy = _flat_closes(300.0, LOOKBACK)
+        a = compute_features(bars, spy, rf_yield_pct=4.0)
+        b = compute_features(bars, spy, rf_yield_pct=4.0)
+        assert isinstance(a, FeatureSet)
+        assert a == b

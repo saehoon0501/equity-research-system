@@ -51,7 +51,7 @@
   - _Requirements: 6, 8_
   - _Boundary: tests_
   - _Depends: 1.2_
-- [ ] 3.2 (P) Feature-adapter tests
+- [x] 3.2 (P) Feature-adapter tests
   - Core→vote mapping including the reversion **sign-mirror** (oversold → +1, overbought → −1 — guards against inversion); ATR normalization of magnitude features; trend-strength = |flow vote|; the insufficient-history and degenerate/zero-ATR failures; unavailable-core abstain (→ 0); exclusion of intraday/fundamental inputs; **coverage of the reused reversion core's exercised paths** (it lacks its own inner ring — P14) before any outer-ring scoring is wired against this model.
   - Observable: the suite passes; the reversion sign-mirror and the insufficient-history-failure cases are explicitly asserted.
   - _Requirements: 1, 8_
