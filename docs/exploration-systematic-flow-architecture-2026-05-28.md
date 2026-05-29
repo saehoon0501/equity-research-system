@@ -289,3 +289,110 @@ The decision layer's structuring unit is not the data payload but **the value th
 - **Return** — size/optimize. The last and lowest value, not the first.
 
 **Structuring rule: lexicographic, not weighted.** Never trade a higher link for any amount of a lower one — no return improvement ever buys down survival. This is P7 lifted from "stages get more conservative" up to "values are strictly ordered." The layer walks the chain top-down and **stops the instant a higher value is threatened**; Edge and Return get no vote until Survive has already said yes.
+
+## 14. The adaptive walk-forward tuning loop — engineering architecture (operator-worked 2026-05-29)
+
+Status: EXPLORATION (working-mode §1 — paths below are reasoned recommendations recorded as chosen, revisable; genuinely-operator forks isolated in §14.11). Captures a live engineering-design session that converged the *execution + adaptation mechanics* for the reactive CFD layer. Where §12 fixed the **epistemics** (reactive, veto-only slow layer) and §13 fixed the **value ordering** (Survive ⊳ Preserve ⊳ Edge ⊳ Return), §14 fixes **how the model runs in-session and how it gets tuned between sessions**.
+
+### 14.1 The architectural inversion + two-clock decomposition
+
+The feature ask: a live websocket feed driving CFD entry/exit order triggers at **retail latency**, via a **persistent process**. This **inverts** today's pull model (operator runs a slash command → MCP servers spawn per-call → agents process a snapshot) into a push model (a long-lived process consuming a stream). The resolution is two decoupled clocks:
+
+```
+FAST CLOCK — in-session, hot path, NON-LLM, retail latency
+  websocket price          ─┐
+  REST account state        ├─→ lexicographic gate (Survive ▸ Preserve ▸ Edge ▸ Return)
+  ACTIVE (code_v, param_v)  ─┘        │
+                                      ▼  broker_mcp place/close
+                                      │  emits decision-trace telemetry (§14.8)
+                                      │  + queues anomaly events (§14.3)
+SLOW CLOCK — after-market, LLM, ASYNC, hours-long batch
+  monitor model behavior → fit new params/code → walk-forward promote (§14.6)
+```
+
+The two clocks meet **only** at the param-version table (P2) and the telemetry log (P4) — never via in-context handoff, never via the daemon dispatching an agent (§14.10).
+
+### 14.2 The LLM is an outer-loop optimizer, not a trader
+
+The LLM's role is **monitor → evaluate → tune → roll-over → repeat**: a walk-forward optimizer *with judgment*, sitting where a grid-search / Bayesian optimizer would sit, but able to reason about *why* the model behaved as it did and emit falsifiable tuning hypotheses (P15). It generalizes **Build B (§4)** from "reweight the ensemble" to "re-tune the whole reactive param set + structure," riding existing machinery:
+- **P2 param-versioning** = the tune→roll-over mechanism (a tune produces a new hashed, versioned snapshot).
+- **P14 outer ring + `counterfactual_ledger`** = the behavior-evaluation substrate.
+
+### 14.3 No LLM in-session — not even for anomalies
+
+A multi-hour fit cannot run inside a session (by the time it produces new params/code the session has nearly ended — operator note 2026-05-29). So in-session there is **no LLM in the loop at all**:
+- A mid-session anomaly (model outside its behavior envelope; a survival breach the gate can't self-resolve) triggers a **reproducible safe-mode** — tighten / flatten / halt-new-entries on the survival channel — and **queues the event**.
+- The LLM drains that queue **after the close**.
+
+⟹ the persistent process never wakes the model in-session; the only triggers are the **walk-forward-boundary scheduler** and the **queued events the after-market batch consumes**. (This closes the original "a persistent process that triggers the model on its own" framing: it triggers *analysis/tuning*, asynchronously — never the live fire decision.)
+
+### 14.4 Fitting vs. applying — the safety axis
+
+The split that keeps "tune at runtime AND after-market, params AND code" safe is **not** param-vs-code; it is **applying validated values vs. fitting new ones.** Fitting new values from data *requires* out-of-sample validation to not be overfitting, and intra-session there is no out-of-sample. Therefore:
+
+|  | Runtime (market open, hot path) | After-market (closed) |
+|---|---|---|
+| **Params** | **SELECT** among pre-validated sets via a reproducible regime signal + **TIGHTEN** Survive/Preserve (P7 one-way). No fresh fitting. Auto. | **FIT** new values (LLM) → held-out / champion-challenger → promote. Gated; autonomous-capable. |
+| **Structure / code** | ✗ never | LLM diff → inner-ring suite green (P14) + evaluator + human sign-off → versioned deploy at clean boundary → rollback path. |
+
+Headline: **runtime only *applies* what was already validated** (regime-select + survival-tighten); **all *fitting* of new values — param or code — happens after-market under OOS discipline.** The regime selector is reproducible code (vol regime, §6 CTA regime); the LLM tunes the *menu*, runtime selects from it. The hours-long fit duration is independent confirmation — runtime fitting was never feasible.
+
+**Next-session-readiness asymmetry:** param-fit is autonomous-gated → can be next-session-ready if it clears the window; code change needs human sign-off → ready *whenever approved*, deployed at the next clean boundary. ⟹ the champion must be able to run indefinitely with no pending code change.
+
+### 14.5 Version-pinned position lifecycle + atomic hot-swap
+
+Multi-day holds (§12, days-to-weeks) collide with version changes while positions are open. Resolution (recommended path):
+- A position carries the **(code_version, param_version)** it was opened under.
+- **Edge/Return management** (target, exit, sizing) stays **pinned** to the opening version — no retroactive re-target or resize.
+- **Survive management** takes the **global-tightest** rule across the pinned and current versions — survival is one-way-tightenable, never relaxed by a version a position predates (§13 + P7 at the version seam).
+- **Atomic hot-swap:** the daemon reads a whole versioned param object once per evaluation cycle and swaps by pointer-flip (P2 snapshot semantics) — never field-by-field, or a mid-cycle swap evaluates the gate on half-old / half-new params.
+
+### 14.6 Walk-forward semantics — roll-over = advance = deploy
+
+**Roll-over = walk-forward window advance, and the advance *event* is the promotion/deploy of a newly tuned model** (operator-decided 2026-05-29).
+
+Cycle: IS (training) window → LLM fits a new (param and/or code) version → pre-flight validate → run as a **challenger over a forward window on live data** (paper first, §11.5) → if it **out-of-sample-beats** the champion → **promote = deploy = window advances** → the completed forward period folds into the next IS window → re-tune → repeat.
+
+- **The forward window *is* the out-of-sample test.** Promotion is earned on live/paper forward performance, not on a backtest over stale history. This is what makes walk-forward-on-deploy the antidote to overfitting rather than another route to it.
+- **Anchored vs. rolling IS window — split by the value chain** (recommended): Survive/Preserve params fit **anchored** (all history; never forget a tail / gap / stop-out — rare events are the entire point of survival); Edge/Return params fit **rolling** (recent regime only; old-regime data poisons the edge under non-stationarity, §6 / L2). Different memory lengths per §13 link.
+- **Forward-window length is set by statistical significance, not the calendar.** With days-to-weeks holds, a window must span enough *closed* trades for the OOS score to mean anything — min N closed trades (and/or min survival-event count) before a promotion decision is allowed. ⟹ walk-forward boundaries are weeks apart, not nightly.
+- **Temporal firewall on the tuner:** the LLM fitting the next IS sees telemetry *only up to the IS boundary* — never the forward window's outcomes (acute leakage hazard with an LLM carrying context). `counterfactual_ledger` needs a **model-version dimension** so forward P&L attributes per-version-per-window — without it the advance is unscoreable.
+- Composes with §12.5: the filter-gated-vs-pure-reactive A/B runs *across* walk-forward steps on the version-attributed ledger.
+
+### 14.7 Inner model = softmax + threshold; the lexicographic chain is typed
+
+The in-session model is a **reproducible non-LLM softmax classifier with a decision threshold** (generalizing `src/micro/signal_model.py` from the intraday layer to the days-to-weeks reactive stack), *not* a hard rule engine. "Reproducible non-LLM" is what the latency (§14.1) and fitting-vs-applying (§14.4) arguments actually rode on — both survive the correction.
+
+The correction's real content: **the chain (§13) is typed per link.**
+- **Survive = a hard deterministic rule** — you don't "probably" dodge liquidation; it is a margin-distance test (§11.3), no softmax.
+- **Edge = the softmax + threshold.** Clearing the threshold is **necessary-but-not-sufficient**: Survive can veto a 95%-probability entry, and sub-threshold = no order = **HOLD** (P9). The threshold is what "keeps the outcome from the ordering process."
+
+Consequences for tuning:
+- **The threshold is the canonical tunable *and* the canonical runtime tighten-only lever.** Raise → fewer, higher-conviction entries → de-risk → **runtime auto-apply**. Lower → more entries, more exposure → Edge-loosening → **after-market gated fit only.** P7's one-way rule reduced to a single scalar.
+- **Calibration is a primary behavioral diagnostic.** "How the model behaves" includes *is the softmax calibrated* — does a stated 70% realize ~70% over the forward window (Brier / reliability) — not just hit-rate or P&L. The threshold is optimized against the *calibrated* probabilities and the 4x cost asymmetry (a false entry costs more than a missed one — Survive-first). P15-clean: the probabilities are *derived* from the softmax, and keeping them calibrated is the tuner's job.
+- Probability magnitude above threshold can scale **Return-layer sizing** (Survive-capped) — §3 "sized by agreement."
+
+### 14.8 Telemetry — the input side the LLM analysis depends on
+
+"Accurate analysis of how the model behaves" requires a **structured, replayable decision-trace**, not just a P&L curve. The daemon must log, per decision: which gate link triggered, signal values + softmax probabilities at fire, expected-vs-actual fill (slippage; §11.4 counterparty prices, not mid), liquidation proximity, stop-outs, and **declined / missed entries**. `counterfactual_ledger` is the *outcome* side; this trace is the *process* side. Without it the tuner is P&L-staring.
+
+### 14.9 Operational consequences of an hours-long async batch
+
+- **Checkpoint / resume** — a crash mid-fit must not lose the run.
+- **Cost** — T4: the per-`(run_id, agent)` $60 ceiling caps no aggregate; a code-gen + full inner-ring test pass is the single most expensive job in the repo. An aggregate cap for the tuning job is an open policy (§14.11).
+- **Scheduled / cron dispatch**, not interactive — fired at the walk-forward boundary; the trading loop never waits for it.
+
+### 14.10 P1-cleanliness — where the code lives
+
+- The daemon is a **leaf executor + event emitter**: it runs the gate the slow layer armed, fires orders via `broker_mcp` (`src/mcp/broker_mcp/`, §11.2), emits telemetry, queues events. It **never dispatches an agent** — so it is not the forbidden Python orchestrator (P1 / Decision 6).
+- The tuning loop is a vanilla Claude Code orchestration (read telemetry + ledger → analyze → gated envelope → DB write), fired by scheduler/queue — orchestration stays in markdown.
+- The daemon speaks **Gate REST directly** (or imports `broker_mcp` leaf funcs), **not MCP** — MCP is the Claude→tool seam, not a daemon→tool one.
+
+### 14.11 Open operator questions (genuinely theirs — not resolved by recommendation)
+
+1. **Open-position policy across a version change** — §14.5 records *version-pinned lifecycle* as the recommended path; confirm vs. the simpler *require-flat-book-for-structure-deploy* (rejected here as incompatible with days-to-weeks holds, but it is your call).
+2. **Promotion authority** — §14.4 has param-fit auto-promoting (autonomous gate) and code requiring human sign-off. Given §11.5 (live leveraged routing = highest blast radius), do you want **human sign-off on *all* live promotions**, param included?
+3. **Forward-window numeric policy** — the min-N-closed-trades / min-survival-event-count floor before a promotion decision is allowed (§14.6). Needs a number, likely empirically.
+4. **Aggregate cost ceiling** for the hours-long tuning batch (§14.9 / T4 gap).
+5. **Anchored/rolling split sign-off** (§14.6) — recorded as recommended; confirm.
+6. **Promotion criterion** (ties to §7 open-Q6) — what OOS margin (Sharpe / survival-net risk-adjusted return) over how many walk-forward steps converts a challenger to champion, and converts this whole §14 from EXPLORATION to a BUILD_LOG decision.
