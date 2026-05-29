@@ -19,7 +19,7 @@
   - _Boundary: models_
   - _Depends: 1.1_
 
-- [ ] 1.3 (P) Implement configuration and secret resolution
+- [x] 1.3 (P) Implement configuration and secret resolution
   - Read the Gate credentials fresh per call; return a structured error (never raise) when they are absent.
   - Establish runtime mode: paper/dry-run defaults ON; expose survival-gate clearance and the kill switch as boolean inputs that default to the safe state (not cleared / not engaged); hold the settlement currency and US-stock category id.
   - Observable: with credentials unset a config read returns a structured error; paper mode defaults to enabled; clearance and kill-switch inputs default to the safe state.
