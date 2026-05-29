@@ -16,7 +16,7 @@
   - _Depends: 1.1_
 
 - [ ] 2. Core: feature adapter and probability/decision pipeline
-- [ ] 2.1 (P) Build the daily-bar feature adapter
+- [x] 2.1 (P) Build the daily-bar feature adapter
   - Reduce supplied daily-bar history (plus SPY close and the risk-free yield) to the days-to-weeks family votes by importing the existing tactical / flow / reversion overlay cores + the ATR indicator and mapping each core's output to a signed directional vote in [−1, +1] under the documented sign convention: tactical bin → ±1/0; flow composite passed through; reversion **oversold → +1 and overbought → −1** (the contrarian sign); any unavailable core → 0 (abstain).
   - ATR-normalize magnitude features and expose the raw component values for the substrate; exclude intraday-microstructure and fundamental/slow-layer inputs by construction; own the history-length and ATR-computability checks, returning a typed feature-failure (insufficient_history / degenerate_features) and never raising.
   - Observable: given synthetic daily bars the adapter returns family votes in [−1, +1] with trend-strength = |flow vote| in [0, 1] and a populated raw-values map; a too-short history returns the insufficient-history failure rather than raising.
@@ -63,3 +63,7 @@
   - _Requirements: 2, 3, 4, 5, 6, 7, 8_
   - _Boundary: tests_
   - _Depends: 2.4_
+
+## Implementation Notes
+- 2.1: `compute_features`'s "never-raise" guarantee is **domain-scoped** to the design's stated failure-ownership (history-length + ATR-computability + ticker-`Bar` key validation). It can still raise on inputs outside the positive-daily-adj-close domain — a `None` inside `spy_close` (TypeError; Gate-0 validates ticker bars only) or a `0.0` close at the −252 anchor with nonzero high/low (ZeroDivisionError in 12mo-return math). Reviewer-flagged, non-blocking (real adj-close is strictly positive). The Phase-2 `execution-daemon` caller should sanitize market-data inputs, or a hardening task can extend the Gate-0 guard to `spy_close` / non-positive anchors.
+- 2.1: reused cores consume **adj-close lists, not bars** — `compute_features` derives the close list via `indicators.closes(ticker_bars)` and feeds bars only to `indicators.atr`. All three cores gate at 252 = LONGEST_WINDOW, so flow/reversion `unavailable` is unreachable past the global insufficient-history gate (only tactical `rf_yield=None` abstain is reachable). `FeatureSet` lives in `features.py` (the internal features→signal_model contract), not `types.py`.
