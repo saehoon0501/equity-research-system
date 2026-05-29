@@ -134,7 +134,7 @@
   - _Boundary: tests readouts_
   - _Depends: 5.1_
 
-- [ ] 6.3 (P) Contract/golden tests for the MCP tool output shapes
+- [x] 6.3 (P) Contract/golden tests for the MCP tool output shapes
   - Assert each MCP tool returns the documented dictionary shape against recorded fixtures.
   - Observable: golden-shape assertions pass for every broker tool.
   - _Requirements: 9.2_
