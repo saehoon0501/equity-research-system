@@ -11,12 +11,12 @@
   - Observable: `uv run --directory` against the broker package imports the MCP library successfully, and the example env file documents the GATE_* keys.
   - _Requirements: 8.1_
 
-- [ ] 1.2 (P) Define the domain types and decision vocabulary
+- [x] 1.2 (P) Define the domain types and decision vocabulary
   - Define the value objects and enums: trade direction, order type, rejection reasons, order intent (including a trigger price), order result, position, account assets, symbol info, and history record.
   - Reuse the canonical BUY/HOLD/TRIM/SELL Label from the calibration module; do not redefine it.
   - Observable: each type instantiates in a unit test, and a test asserts the four-member Label enum is imported from the shared module.
   - _Requirements: 1.4_
-  - _Boundary: types_
+  - _Boundary: models_
   - _Depends: 1.1_
 
 - [ ] 1.3 (P) Implement configuration and secret resolution
@@ -152,3 +152,4 @@
 
 - **Test environment (from 1.1):** the repo's `pytest tests/` does NOT run green under the host's system Python — ~18 PRE-EXISTING collection errors (missing `src` on PYTHONPATH + missing third-party deps like `polygon`/`yfinance`/`mcp`). This is an environment gap, not a regression. Treat regression as a DELTA against that baseline (no NEW failures referencing the changed boundary), not absolute green. Run broker checks inside the broker uv venv: `uv run --directory src/mcp/broker python ...`. Broker unit tests (1.4, 6.x) need an interpreter that has `mcp`/`httpx` — i.e. the broker uv venv — so plan the test invocation to run under `uv run --directory src/mcp/broker` (and make broker modules importable, e.g. via importlib-by-path like `tests/unit/mcp/test_polygon.py`, or by running pytest from within the package).
 - **Packaging (from 1.1):** broker `pyproject.toml` mirrors the house `massive` shape (python>=3.11; deps mcp/httpx/python-dotenv; `[tool.uv] package=false`). `uv.lock` is tracked; `.venv` is gitignored.
+- **Module naming (from 1.2 — LOAD-BEARING):** the domain-types module is `src/mcp/broker/models.py`, NOT `types.py` — a module named `types.py` shadows the stdlib `types` module and breaks `python server.py` sibling imports (reviewer-confirmed: no env config makes by-name imports work). All broker production modules import domain types via `from models import ...`. `Label` (P9) is imported into `models.py` from `src.calibration.scorer` via a repo-root `sys.path` bootstrap (`Path(__file__).resolve().parents[3]`); `src.calibration` uses lazy imports so no heavy deps are pulled. Canonical broker test command: `PYTHONSAFEPATH=1 uv run --directory src/mcp/broker python -m pytest <ABS test path> -q` (test files load broker modules via importlib-by-path under a unique alias). design.md File Structure Plan + Data Models updated to `models.py`.

@@ -112,7 +112,8 @@ Key decisions: survival-gate clearance and the kill switch enter as **boolean in
 src/mcp/broker/
 ├── pyproject.toml        # New: requires-python >=3.11; mcp, httpx, python-dotenv; tool.uv.package=false
 ├── README.md             # New: consumer doc (tools, env, paper-only posture)
-├── types.py              # Domain types/enums: Direction, OrderType, RejectionReason, OrderIntent,
+├── models.py             # Domain types/enums (named models.py NOT types.py — stdlib `types` collision):
+│                         #   Direction, OrderType, RejectionReason, OrderIntent,
 │                         #   OrderResult, Position, AccountAssets, SymbolInfo, HistoryRecord (reuses Label)
 ├── config.py             # Env/secrets + runtime mode: paper flag, survival-gate clearance + kill-switch inputs,
 │                         #   settlement currency, stocks category id
@@ -357,7 +358,7 @@ def evaluate(intent: OrderIntent, ctx: ValidationContext) -> RejectionReason | N
 
 ## Data Models
 
-### Domain Model (value objects — `types.py`)
+### Domain Model (value objects — `models.py`)
 - `Direction(Enum)`: `LONG`, `SHORT`. `OrderType(Enum)`: `MARKET`, `TRIGGER`.
 - `OrderIntent`: decision (`Label`), symbol, direction, volume, position_id?, order_type, trigger_price?, take_profit?, stop_loss?.
 - `RejectionReason`: code (enum: `INACTIVE_ACCOUNT`, `UNKNOWN_SYMBOL`, `OUT_OF_CATEGORY`, `UNTRADABLE`, `TRADE_MODE_BLOCKED`, `BAD_ORDER_TYPE`, `VOLUME_OUT_OF_BOUNDS`, `MARKET_CLOSED`, `NO_POSITION`, `LIVE_SEND_BLOCKED`), message, `next_open_time?`.
