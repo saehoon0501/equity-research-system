@@ -177,3 +177,53 @@ If a future session picks this up cold:
 ## 10. One-paragraph summary for cold pickup
 
 The current equity-research system anchors final decisions on slow-layer fundamental research (DCF + Helmer + quality gate) with tactical/flow/mean-reversion overlays as soft modulators. Operator surfaced that this architecture under-rewards in momentum regimes (L1), fails under fundamental-weight non-stationarity (L2), and ignores the higher-order edge of modeling systematic players' forced flows (L3). The exploration endpoint is a 5-signal ensemble where slow-layer is one input among peers, weighted dynamically by framework-attributed realized P&L; instrument choice defaults to defined-risk; position size scales with ensemble agreement. Three builds close the gap: (A) `systematic-flow-overlay` agent emitting price-conditional flow forecasts, (B) framework attribution on `counterfactual_ledger` with dynamic ensemble reweighting, (C) instrument recommender. Status as of 2026-05-28: exploration only — no commitment, no build started, several open policy questions unresolved.
+
+---
+
+## 11. Execution vehicle — Gate TradFi CFD (operator-selected 2026-05-29)
+
+Status: vehicle selected; architecture above still EXPLORATION. Gate = **execution + account readout only**, NOT a data source (data from Massive / existing stack). All facts below verified against live Gate API `api.gateio.ws/api/v4` on 2026-05-29 (Tier 1 primary); gate.com docs unfetchable (403) and TradFi absent from official SDK/OpenAPI (rest-v4 v4.22.0 = spot/margin/futures only).
+
+### 11.1 Vehicle decision
+| Vehicle | Stock leverage | Universe | Hours | Selected |
+|---|---|---|---|---|
+| **TradFi CFD** | 4–5x cap | 441 US stocks | market-hours sessions | **YES** |
+| xStocks perp (`contract_type: stocks`) | up to 50x (75x SPYX) | 16 mega-caps | 24/7 | no — universe too narrow |
+
+### 11.2 Execution path
+- Signed REST (APIv4 key + secret + SIGN). **No MT5 bridge** — REST proxies exist despite MT5 backing.
+- Home: `src/mcp/broker_mcp/` (already scaffolded; P1-correct — execution is a leaf-level MCP tool).
+- Endpoints (probe-confirmed: 400=exists/needs-auth, 404=absent):
+  - `POST/GET /tradfi/orders` — order placement
+  - `GET /tradfi/positions` — open positions
+  - `GET /tradfi/users/assets`, `GET /tradfi/users/mt5-account` — account readout
+  - `GET /tradfi/symbols` — public instrument list (no auth)
+- Settlement: USD (USDx, 1:1 USDT).
+
+### 11.3 Leverage caps (category_id 2 = stocks, 441 names)
+| Cap | # names | Note |
+|---|---|---|
+| 5x | 65 | only tier with headroom above the 4x floor (incl. MU, NVDA, META, MSFT, TSLA, ORCL) |
+| 4x | 370 | min-4x floor == product ceiling → zero margin headroom |
+| 3.33x | 6 | below floor → untradeable at 4x |
+
+- min-4x sits AT the product ceiling. Liquidation distance at 4x (low maintenance margin) ≈ −18–20% → survivable swing, fragile multi-month on high-beta names. → survival/liquidation gate is mandatory upstream.
+
+### 11.4 broker_mcp build constraints
+- Tools: `place_order`, `get_positions`, `get_account_assets`.
+- Symbol map = identity on US ticker; filter `is_base: true` (skip variants e.g. `NAS100200`).
+- **`symbol_desc` is unreliable** — `AAPL`→"American Airlines", `ABNB`→"AbbVie". Map/validate by ticker only.
+- Enforce per-symbol `leverages` array (reject over-cap; reject the 6 sub-4x names).
+- Enforce hours via `status` (open/closed) + `next_open_time` (reject/queue when closed).
+- `BUY/HOLD/TRIM/SELL` (P9) → order side/size; TRIM/SELL reduce/close via positions endpoint.
+
+### 11.5 Safety gate (blocking, pre-build)
+- Live leveraged order routing is **beyond v0.1 paper-only scope** — highest blast-radius node in repo.
+- Required upstream of `place_order` before any live send: survival/liquidation gate · sleeve caps · per-order size limit · kill switch.
+- Per P7, broker adapter is the most conservative node: may reject, never upsize.
+
+### 11.6 Residual gaps (behind gate.com 403; need authenticated/browser read)
+- CFD overnight financing/swap rate (the multi-month carry cost) — not in `/tradfi/symbols`.
+- Exact maintenance-margin / stop-out level per symbol.
+- Index/oracle price construction during closed sessions; gap handling on reopen.
+- Insolvency waterfall — whether a CFD holder is an unsecured creditor of Gate (offshore, bars US persons, not SEC/CFTC-registered).
