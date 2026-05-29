@@ -53,9 +53,9 @@ All numeric monetary/price/volume fields are returned as **strings**. All timest
 
 | Decision | Action |
 |---|---|
-| **BUY** | `POST /tradfi/orders` side=2 (buy), `volume` = caller size, price_type=market/trigger |
+| **BUY** | `POST /tradfi/orders`, `volume` = caller size, price_type=market/trigger; **side per caller-supplied direction — long = side 2 (buy-to-open), short = side 1 (sell-to-open)** (⚠️ side enum 1=SELL/2=BUY; gated per-symbol by `trade_mode`) |
 | **TRIM** | `POST /tradfi/positions/{position_id}/close`, `close_volume` = partial |
 | **SELL** | `POST /tradfi/positions/{position_id}/close`, `close_volume` = null/full |
 | **HOLD** | no call |
 
-(Short entries — side=1 sell to open — are possible per `trade_mode`, but out of v0.1 long-biased scope unless the operator opts in; a naked SELL with no position must still be rejected per Req 1.8.)
+(**Long + short are both in v0.1 scope** — operator-confirmed 2026-05-29; the reactive layer supplies the directional side per §12.3. A short *entry* is a **BUY decision in the short direction** → side=1 sell-to-open (Req 1.1), not a SELL decision. A SELL **decision** always closes an existing position; a naked SELL with no open position must still be rejected per Req 1.8.)

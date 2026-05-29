@@ -1,6 +1,6 @@
 # Requirements Document
 
-> **Revised 2026-05-29 against the verified Gate TradFi API** (`gate-tradfi-api-reference.md`). The earlier BLOCKED state is cleared — the API is now specified. Criteria below are reconciled to the real endpoint/field schemas. **Long + short are both in scope** (operator-confirmed 2026-05-29; the reactive layer supplies the directional side per §12.3). One item remains an **operator decision under confirmation** (how per-symbol leverage is configured — under research); true residuals (idempotency, gap/oracle behavior, insolvency, rate limits, `close_type` semantics) are tracked in `gate-api-gaps.md` — none blocks these requirements.
+> **Revised 2026-05-29 against the verified Gate TradFi API** (`gate-tradfi-api-reference.md`). The earlier BLOCKED state is cleared — the API is now specified. Criteria below are reconciled to the real endpoint/field schemas. **Long + short are both in scope** (operator-confirmed 2026-05-29; the reactive layer supplies the directional side per §12.3). **Per-symbol leverage configuration is RESOLVED** (research 2026-05-29: it is a fixed per-instrument product attribute — US-stock CFDs 5x, no setter endpoint — so exposure is controlled via order volume per Req 5). True residuals (gap/oracle behavior, insolvency, rate limits, `close_type` semantics) are tracked in `gate-api-gaps.md` — none blocks these requirements; the venue's absence of a native idempotency key is mitigated adapter-side (Req 7.4).
 
 ## Introduction
 
@@ -79,8 +79,7 @@ The venue API is now fully specified (operator-supplied 2026-05-29; see `gate-tr
 **Objective:** As the operator, I want orders blocked when the venue session is closed, so that the adapter does not transmit into a closed or gapping market.
 
 #### Acceptance Criteria
-1. While a symbol's venue session is closed, when an order or modify operation is invoked, the Broker Adapter shall not transmit it and shall report the symbol's next open time.
-2. Where order queuing is enabled by operator configuration, while a symbol's venue session is closed, the Broker Adapter shall hold the order until the next session open rather than rejecting it; otherwise it shall reject the order.
+1. While a symbol's venue session is closed, when an order or modify operation is invoked, the Broker Adapter shall reject it without transmitting it and shall report the symbol's next open time. (v0.1 holds no order-queuing state; a closed session is always a rejection.)
 
 ### Requirement 7: Conservative posture — reject, never upsize
 
@@ -90,6 +89,7 @@ The venue API is now fully specified (operator-supplied 2026-05-29; see `gate-tr
 1. The Broker Adapter shall never autonomously increase the requested order volume beyond what the caller requested.
 2. If a request violates any validation rule (symbol, category, trade mode, volume bound, market hours, activation, or live-send gating), then the Broker Adapter shall reject the request rather than silently modifying, clamping, or partially fulfilling it.
 3. The Broker Adapter shall not perform position sizing, conviction scoring, or order-trigger decisions; it shall act only on the volume and side supplied by the caller.
+4. Because order submission is asynchronous and the venue provides no idempotency key, before re-submitting an order whose prior submission is unconfirmed, the Broker Adapter shall first poll active orders and positions to confirm the prior submission did not already produce an order or position, and shall not transmit a duplicate that would create an unintended additional position.
 
 ### Requirement 8: Paper/dry-run mode, live-send gating, and kill switch
 
@@ -109,6 +109,16 @@ The venue API is now fully specified (operator-supplied 2026-05-29; see `gate-tr
 #### Acceptance Criteria
 1. If venue authentication fails, then the Broker Adapter shall return a structured error identifying the failure class and shall not transmit any order.
 2. If the venue returns an error or is unreachable, then the Broker Adapter shall return a structured error result rather than raising an unhandled exception; and if an asynchronous submission's outcome is unconfirmed, it shall surface the order as unconfirmed rather than assuming it filled.
-3. When an order fills, the Broker Adapter shall surface the actual fill price and fill volume (from the venue's order/position records) so that a downstream consumer can compute expected-vs-actual slippage.
-4. The Broker Adapter shall emit no decision-trace telemetry itself; surfacing fill and rate data in the operation result is the boundary of its responsibility.
-5. The Broker Adapter shall respect the venue's rate-limit signals — reading the rate-limit response headers and backing off on a rate-limit (HTTP 429) response rather than retrying immediately — and shall discover the effective limit at runtime rather than assuming a fixed rate (research 2026-05-29: no published `/tradfi` limit; `X-Gate-RateLimit-*` headers + 429 govern).
+3. When an order fills, the Broker Adapter shall surface the actual fill price and fill volume (from the venue's order/position records, via the history readout in Req 10) so that a downstream consumer can compute expected-vs-actual slippage.
+4. The Broker Adapter shall emit no decision-trace telemetry itself; surfacing fill and rate data in the operation result is the boundary of its responsibility (the persisted history readout is defined in Req 10).
+5. The Broker Adapter shall respect the venue's rate-limit signals — backing off when the venue signals a rate-limit condition rather than retrying immediately — and shall discover the effective limit at runtime rather than assuming a fixed rate. (Design note: the venue signals rate-limit state via response headers + an HTTP 429 status, with no published `/tradfi` limit — see `gate-tradfi-api-reference.md`.)
+
+### Requirement 10: Order- and position-history readout (fills, realized carry, liquidation events)
+
+**Objective:** As the execution daemon, survival-gate, and downstream telemetry consumer, I want to read closed order and position history with venue-authoritative fill, carry, and close-reason data, so that expected-vs-actual slippage (Req 9.3), realized swap (Req 3.3), and forced-liquidation events are observable from a named capability rather than left implied.
+
+#### Acceptance Criteria
+1. When the history readout is invoked, the Broker Adapter shall return closed orders and positions including, at minimum, the fill price, fill volume, realized profit/loss, realized swap/financing, and the close reason for each record.
+2. The Broker Adapter shall surface, in the close reason, whether a position was closed normally or by forced liquidation (the venue's forced-liquidation position state and force-close order-operation types), without itself interpreting, scoring, or acting on that distinction.
+3. The Broker Adapter shall report venue-supplied history values and shall not substitute self-computed fill, profit/loss, or swap figures.
+4. If no history exists in the requested window, then the Broker Adapter shall return an empty history set rather than an error.
