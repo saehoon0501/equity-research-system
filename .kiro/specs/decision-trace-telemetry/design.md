@@ -102,7 +102,8 @@ src/reactive/telemetry/          # reactive CFD layer telemetry (Decision-6 leaf
 - `src/reactive/telemetry/trace_writer.py` — append-only writers; `conn=None` dry-run; `.transaction()` atomicity.
 - `src/reactive/telemetry/reader.py` — `query_trace(filters)` returning rows joined/filterable by correlation keys.
 - `tests/unit/reactive/telemetry/test_trace_writer.py` — pure-unit: row shaping, dry-run no-write, correlation-key presence.
-- `tests/integration/test_decision_trace_migration.py` — `integration_live`: append-only DELETE/UPDATE rejection; migration preserves ledger scoring + columns.
+- `tests/integration/conftest.py` (task 1.3) — shared `integration_live` harness: `_dsn()` connection, a session fixture that idempotently applies the `003 → 030 → 048` chain, and the savepoint "expect-rejection" helper. (First integration conftest in the tree; keeps the harness off the test file so 1.3 and 3.2–3.4 have non-overlapping file ownership.)
+- `tests/integration/test_decision_trace_migration.py` (tasks 3.2–3.4) — `integration_live`: trace append-only (UPDATE/DELETE/TRUNCATE rejection); post-048 ledger invariants + guard extension; decision→fill link, late-fill firewall, idempotency.
 
 ### Modified Files
 - None in behavior. The migration *extends* `counterfactual_ledger` and its guard function additively; no `src/` file's logic changes (the scorer is a pure function untouched).
@@ -234,7 +235,10 @@ CREATE INDEX IF NOT EXISTS idx_dpt_version_window ON decision_process_trace (cod
 CREATE INDEX IF NOT EXISTS idx_dpt_event_ts       ON decision_process_trace (event_ts);
 CREATE INDEX IF NOT EXISTS idx_dpt_parent         ON decision_process_trace (parent_trace_id);
 
--- strict append-only: block BOTH delete and update (stricter than the ledger, which allows window-close updates)
+-- strict append-only: block UPDATE, DELETE, AND TRUNCATE (stricter than the ledger,
+-- which allows window-close updates AND leaves TRUNCATE uncovered — that ledger carve-out
+-- is inherited unchanged here, out of boundary). The guard raises unconditionally on TG_OP
+-- and touches no NEW/OLD, so one function serves both the row-level and statement-level triggers.
 CREATE OR REPLACE FUNCTION decision_process_trace_guard() RETURNS TRIGGER AS $$
 BEGIN
     RAISE EXCEPTION 'decision_process_trace is append-only — % not permitted', TG_OP;
@@ -243,6 +247,10 @@ DROP TRIGGER IF EXISTS decision_process_trace_no_modify ON decision_process_trac
 CREATE TRIGGER decision_process_trace_no_modify
     BEFORE UPDATE OR DELETE ON decision_process_trace
     FOR EACH ROW EXECUTE FUNCTION decision_process_trace_guard();
+DROP TRIGGER IF EXISTS decision_process_trace_no_truncate ON decision_process_trace;
+CREATE TRIGGER decision_process_trace_no_truncate
+    BEFORE TRUNCATE ON decision_process_trace
+    FOR EACH STATEMENT EXECUTE FUNCTION decision_process_trace_guard();
 
 -- counterfactual_ledger: additive model-version dimension (nullable; preserves scoring + existing columns)
 ALTER TABLE counterfactual_ledger
@@ -273,8 +281,9 @@ CREATE INDEX IF NOT EXISTS idx_counterfactual_version_window
 - A `fill` row requires `parent_trace_id`; a `decision` row forbids it.
 
 ### Integration (`integration_live`, real Postgres) — R9.2
-- Insert a `decision` row → DELETE rejected; UPDATE (any column) rejected — append-only proven (2.1, 2.2).
-- Apply migration 048 to a ledger fixture with existing rows → existing columns + a representative 4-bin scoring query return identical results; new columns are NULL on legacy rows (4.2).
+**Harness (per `tests/integration/test_contamination_check.py` convention):** a `_dsn()`/psycopg connection to the shared, already-running dev DB; a session fixture **idempotently applies the `003 → 030 → 048` chain** (all `IF NOT EXISTS`/`CREATE OR REPLACE`) so the suite is self-bootstrapping and drift-robust; a **savepoint-based "expect-rejection" helper** lets a deliberate guard `RAISE` be asserted without poisoning the connection (first such pattern in the tree). Fixtures use deterministic `uuid5` ids + `ON CONFLICT DO NOTHING`, no teardown (append-only). Tests assert **post-migration invariants**, NOT a live before/after column diff — a before/after goes vacuous once 048 is permanently applied (which the daemon requires), and `IF NOT EXISTS` would hide that.
+- Insert a `decision` row → DELETE, UPDATE (any column), and TRUNCATE each rejected (via the savepoint helper) — append-only proven (2.1, 2.2).
+- Post-048 ledger invariants: the full enumerated pre-048 column set (003 + 030 columns) is still present with unchanged types, the three new version columns exist and are nullable, and the version+window index exists — the enumerated pre-048 list IS the "before", so a dropped/retyped column fails the assertion (4.2). A legacy-style row (NULL version columns) inserts and a stratified read (`summary_code`/`window`/`gics_sector`) still returns it. (The scorer is a pure function and reads no ledger column, so there is no scoring query to run.)
 - Ledger guard extension: UPDATE of a new version column post-insert is rejected; window-close completion fields still update (4.4).
 - Insert `decision` then linked `fill`; `query_trace` by `(code_version, param_version, walk_forward_window)` returns both, joinable by `parent_trace_id` (1.4, 3.2, 6.1).
 - Late-fill firewall: a `decision` in window N + a linked `fill` whose `event_ts` falls in window N+1 → `query_trace(until=N_boundary)` excludes the late fill (predicate on `event_ts`), while the fill still attributes to the decision's window (5.1, 5.2, 1.4).
