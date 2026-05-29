@@ -38,6 +38,7 @@
 - Position sizing, order-trigger timing, and the long/short decision (owned by `execution-daemon` / `reactive-signal-model`; supplied to the adapter as inputs).
 - Telemetry/decision-trace persistence (owned by `decision-trace-telemetry`; the adapter only returns fill/rate data in its result).
 - Selecting which of several same-symbol positions a TRIM/SELL applies to (the caller supplies the `position_id`).
+- **Real-time trading-halt / forward-gap detection.** The adapter exposes only pre-trade session/tradability (`SymbolInfo.status` open/closed, `trade_mode`) and **post-hoc** outcomes (`HistoryRecord.close_reason = forced_liquidation` via `get_history`); `Position` carries **no halt field**, so the adapter is **confirmed not a live market-state sensor / not the halt-detection source**. Intraday-halt and gap-proximity sight is owned by `survival-gate`'s `gap-risk-veto-filter` (§12.2/§12.3). The `missing-trading-status → HALTED` fail-safe is a **consumer** rule (survival-gate / execution-daemon); the adapter itself only rejects on venue-reported closed/disabled (R6.1, R1.11).
 
 ### Allowed Dependencies
 - **External**: Gate TradFi APIv4 (`https://api.gateio.ws/api/v4/tradfi/*`).
@@ -51,6 +52,7 @@
 - Rate-limit header/limit confirmation against a live `/tradfi` response.
 - The **live-send gating contract** with `survival-gate` (the clearance-signal shape must match when that spec lands).
 - Any change to the `Label` enum in `src/calibration/scorer.py`.
+- If the venue introduces a real-time halt state distinct from `status` open/closed (a true `HALTED` signal on a symbol or position), revisit the broker ↔ survival-gate halt-detection seam — today the broker is confirmed **not** the source.
 
 ## Architecture
 
@@ -171,7 +173,7 @@ sequenceDiagram
         end
     end
 ```
-Gating notes: HOLD short-circuits before any transmit (1.4). The double-send guard (7.4) runs before any live re-send. An unconfirmed async outcome is surfaced as `unconfirmed`, never assumed filled (9.2).
+Gating notes: `core` first gathers one pre-transmit snapshot (assets/status, positions, symbol session) into `ValidationContext` — that single positions read serves both the 1.8 check and the 7.4 guard. HOLD short-circuits before any transmit (1.4). The double-send guard (7.4) correlates the retained queue-task-id before any live re-send. An unconfirmed async outcome is surfaced as `unconfirmed`, never assumed filled (9.2).
 
 ### Live-send gating (4-condition AND)
 ```mermaid
@@ -256,7 +258,8 @@ v0.1 stays in `PaperDefault` — no enabled path reaches `Transmit` (8.1). All f
 
 **Responsibilities & Constraints**
 - Routes a P9 `Label` + `Direction` to the right operation; runs the validation chain before any transmit; HOLD is a no-op (1.4).
-- Owns the async submit→poll→reconcile loop (1.7) and the double-send guard (7.4): before any live re-send, poll active orders/positions and refuse to create a duplicate.
+- Immediately before validation, gathers a single consistent pre-transmit snapshot — account assets/status, open positions, and the target symbol's cached metadata + session status — into `ValidationContext`. The **same** positions read feeds both the 1.8 position-exists check and the 7.4 double-send guard (one read, no second fetch); the snapshot defines the staleness window for 1.10 / 6.1 / 8.3.
+- Owns the async submit→poll→reconcile loop (1.7) and the double-send guard (7.4): before any live re-send, correlate the retained queue-task-id against active orders/positions and refuse to create a duplicate.
 - Performs no sizing/scoring/trigger logic (7.3) and emits no telemetry (9.4); returns fill/rate data for downstream consumers only.
 - Returns structured results, never raises (paired with `server`); an unconfirmed async outcome is reported as `unconfirmed` (9.2).
 
@@ -275,6 +278,7 @@ def submit_decision(
     volume: float | None = None,     # contract volume; required for BUY
     position_id: str | None = None,  # required for TRIM/SELL
     order_type: OrderType = OrderType.MARKET,
+    trigger_price: float | None = None,  # required when order_type is TRIGGER
     take_profit: float | None = None,
     stop_loss: float | None = None,
 ) -> OrderResult: ...
@@ -285,13 +289,14 @@ def list_tradable_symbols() -> list[SymbolInfo]: ...
 def validate_symbol(symbol: str) -> SymbolInfo | RejectionReason: ...
 def get_history(since: int | None = None, until: int | None = None) -> list[HistoryRecord]: ...
 ```
-- Preconditions: `GATE_API_KEY`/`SECRET` present for any authenticated call; `volume` for BUY, `position_id` for TRIM/SELL.
+- Preconditions: `GATE_API_KEY`/`SECRET` present for any authenticated call; `volume` for BUY, `position_id` for TRIM/SELL, `trigger_price` when `order_type` is `TRIGGER`.
 - Postconditions: returns a typed result; on any validation failure returns `OrderResult(status="rejected", reason=...)`; never raises.
 - Invariants: never increases `volume` (7.1); never opens a position on a TRIM/SELL miss (1.8); never transmits live unless all four clearances hold (8.3).
 
 **Implementation Notes**
 - Integration: daemon imports `core` directly; `server` wraps it. Both share this one validated path.
-- Validation: lock the chain order and the double-send poll-before-resend in unit tests.
+- Double-send correlation: a live POST returns a queue-task-id; `core` retains it and, before any resend, correlates it against `/tradfi/orders` (and the resulting position). A matching task-id / order means do not retransmit (7.4). v0.1 is paper-only, so this path is exercised by the paper simulator's modeled task-id, not a live POST.
+- Validation: lock the chain order, the snapshot→validate ordering, and the double-send correlation in unit tests.
 - Risks: `close_type` 1/2 semantics confirmed on first authenticated close; poll timeout surfaces `unconfirmed`.
 
 ### Policy layer
@@ -304,7 +309,7 @@ def get_history(since: int | None = None, until: int | None = None) -> list[Hist
 | Requirements | 1.5, 1.6, 1.8, 1.10, 1.11, 4.2, 4.3, 5.1, 6.1, 7.1, 7.2 |
 
 **Responsibilities & Constraints**
-- Predicates (in order): account active (1.10) → symbol in validated set (4.3) → category (4.2) → tradable/not sub-floor leverage (5.1) → trade_mode allows action (1.11) → order type market/trigger (1.5) → volume within bounds (1.6) → session open (6.1) → live-send clearances when live (8.3). For TRIM/SELL: position exists (1.8).
+- Predicates (in order): account active (1.10) → symbol in validated set (4.3) → category (4.2) → tradable/not sub-floor leverage (5.1) → trade_mode allows action (1.11) → order type is market/trigger, with a `trigger_price` present when TRIGGER (1.5) → volume within bounds (1.6) → session open (6.1) → live-send clearances when live (8.3). For TRIM/SELL: position exists (1.8).
 - Never mutates the request (7.1, 7.2): the only outcomes are pass-through or a `RejectionReason`.
 
 **Contracts**: Service [x]
@@ -312,7 +317,7 @@ def get_history(since: int | None = None, until: int | None = None) -> list[Hist
 def evaluate(intent: OrderIntent, ctx: ValidationContext) -> RejectionReason | None: ...
 ```
 - Postconditions: `None` ⇒ all checks passed; otherwise the first failing reason (with `next_open_time` populated for 6.1).
-- Invariants: deterministic; pure (no I/O — `ctx` carries cached symbol info + account state).
+- Invariants: deterministic; pure (no I/O — `core` populates `ctx` with the single pre-transmit snapshot per its Responsibilities; `validation` never fetches).
 
 ### Transport layer
 
@@ -354,7 +359,7 @@ def evaluate(intent: OrderIntent, ctx: ValidationContext) -> RejectionReason | N
 
 ### Domain Model (value objects — `types.py`)
 - `Direction(Enum)`: `LONG`, `SHORT`. `OrderType(Enum)`: `MARKET`, `TRIGGER`.
-- `OrderIntent`: decision (`Label`), symbol, direction, volume, position_id?, order_type, take_profit?, stop_loss?.
+- `OrderIntent`: decision (`Label`), symbol, direction, volume, position_id?, order_type, trigger_price?, take_profit?, stop_loss?.
 - `RejectionReason`: code (enum: `INACTIVE_ACCOUNT`, `UNKNOWN_SYMBOL`, `OUT_OF_CATEGORY`, `UNTRADABLE`, `TRADE_MODE_BLOCKED`, `BAD_ORDER_TYPE`, `VOLUME_OUT_OF_BOUNDS`, `MARKET_CLOSED`, `NO_POSITION`, `LIVE_SEND_BLOCKED`), message, `next_open_time?`.
 - `OrderResult`: status (`filled`|`simulated`|`unconfirmed`|`noop`|`rejected`), order_id?, position_id?, fill_price?, fill_volume?, reason?, raw?.
 - `Position`: position_id, symbol, direction, volume, avg_open_price, used_margin, unrealized_pnl (venue-supplied).
