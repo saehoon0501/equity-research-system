@@ -33,7 +33,7 @@
   - _Depends: 1.2_
 
 - [ ] 2. Core: append-only write path + read/replay surface
-- [ ] 2.1 (P) Implement the append-only trace writers
+- [x] 2.1 (P) Implement the append-only trace writers
   - Implement the decision-trace writer and the fill-outcome writer as direct-psycopg leaf functions following the repo's `_dsn()` + `.transaction()` + `conn=None` dry-run convention.
   - Writers issue INSERT only — never update or delete — and use `ON CONFLICT` on the client-minted trace id so a re-sent write is a no-op (the idempotency key; addresses the broker double-send residual).
   - Fail-fast at the boundary: reject a row missing any correlation key, an unknown kind, or a fill with an unresolvable parent before any INSERT; partial writes roll back.
@@ -88,3 +88,4 @@
 - Test/DB env: the repo has NO root `pyproject.toml`; run tests via `PYTHONPATH="$PWD" uv run --with pytest --with python-dotenv --with "psycopg[binary]" --python 3.13 pytest …` (CI convention). Imports use `from src.reactive.telemetry…` under repo-root PYTHONPATH; no `src/reactive/__init__.py` needed (repo uses PEP 420 namespace packages, like `src/shared`/`src/overlays`).
 - `.env` has an unquoted value on line 6 (`EDGAR_USER_AGENT`) that breaks bash `set -a; . ./.env` sourcing. Use `python-dotenv` (`load_dotenv`) for DB creds (as `tests/integration/test_contamination_check.py::_dsn` does), or `eval $(grep -E '^POSTGRES_(USER|DB|PASSWORD)=' .env)` in shell — NOT `set -a` sourcing. (1.3 harness + 3.x tests.)
 - Live dev DB is SHARED across worktrees (container `equity-research-db`, started by another compose project `refactorplugin-restructure`). It is up/healthy on 127.0.0.1:5432. Migration 048 is additive + idempotent; never `docker compose down`/wipe. The `003→030→048` chain is applied (1.2 applied it live).
+- JSONB `trace` serialization: the writer uses `json.dumps(..., default=_trace_json_default)` mirroring `src/supervisor/emitter.py` (which uses `_json_default` from `src/shared/audit_trail/hmac_verify.py`). Convention: `Decimal`/`datetime`/`date`/`UUID` land as JSON **strings** (precision-preserving); numpy scalars land as JSON **numbers** via `.item()`. Downstream consumers (reader 2.2, tuner) must NOT assume those fields are JSON numbers; the `trace` blob is type-unvalidated by design (P13). Bare `json.dumps` (no `default=`) fails ONLY on the live path (dry-run skips it) — a live round-trip test is required to catch it.
