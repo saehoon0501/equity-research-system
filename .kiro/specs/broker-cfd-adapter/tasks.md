@@ -65,7 +65,7 @@
   - _Boundary: symbol_cache_
   - _Depends: 2.1, 2.2_
 
-- [ ] 3.2 Implement the pre-transmit validation chain
+- [x] 3.2 Implement the pre-transmit validation chain
   - Compose an ordered predicate chain that can only reject (never mutate): account active → symbol in the validated set → category → tradable and not a sub-floor-leverage name → trade mode allows the action → order type is market or trigger with a trigger price present when trigger → volume within bounds → session open (report the next open time) → live-send clearances when live; for TRIM/SELL require an existing position.
   - Lock the chain order and short-circuit on the first failure to a structured reason.
   - Observable: rejections fire for each rule (inactive account, unknown or out-of-category symbol, sub-floor leverage, disallowed trade mode, bad order type, missing trigger price, out-of-bounds volume including over the maximum, closed session with the next open time, TRIM/SELL with no position), and no rule path increases the requested volume.
