@@ -8,7 +8,7 @@
   - The decision substrate (feature values, probability, effective threshold, code version, parameter-snapshot version, calibration evidence) and the calibration-evidence shape (a Brier score and a reliability measure).
   - Observable: the full set of typed contracts imports cleanly and type-checks; the decision and failure-reason vocabularies equal the design's fixed literals; the reactive-decision object exposes the non-final flag, the advisory sizing-hint field, and an inspectable substrate.
   - _Requirements: 2, 3, 4, 5, 7, 8_
-- [ ] 1.2 Define the pinned parameter snapshot, defaults, and the tighten-only threshold resolver
+- [x] 1.2 Define the pinned parameter snapshot, defaults, and the tighten-only threshold resolver
   - The frozen, by-value parameter snapshot (near-equal weights normalized to Σ=1, temperature, threshold, carried calibration evidence, code version, parameter-snapshot version); module-constant defaults for the inner ring with calibration evidence unestablished (None); a tighten-only effective-threshold resolver that returns the higher of the snapshot threshold and any runtime override and never returns below the snapshot threshold.
   - The model consumes the snapshot by value, never re-resolves it against live state mid-run, and never fits/tunes/computes parameters (calibration is exposed, never computed here).
   - Observable: the defaults instantiate frozen with every field present and calibration evidence None; a higher runtime threshold returns the higher value while a lower runtime threshold returns the snapshot threshold unchanged.
