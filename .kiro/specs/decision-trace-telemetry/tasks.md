@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: correlation-key contract, storage migration, test harness
-- [ ] 1.1 Define the correlation-key contract and trace row types
+- [x] 1.1 Define the correlation-key contract and trace row types
   - Create the telemetry leaf package and the pure-types module holding the single definition of the correlation keys (run id, code version, parameter version, walk-forward window) and the two row kinds (decision, fill).
   - Decision row: client-minted trace id, an event timestamp pinned at decision time, and a flexible payload (gate link, signal values, derived probability, liquidation proximity, stop-out, declined flag).
   - Fill row: its own client-minted trace id, the parent decision id, its own (later) event timestamp, the decision's walk-forward window for attribution, and a fill payload (expected vs actual price, slippage, volume, counterparty price).
