@@ -90,3 +90,57 @@
 - `src/reactive/telemetry/{schema,trace_writer,reader}.py` — landed write/read API.
 - `db/migrations/003` (counterfactual_ledger_guard), `034` (run_parameters_snapshot), `048` (decision_process_trace) — adopted patterns.
 - `.kiro/specs/{broker-cfd-adapter,reactive-signal-model,survival-gate,decision-trace-telemetry}/design.md` — dependency contracts.
+
+---
+
+# Gap Analysis (post-design validation pass — 2026-05-30)
+
+> Run *after* design approval as a validation pass: does the design's reuse surface match what is actually implemented today, and what is the implementation-readiness gap before `/kiro-spec-tasks`? (`/kiro-validate-gap` is normally pre-design; here it confirms the design and informs task sequencing.)
+
+## Dependency-maturity gap (dominant finding)
+The daemon is **last in build order** and imports four leaf modules in-process. Their *actual on-disk* state diverges sharply from their spec phase:
+
+| Dependency | Spec phase | Implemented on disk? | Daemon import surface |
+|---|---|---|---|
+| decision-trace-telemetry | tasks-generated, ready | ✅ `src/reactive/telemetry/{schema,trace_writer,reader}.py` | `write_decision_trace` / `write_fill_outcome` callable **now** |
+| broker-cfd-adapter | tasks-generated, ready | ✅ substantially — `core.py` exposes `submit_decision` / `get_positions` / `get_account_assets` / `get_history` / `validate_symbol` + full module set (config, gate_client, mappers, models, paper, symbol_cache, validation) | callable **now** (confirm exact signatures at task time — mid-implementation; keyword-only `clients=` params) |
+| reactive-signal-model | tasks-generated, ready | ❌ **spec-only** — no `src/reactive/signal_model.py`; `decide()` does not exist | **MISSING** |
+| survival-gate | tasks-generated, **not ready** | ❌ **spec-only** — no `src/survival/`; `admit`/`assess` do not exist | **MISSING** |
+
+→ The daemon **cannot be wired end-to-end** until `reactive.decide` + `survival.gate` are implemented. But its dep-independent clusters **can** be built + inner-ring-tested now.
+
+## Requirement → Asset Map (gaps tagged Missing / Unknown / Constraint)
+| Req area | Existing asset to reuse | Gap |
+|---|---|---|
+| 4.x telemetry assembly | telemetry writer/reader/schema (landed) | **Missing** `trace_assembler` (build); writer reusable as-is + `conn=None` dry-run test seam |
+| 1.4 / 8.1 param pin + hot-swap | `parameters` / `parameters_active` / `run_parameters_snapshot` (mig 004/034) | **Missing** Python resolver — the REPEATABLE-READ snapshot read is markdown-orchestrated (`/research-company` §1.5); build daemon `params` |
+| 5.4 op-state + events persist | `survival_gate_state` / `_events` (survival design, migs 049/050) | **Constraint** — those tables are **not yet on disk** (survival unimplemented); daemon persist path depends on them |
+| 9.1 event queue | append-only-guard pattern (mig 003/048) | **Missing** — build table mig 051 + `event_queue` |
+| 8.2 / 8.3 version pin | none | **Missing** — build table mig 052 + `lifecycle` version-pin |
+| 2.x / 3.x orchestration | broker `core` (present); `reactive.decide` + `survival.gate` (**Missing**) | **Blocked** on reactive + survival impl |
+| 6.x flatten | survival assess directives (**Missing**); broker close (present) | **Blocked** (partial) on survival |
+| connection | `_dsn()` convention (telemetry / regime_sidecar / mcp servers) | Reuse — copy local `_dsn()` |
+
+## Implementation approach options
+- **Option A (Extend existing)** — N/A: greenfield process shape, nothing to extend.
+- **Option B (New, all-at-once)** — build the whole daemon once all four deps land. Clean, but serializes the entire daemon behind reactive + survival and wastes the window where dep-independent clusters are buildable.
+- **Option C (Hybrid, phased) — RECOMMENDED**:
+  - **Phase 1 (buildable now, no missing deps; inner-ring-first per P14):** migrations 051/052 + guards; `config` / `db` / `types`; `trace_assembler` (tested against `write_decision_trace(conn=None)` dry-run); `params` resolver (synthetic param rows); `event_queue` emit + drain contract; `commands` surface (synthetic op-state). All testable with **no** reactive/survival code.
+  - **Phase 2 (gated on reactive + survival impl):** `orchestrator` (§13 wiring), `lifecycle` flatten action (needs survival `assess` directives + broker close), the end-to-end loop, integration tests.
+
+## Effort / Risk
+- `trace_assembler` — **S**, Low (landed writer + dry-run seam; pure mapping).
+- `params` resolver — **M**, Medium (no Python precedent for the REPEATABLE-READ snapshot read; mirror markdown §1.5).
+- migrations 051/052 + `event_queue` — **S**, Low (house guard pattern).
+- `lifecycle` — **M**, Medium (version-pinned lifecycle paper-moot → synthetic fixtures; flatten gated on survival).
+- `orchestrator` + end-to-end loop — **L**, **High** (blocked on two unbuilt deps; highest-coupling control flow — §13 + persist-then-act + op-state freshness).
+- `commands` — **S**, Low.
+
+## Research-needed (carry into tasks)
+- Confirm broker `core` signatures at task time (sync; keyword-only `clients=`; arg names) — broker is mid-implementation and the orchestrator binds to them.
+- `run_parameters_snapshot` Python write path — extract a shared resolver vs. build daemon-local.
+- **Migration-number coordination** — 049/050 are reserved by survival-gate but **not yet on disk** (current max = 048); the daemon's 051/052 assume survival lands first per build order. Verify at author time; renumber only if ordering is violated.
+- `walk_forward_window` advance — `walkforward-tuning-loop` un-built (v0.1 bootstrap).
+
+## Recommendation for the tasks phase
+Sequence `/kiro-spec-tasks` as **Option C**: a **Phase-1 task cluster** (dep-independent, buildable now, inner-ring-first) and a **Phase-2 cluster** (orchestrator + lifecycle + e2e) explicitly marked **blocked-on-deps** (reactive-signal-model + survival-gate implementation) so it is not started prematurely. The design itself needs no change — it already encodes the reuse decisions; this pass only adds the build-readiness sequencing.
