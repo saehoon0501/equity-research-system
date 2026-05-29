@@ -110,7 +110,7 @@
 
 - [ ] 5. MCP server interface and registration
 
-- [ ] 5.1 Expose the MCP tool surface and register the server
+- [x] 5.1 Expose the MCP tool surface and register the server
   - Wrap each leaf function as an MCP tool that coerces typed results to dictionaries and never raises (structured error dictionaries on failure).
   - Register the broker server in the MCP manifest following the house uv-run pattern.
   - Observable: the server launches under uv, the broker tools are listed, and a tool call returns a structured dictionary (including a structured error dictionary on a forced failure).

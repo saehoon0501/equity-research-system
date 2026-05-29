@@ -102,6 +102,17 @@
         "server.py"
       ],
       "cwd": "."
+    },
+    "broker": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "src/mcp/broker",
+        "python",
+        "server.py"
+      ],
+      "cwd": "."
     }
   }
 }
