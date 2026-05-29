@@ -60,7 +60,19 @@ import math
 
 from src.reactive.features import FeatureSet
 from src.reactive.params import ParamSnapshot, Weights
-from src.reactive.types import CalibrationEvidence, Direction
+from src.reactive.params import effective_threshold as _effective_threshold
+from src.reactive.types import (
+    CalibrationEvidence,
+    DecisionSubstrate,
+    Direction,
+    FeatureFailure,
+    ReactiveDecision,
+)
+
+# The valid caller-supplied directional sides (R3.1). Anything outside this set
+# (None, lowercase, "BUY"/"SELL", a non-string) is `invalid_direction` — the
+# reason `decide` OWNS (design §Feature adapter "Failure ownership").
+_VALID_DIRECTIONS = ("LONG", "SHORT")
 
 
 def aggregate_score(features: FeatureSet, weights: Weights) -> float:
@@ -184,3 +196,157 @@ def expose_calibration(snapshot: ParamSnapshot) -> CalibrationEvidence:
         The snapshot's `CalibrationEvidence`, carried through unchanged.
     """
     return snapshot.calibration
+
+
+# --- The public entry point: assemble the thresholded decision (task 2.4) ----
+
+# Sentinel probability for the two abstain paths (invalid_direction /
+# FeatureFailure) where no logistic is derived. The load-bearing discriminator
+# is `reason is not None` (a sub-threshold HOLD has `reason=None` and a REAL
+# derived `P`); this sentinel is non-load-bearing telemetry. `0.0` (not `0.5`)
+# so it reads as "not derived" rather than a genuine no-edge derivation
+# (`signed=0 → P=0.5` is a real main-path value).
+_ABSTAIN_PROBABILITY = 0.0
+
+
+def decide(
+    features: FeatureSet | FeatureFailure,
+    direction: Direction,
+    snapshot: ParamSnapshot,
+    runtime_threshold: float | None = None,
+) -> ReactiveDecision:
+    """The public Edge entry point: emit the thresholded LONG/SHORT/HOLD decision.
+
+    Assembles the pure pipeline from the standalone 2.1–2.3 pieces — it does NOT
+    reimplement them:
+
+        s      = aggregate_score(features, snapshot.weights)   # 2.2
+        signed = project(s, direction)                          # 2.2
+        P      = probability(signed, snapshot.temperature)      # 2.3
+        θ_eff  = params.effective_threshold(snapshot, runtime)  # tighten-only (R6)
+        decision = direction if P > θ_eff else HOLD             # strict-`>` (R3.3/3.4)
+
+    **Two abstain paths degrade to HOLD with a machine-readable `reason`** (never
+    raises — design §Error Strategy), checked in this strict order:
+
+    1. **`invalid_direction` (OWNED here, R3.6):** if `direction` is missing or not
+       in {LONG, SHORT}, return HOLD + `reason="invalid_direction"` BEFORE touching
+       `features` (so a malformed `features` is never read on this path). This is
+       checked first, so an invalid direction wins even when `features` is also a
+       `FeatureFailure`.
+    2. **`FeatureFailure` → HOLD + its `reason`:** if `features` is a
+       `FeatureFailure`, return HOLD carrying `features.reason` verbatim. `decide`
+       **trusts the discriminator** and does NOT re-validate history/ATR (design
+       §Feature adapter "Failure ownership" — `features` single-owns
+       `insufficient_history`/`degenerate_features`).
+
+    On the main path the decision is the caller direction iff `P > θ_eff`, else
+    HOLD (R3.3/R3.4). The model NEVER selects or flips the side (R3.2/R4.3): the
+    only outcomes are the caller's `direction` or HOLD.
+
+    **Every decision is `non_final=True` (R4.1)** — a vetoable Edge candidate the
+    higher lexicographic links (Survive/Preserve) can downgrade but never upgrade
+    (P7). The model never inspects survival state (R4.2).
+
+    **Sizing hint (advisory; R5):** when actionable (`decision != HOLD`) it is the
+    distance the probability clears the effective threshold, `P − θ_eff` — a
+    positive scalar that INCREASES with `P` above `θ_eff` (R5.1). It is *advisory*
+    (a bare hint; the model enforces NO size and NO cap — R5.3/R5.4/R5.5) and is
+    `None` on every HOLD path (R5.2 — no actionable hint).
+
+    **Substrate (R7):** every returned `ReactiveDecision` carries a
+    `DecisionSubstrate` with the feature `raw` values (or `{}` on abstain), the
+    derived `P` (or the `_ABSTAIN_PROBABILITY` sentinel), the EFFECTIVE threshold
+    actually applied, the consumed `code_version`/`param_version`, and the
+    snapshot's `CalibrationEvidence` (exposed, never computed — R7.4). `θ_eff` is
+    resolved ONCE at the top via `params.effective_threshold` and reused on all
+    three paths, so it is honest telemetry even on the abstains.
+
+    Determinism (R8.1): identical `(features, direction, snapshot,
+    runtime_threshold)` → identical `ReactiveDecision`. Pure: stdlib + sibling
+    contracts only — no LLM, no MCP, no DB.
+
+    Args:
+        features: the computed `FeatureSet`, or a `FeatureFailure` discriminator.
+        direction: the caller-supplied side ("LONG"/"SHORT"); the model never
+            selects it (R3.1/R3.2). Anything else ⇒ `invalid_direction`.
+        snapshot: the active, pinned `ParamSnapshot` consumed by value (P2).
+        runtime_threshold: an optional tighten-only override (R6.3/R6.4).
+
+    Returns:
+        The `ReactiveDecision` (decision, echoed `direction_in`, probability,
+        sizing_hint, non_final, reason, substrate).
+    """
+    # θ_eff: resolved ONCE (tighten-only) and reused on every path so the
+    # substrate's effective threshold is honest even on the abstains (R6/R7.3).
+    eff_threshold = _effective_threshold(snapshot, runtime_threshold)
+    calibration = expose_calibration(snapshot)
+
+    def _hold_abstain(reason, feature_values: dict, prob: float) -> ReactiveDecision:
+        """Build a non-final HOLD for an abstain path (no actionable sizing hint)."""
+        return ReactiveDecision(
+            decision="HOLD",
+            direction_in=direction,
+            probability=prob,
+            sizing_hint=None,
+            non_final=True,
+            reason=reason,
+            substrate=DecisionSubstrate(
+                feature_values=feature_values,
+                probability=prob,
+                effective_threshold=eff_threshold,
+                code_version=snapshot.code_version,
+                param_version=snapshot.param_version,
+                calibration=calibration,
+            ),
+        )
+
+    # --- Abstain 1: invalid/missing direction (OWNED here; checked FIRST) ----
+    # Guard runs before `features` is read, so a malformed `features` never
+    # explodes on this path, and an invalid direction wins over a FeatureFailure.
+    if direction not in _VALID_DIRECTIONS:
+        return _hold_abstain(
+            reason="invalid_direction",
+            feature_values={},
+            prob=_ABSTAIN_PROBABILITY,
+        )
+
+    # --- Abstain 2: FeatureFailure → HOLD + its reason (trust discriminator) -
+    # No re-validation of history/ATR (design §Feature adapter failure-ownership).
+    if isinstance(features, FeatureFailure):
+        return _hold_abstain(
+            reason=features.reason,
+            feature_values={},
+            prob=_ABSTAIN_PROBABILITY,
+        )
+
+    # --- Main path: aggregate → project → logistic → strict-`>` threshold ----
+    s = aggregate_score(features, snapshot.weights)
+    signed = project(s, direction)
+    p = probability(signed, snapshot.temperature)
+
+    if p > eff_threshold:
+        decision: Direction = direction
+        # Advisory sizing hint: increases with how far P clears θ_eff (R5.1).
+        # A bare scalar — no size, no cap enforced (R5.3/R5.4/R5.5).
+        sizing_hint: float | None = p - eff_threshold
+    else:
+        decision = "HOLD"  # P ≤ θ_eff (strict-`>`): sub-threshold HOLD (R3.4)
+        sizing_hint = None  # no actionable hint on HOLD (R5.2)
+
+    return ReactiveDecision(
+        decision=decision,
+        direction_in=direction,
+        probability=p,
+        sizing_hint=sizing_hint,
+        non_final=True,  # always vetoable (R4.1); never escalates (P7)
+        reason=None,  # a real derivation (incl. sub-threshold HOLD), not an abstain
+        substrate=DecisionSubstrate(
+            feature_values=features.raw,
+            probability=p,
+            effective_threshold=eff_threshold,
+            code_version=snapshot.code_version,
+            param_version=snapshot.param_version,
+            calibration=calibration,
+        ),
+    )
