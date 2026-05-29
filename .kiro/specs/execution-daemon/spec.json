@@ -1,0 +1,23 @@
+{
+  "feature_name": "execution-daemon",
+  "created_at": "2026-05-29T16:50:35Z",
+  "updated_at": "2026-05-29T16:50:35Z",
+  "language": "en",
+  "phase": "initialized",
+  "notes": "Initialized 2026-05-30 from brief.md (kiro-discovery). Path C single spec; full version-pinned lifecycle + atomic hot-swap IN scope (operator override of the §14.11 #1 'moot-for-paper' default). Claims the previously-floating telemetry row-assembly + run_id/walk_forward_window injection seam. Five internal task clusters (process-loop/scheduler, gate-orchestrator, telemetry-row-assembler, lifecycle-manager, command-surface). Depends: broker-cfd-adapter, reactive-signal-model, decision-trace-telemetry, survival-gate. 5 design-time open questions captured in brief.md (non-blocking, for /kiro-spec-design).",
+  "approvals": {
+    "requirements": {
+      "generated": false,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
