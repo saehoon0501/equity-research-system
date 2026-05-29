@@ -13,17 +13,24 @@ validation -> paper -> core -> server``): ``core`` is the Operations layer just
 below ``server`` (the MCP wrapper). It may import any layer above it; nothing
 imports ``core`` except ``server`` and the external execution-daemon.
 
-Scope of THIS file (Task 4.1 — readouts ONLY)
----------------------------------------------
-Implemented here: ``get_positions`` / ``get_account_assets`` /
+Scope of THIS file (Tasks 4.1 + 4.2)
+------------------------------------
+Task 4.1 (readouts): ``get_positions`` / ``get_account_assets`` /
 ``list_tradable_symbols`` / ``validate_symbol`` / ``get_history``. These are the
 read-only leaf functions the execution-daemon imports in-process and that Task
 5.1 wraps as MCP tools.
 
-This module is ALSO extended by Task 4.2 (decision routing, the pre-transmit
-snapshot, live-send gating — ``submit_decision``) and Task 4.3 (async order
-lifecycle + double-send guard). It is structured so those tasks ADD to it without
-reworking the readouts:
+Task 4.2 (this addition — decision routing, the pre-transmit snapshot, live-send
+gating): ``submit_decision`` plus the :class:`PreTransmitSnapshot` it gathers ONCE
+(:func:`gather_snapshot`) and the live-send seam :func:`_submit_live` (a complete
+BASIC transmit+confirm Task 4.3 hardens into an async poll-loop + double-send
+guard). See the "Decision routing (Task 4.2)" block lower in this file.
+
+Task 4.3 (still pending): async order lifecycle + double-send guard — it HARDENS
+:func:`_submit_live` and REUSES the snapshot's single positions read (exposed on
+:class:`PreTransmitSnapshot.open_positions`) rather than re-fetching.
+
+The module is structured so each task ADDS to it without reworking the readouts:
 
 * the injected-dependency holder :class:`ReadoutClients` is the seam every
   leaf function takes — 4.2/4.3 reuse the same holder (it already carries the
@@ -71,18 +78,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
-import httpx
-
 # Layers above ``core`` in the dependency direction. Imported BY NAME (production
 # posture: broker dir on sys.path[0] when launched as `python server.py`).
 import config as _config
 import gate_client as _gate_client
 import mappers as _mappers
+import paper as _paper
 import symbol_cache as _symbol_cache
+import validation as _validation
 from models import (
     AccountAssets,
+    Direction,
     HistoryRecord,
+    Label,
+    OrderIntent,
+    OrderResult,
+    OrderType,
     Position,
+    RejectionCode,
     RejectionReason,
     SymbolInfo,
 )
@@ -95,6 +108,18 @@ _ASSETS_PATH = "/tradfi/users/assets"
 _MT5_ACCOUNT_PATH = "/tradfi/users/mt5-account"
 _ORDERS_HISTORY_PATH = "/tradfi/orders/history"
 _POSITIONS_HISTORY_PATH = "/tradfi/positions/history"
+# Order/close + ticker paths the routing layer (Task 4.2) adds. The decision->action
+# mapper (``mappers.map_decision_to_action``) is the single source of the exact
+# endpoint a BUY/TRIM/SELL maps to; ``_ORDERS_PATH`` is named here only for the
+# read-back confirmation (``GET /tradfi/orders``). ``_TICKER_PATH_FMT`` is the
+# bid/ask read the snapshot gathers so paper prices from real venue quotes.
+_ORDERS_PATH = "/tradfi/orders"
+_TICKER_PATH_FMT = "/tradfi/symbols/{symbol}/tickers"
+
+# Venue account ``status`` enum (gate-tradfi-api-reference "Critical enums":
+# 1=not opened, 2=pending review, 3=active). Only status 3 is an ACTIVE account
+# (Req 1.10); anything else is treated as not-active (conservative).
+_ACCOUNT_STATUS_ACTIVE = 3
 
 
 # --------------------------------------------------------------------------- #
@@ -337,6 +362,420 @@ def _window_params(
     return params or None
 
 
+# --------------------------------------------------------------------------- #
+# Decision routing (Task 4.2) — the one pre-transmit snapshot + live-send gating.
+# --------------------------------------------------------------------------- #
+#
+# design "core (leaf functions)" Responsibilities & Constraints + System Flows
+# ("Order submission" / "Live-send gating"). The flow is:
+#
+#   submit_decision -> build OrderIntent
+#                   -> HOLD short-circuits to a structured no-op (1.4)
+#                   -> gather ONE pre-transmit snapshot (gather_snapshot)
+#                   -> validation.evaluate(intent, snapshot.context)  (rejections)
+#                   -> route: paper.simulate  (paper default, v0.1 8.1)
+#                         OR  _submit_live      (only when all four 8.3 clearances)
+#
+# The conservative posture (P7): every branch can reject/refuse/simulate but never
+# upsizes (7.1/7.3) and never opens on a TRIM/SELL miss (1.8 via validation).
+
+
+@dataclass(frozen=True)
+class PreTransmitSnapshot:
+    """The single consistent pre-transmit snapshot ``core`` gathers ONCE before any
+    validation/transmit (design: "gathers a single consistent pre-transmit
+    snapshot — account assets/status, open positions, and the target symbol's
+    cached metadata + session status — into ``ValidationContext``").
+
+    THE ONE-POSITIONS-READ SEAM (load-bearing for Task 4.3):
+    ``open_positions`` is the result of the SINGLE ``GET /tradfi/positions`` read
+    taken for this submit. The design requires that same read feed BOTH the Req 1.8
+    position-exists check (inside ``validation`` via ``context.open_positions``) and
+    the Req 7.4 double-send guard (Task 4.3). To make the reuse explicit and
+    refetch-free, the list is held here AND threaded into ``context`` as the SAME
+    object — ``context.open_positions is open_positions`` (asserted by test). Task
+    4.3's double-send guard MUST read ``snapshot.open_positions`` rather than
+    issuing a second positions fetch.
+
+    ``symbol_info`` is the resolved tradable ``SymbolInfo`` (or ``None`` when the
+    symbol is not in the validated set — drives the 4.3-chain UNKNOWN_SYMBOL gate).
+    ``bid`` / ``ask`` are the target symbol's current quote (read once here so the
+    paper simulator prices from a real venue quote without a second uninjected
+    fetch); ``None`` when the symbol did not resolve (no quote needed — the chain
+    rejects first). ``context`` is the fully-populated :class:`ValidationContext`
+    the chain evaluates — built from this snapshot, never re-resolved mid-run (P2).
+    """
+
+    symbol_info: Optional[SymbolInfo]
+    open_positions: list[Position]
+    account_assets: Optional[AccountAssets]
+    account_active: bool
+    bid: Optional[float]
+    ask: Optional[float]
+    context: "_validation.ValidationContext"
+
+
+def gather_snapshot(
+    symbol: str,
+    *,
+    clients: Optional[ReadoutClients] = None,
+    runtime_mode: Optional[_config.RuntimeMode] = None,
+) -> PreTransmitSnapshot:
+    """Gather the ONE pre-transmit snapshot for ``symbol`` (design "core"
+    Responsibilities).
+
+    Reads — ONCE each, all through the injected ``clients`` transport — the open
+    positions (the single read the 1.8 check and the 7.4 guard share), the account
+    assets, the account-active status (from mt5-account), the resolved target-symbol
+    ``SymbolInfo``/session (via the symbol_cache), and the target symbol's bid/ask
+    quote (so paper prices from a real venue quote). It then folds them into a
+    :class:`validation.ValidationContext` (the same ``open_positions`` object) and
+    returns both on the snapshot. No sizing/scoring (7.3); pure gather + assemble.
+
+    ``runtime_mode`` defaults to a conservative paper-default ``RuntimeMode`` (paper
+    on, all live clearances safe-default) so a snapshot is never accidentally
+    live-capable.
+    """
+    c = _resolve(clients)
+    rm = runtime_mode if runtime_mode is not None else _config.RuntimeMode()
+
+    # ONE positions read — the read the 1.8 check and (Task 4.3) the 7.4 guard share.
+    open_positions = get_positions(clients=c)
+
+    # Account assets + active status. The account-active flag is sourced from the
+    # live mt5-account read (its own field is the source of truth — see
+    # ValidationContext docstring); we read assets here and derive active from the
+    # mt5-account status, falling back to the runtime_mode flag when the venue read
+    # does not expose an explicit status. Both reads are surfaced-on-failure
+    # (BrokerReadoutError) by the readout layer, never masked.
+    account_assets = get_account_assets(clients=c)
+    account_active = _resolve_account_active(c, runtime_mode=rm)
+
+    # Resolve the target symbol (or None -> the chain's UNKNOWN_SYMBOL gate fires).
+    resolved = c.symbol_cache.resolve(symbol)
+    symbol_info: Optional[SymbolInfo]
+    if isinstance(resolved, SymbolInfo):
+        symbol_info = resolved
+    else:
+        symbol_info = None
+
+    # Bid/ask for the resolved symbol (paper prices from this; live confirms fills
+    # via history). Only fetched when the symbol resolved — an unresolved symbol is
+    # rejected by the chain before any pricing is needed.
+    bid: Optional[float] = None
+    ask: Optional[float] = None
+    if symbol_info is not None:
+        bid, ask = _fetch_quote(symbol, clients=c)
+
+    context = _validation.ValidationContext(
+        symbol_info=symbol_info,
+        account_active=account_active,
+        runtime_mode=rm,
+        open_positions=open_positions,  # SAME object — the one-read reuse seam.
+        account_assets=account_assets,
+        us_stock_category_id=rm.us_stock_category_id,
+    )
+
+    return PreTransmitSnapshot(
+        symbol_info=symbol_info,
+        open_positions=open_positions,
+        account_assets=account_assets,
+        account_active=account_active,
+        bid=bid,
+        ask=ask,
+        context=context,
+    )
+
+
+def _resolve_account_active(
+    clients: ReadoutClients, *, runtime_mode: _config.RuntimeMode
+) -> bool:
+    """Derive the account-active flag for the snapshot (Req 1.10 input).
+
+    The authoritative source is the live ``/tradfi/users/mt5-account`` ``status``
+    read (venue enum: 1=not opened, 2=pending review, 3=active — only 3 is active).
+    When the venue read fails or omits ``status`` we fall back to the caller's
+    ``runtime_mode.account_active`` (the conservative default is inactive). Kept
+    narrow so the source of truth — the live status — drives the 1.10 gate without
+    the snapshot inventing one.
+    """
+    outcome = clients.gate_client.request(
+        "GET", _MT5_ACCOUNT_PATH, transport=clients.transport
+    )
+    if getattr(outcome, "ok", False) is True and isinstance(outcome.data, dict):
+        status = outcome.data.get("status")
+        if status is not None:
+            try:
+                return int(status) == _ACCOUNT_STATUS_ACTIVE
+            except (TypeError, ValueError):
+                return False
+    return runtime_mode.account_active
+
+
+def _fetch_quote(
+    symbol: str, *, clients: ReadoutClients
+) -> tuple[Optional[float], Optional[float]]:
+    """Read the target symbol's current bid/ask ONCE (``GET .../tickers``).
+
+    Goes through the injected ``clients`` transport (so it is unit-testable and
+    shares the snapshot's transport). Venue numerics arrive as strings; parse at
+    this boundary (P13 — the adapter validates its own types). A failed/short quote
+    returns ``(None, None)`` — the caller (paper) surfaces the gap rather than
+    transmitting a guessed price.
+    """
+    outcome = clients.gate_client.request(
+        "GET", _TICKER_PATH_FMT.format(symbol=symbol), transport=clients.transport
+    )
+    if getattr(outcome, "ok", False) is not True:
+        return None, None
+    data = outcome.data
+    if not isinstance(data, dict):
+        return None, None
+    bid = data.get("bid_price")
+    ask = data.get("ask_price")
+    return (
+        float(bid) if bid is not None else None,
+        float(ask) if ask is not None else None,
+    )
+
+
+def _position_volume_for_close(
+    intent: OrderIntent, snapshot: PreTransmitSnapshot
+) -> Optional[float]:
+    """For a full SELL (no request volume), the closed position's volume — surfaced
+    verbatim by paper as ``fill_volume`` (never invented, Req 7.1).
+
+    Looks the position up in the snapshot's SINGLE positions read (no refetch) by
+    the caller-supplied ``position_id`` (Req 1.9). Returns ``None`` when not found
+    or when the intent already carries a volume (TRIM/BUY).
+    """
+    if intent.volume is not None or intent.position_id is None:
+        return None
+    for p in snapshot.open_positions:
+        if p.position_id == intent.position_id:
+            return p.volume
+    return None
+
+
+def submit_decision(
+    decision: Label,
+    symbol: str,
+    direction: Direction,
+    volume: Optional[float] = None,
+    position_id: Optional[str] = None,
+    order_type: OrderType = OrderType.MARKET,
+    trigger_price: Optional[float] = None,
+    take_profit: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    *,
+    clients: Optional[ReadoutClients] = None,
+    runtime_mode: Optional[_config.RuntimeMode] = None,
+) -> OrderResult:
+    """Route a P9 ``Label`` + ``Direction`` to the right operation; never raises.
+
+    The single validated path the daemon and ``server`` share (design "core"
+    Service Interface). Steps:
+
+    1. **HOLD -> structured no-op** (Req 1.4): return ``OrderResult(status="noop")``
+       BEFORE any snapshot/transmit. HOLD carries no action (the mapper has none).
+    2. Build the frozen :class:`OrderIntent` from the caller args verbatim — no
+       sizing/scoring/trigger logic (Req 7.3); ``volume`` is surfaced as supplied
+       (never upsized — Req 7.1).
+    3. Gather the ONE pre-transmit snapshot (:func:`gather_snapshot`): one positions
+       read (shared with the 4.3 guard), account assets/status, resolved symbol +
+       session, bid/ask.
+    4. Run the reject-only validation chain (``validation.evaluate``). A
+       :class:`RejectionReason` -> ``OrderResult(status="rejected", reason=...)``
+       (covers 1.8 TRIM/SELL-no-position, 1.10 inactive, 8.3/8.4/8.5
+       LIVE_SEND_BLOCKED, etc.). The chain acts only on the caller-supplied
+       ``position_id`` for TRIM/SELL (Req 1.9) and never upsizes (Req 7.1/7.2).
+    5. **Route** (P9 via the mapper): BUY -> open; TRIM/SELL -> close by
+       ``position_id``. In **paper** mode (the v0.1 default, Req 8.1) -> the paper
+       simulator (Req 8.2: full validation already ran; price from bid/ask; NO
+       order POST) -> ``OrderResult(status="simulated")``. **Live** transmit is
+       permitted ONLY when ``runtime_mode.live_transmit_allowed()`` (all four Req
+       8.3 conditions). The validation chain's ``_check_live_send`` already refuses
+       a non-paper run missing a clearance with LIVE_SEND_BLOCKED (step 4), so by
+       this point a non-paper run is fully cleared; route to :func:`_submit_live`.
+
+    No ``volume`` mutation, no second positions fetch, no telemetry (Req 9.4).
+    """
+    # 1) HOLD short-circuits to a structured no-op — no snapshot, no transmit (1.4).
+    if decision is Label.HOLD:
+        return OrderResult(
+            status="noop",
+            raw={"decision": Label.HOLD.value, "symbol": symbol, "noop": True},
+        )
+
+    # 2) Build the intent verbatim (no sizing/scoring — 7.3; volume as-supplied 7.1).
+    intent = OrderIntent(
+        decision=decision,
+        symbol=symbol,
+        direction=direction,
+        volume=volume,
+        position_id=position_id,
+        order_type=order_type,
+        trigger_price=trigger_price,
+        take_profit=take_profit,
+        stop_loss=stop_loss,
+    )
+
+    # 3) ONE pre-transmit snapshot (assets/status + positions + symbol/session + quote).
+    snapshot = gather_snapshot(symbol, clients=clients, runtime_mode=runtime_mode)
+
+    # 4) Reject-only validation chain. Any reason -> structured rejection (no transmit).
+    reason = _validation.evaluate(intent, snapshot.context)
+    if reason is not None:
+        return OrderResult(status="rejected", reason=reason)
+
+    # 5) Route. Paper (v0.1 default) simulates; live transmits only when fully cleared.
+    rm = snapshot.context.runtime_mode
+    if rm.paper_enabled:
+        # Paper mode (8.1/8.2): full validation already ran; price from the snapshot
+        # bid/ask; NO order POST. paper.simulate is a pure function given bid/ask.
+        return _paper.simulate(
+            intent,
+            bid=snapshot.bid,
+            ask=snapshot.ask,
+            position_volume=_position_volume_for_close(intent, snapshot),
+        )
+
+    # Non-paper run: the chain's live-send gate (step 4) already refused any run
+    # missing a clearance with LIVE_SEND_BLOCKED, so reaching here means all four
+    # Req 8.3 conditions hold. Defense-in-depth: re-assert before transmitting.
+    if not rm.live_transmit_allowed():  # pragma: no cover - chain refuses first
+        return OrderResult(
+            status="rejected",
+            reason=RejectionReason(
+                code=RejectionCode.LIVE_SEND_BLOCKED,
+                message=(
+                    "live transmit refused at the routing seam: not all four Req 8.3 "
+                    "clearances hold (paper off AND active AND clearance AND kill clear)."
+                ),
+            ),
+        )
+
+    action = _mappers.map_decision_to_action(intent)
+    return _submit_live(intent, snapshot, action, _resolve(clients))
+
+
+def _submit_live(
+    intent: OrderIntent,
+    snapshot: PreTransmitSnapshot,
+    action: "_mappers.VenueAction",
+    clients: ReadoutClients,
+) -> OrderResult:
+    """Transmit a fully-cleared live order and confirm it by reading back (Task 4.2
+    BASIC path; Task 4.3 HARDENS this into the async poll-loop + double-send guard).
+
+    UNREACHABLE in v0.1 (paper default, Req 8.1) — exercised only when a caller
+    forces all four Req 8.3 clearances. This is a COMPLETE basic transmit+confirm,
+    NOT a stub: it (1) POSTs the mapped venue action via ``gate_client`` (the venue
+    acknowledges asynchronously with a queue-task-id, not a fill — reference gotcha
+    #1), and (2) confirms ONCE by reading back the relevant book — orders for a BUY
+    open, positions for a TRIM/SELL close — surfacing the venue fill when present,
+    else ``unconfirmed`` (never assume a fill — Req 1.7/9.2).
+
+    SEAM FOR TASK 4.3: the retained ``queue_task_id`` is returned on ``result.raw``
+    so 4.3's double-send guard can correlate it against active orders/positions
+    BEFORE any re-send, REUSING ``snapshot.open_positions`` (no second fetch). 4.3
+    replaces the single read-back below with a bounded poll loop and folds in that
+    correlation; the transmit half stays as written here.
+    """
+    # 1) Transmit the mapped action. The venue returns a queue-task-id under data.id
+    #    (async ack, not a fill). A transport failure surfaces as a structured
+    #    BrokerReadoutError via _ok_or_raise (the daemon/server boundary handles it).
+    post_outcome = clients.gate_client.request(
+        action.method, action.endpoint, body=action.body, transport=clients.transport
+    )
+    ack = _ok_or_raise(post_outcome, what="live order submit")
+    queue_task_id = ack.get("id") if isinstance(ack, dict) else None
+    if isinstance(ack, dict) and isinstance(ack.get("data"), dict):
+        # Venue ack envelope is {"label","message","data":{"id":...}} — prefer data.id.
+        queue_task_id = ack["data"].get("id", queue_task_id)
+
+    # 2) Confirm by reading back ONCE (Task 4.3 makes this a bounded poll loop).
+    if intent.decision is Label.BUY:
+        confirmation = _confirm_open(intent, clients)
+    else:
+        confirmation = _confirm_close(intent, clients)
+
+    raw: dict[str, Any] = {
+        "queue_task_id": queue_task_id,
+        "endpoint": action.endpoint,
+        "confirmation": confirmation.get("raw"),
+    }
+    return OrderResult(
+        status=confirmation["status"],
+        order_id=confirmation.get("order_id"),
+        position_id=confirmation.get("position_id") or intent.position_id,
+        fill_price=confirmation.get("fill_price"),
+        fill_volume=confirmation.get("fill_volume"),
+        raw=raw,
+    )
+
+
+def _confirm_open(intent: OrderIntent, clients: ReadoutClients) -> dict[str, Any]:
+    """Read back ``GET /tradfi/orders`` ONCE and correlate the just-opened order by
+    symbol+side (BASIC confirm; Task 4.3 polls + correlates the queue-task-id).
+
+    Surfaces the venue order id + fill on a match; otherwise ``unconfirmed`` (never
+    assume a fill — Req 1.7/9.2). Venue numerics arrive as strings; parse here.
+    """
+    outcome = clients.gate_client.request(
+        "GET", _ORDERS_PATH, transport=clients.transport
+    )
+    orders = _ok_or_raise(outcome, what="live order confirm (orders read-back)")
+    want_side = (
+        _mappers.SIDE_BUY if intent.direction is Direction.LONG else _mappers.SIDE_SELL
+    )
+    if isinstance(orders, list):
+        for o in orders:
+            if str(o.get("symbol")) == intent.symbol and o.get("side") == want_side:
+                price = o.get("price")
+                vol = o.get("volume")
+                return {
+                    "status": "filled" if o.get("finished") else "unconfirmed",
+                    "order_id": str(o.get("order_id")) if o.get("order_id") else None,
+                    "fill_price": float(price) if price is not None else None,
+                    "fill_volume": float(vol) if vol is not None else None,
+                    "raw": o,
+                }
+    # No correlating order yet -> surface unconfirmed (the 4.3 poll loop retries).
+    return {"status": "unconfirmed", "raw": None}
+
+
+def _confirm_close(intent: OrderIntent, clients: ReadoutClients) -> dict[str, Any]:
+    """Read back ``GET /tradfi/positions`` ONCE and confirm the close by the
+    caller-supplied ``position_id`` (BASIC confirm; Task 4.3 polls + reuses the
+    snapshot read).
+
+    A SELL fully closes (the position should be ABSENT after the close); a TRIM
+    reduces it (still present, smaller volume). Either way the absence of the
+    transport error means the close was accepted; we surface ``filled`` when the
+    position is gone (full close) or still present (partial), else ``unconfirmed``.
+    Conservative: never assume a fill beyond what the read-back shows (Req 9.2).
+    """
+    outcome = clients.gate_client.request(
+        "GET", _POSITIONS_PATH, transport=clients.transport
+    )
+    positions = _ok_or_raise(outcome, what="live close confirm (positions read-back)")
+    if isinstance(positions, list):
+        for p in positions:
+            if str(p.get("position_id")) == intent.position_id:
+                # Position still open -> a partial (TRIM) close confirmed.
+                vol = p.get("volume")
+                return {
+                    "status": "filled",
+                    "position_id": intent.position_id,
+                    "fill_volume": float(vol) if vol is not None else None,
+                    "raw": p,
+                }
+        # Position absent -> a full close (SELL) confirmed.
+        return {"status": "filled", "position_id": intent.position_id, "raw": None}
+    return {"status": "unconfirmed", "raw": None}
+
+
 __all__ = [
     "BrokerReadoutError",
     "ReadoutClients",
@@ -346,4 +785,7 @@ __all__ = [
     "list_tradable_symbols",
     "validate_symbol",
     "get_history",
+    "PreTransmitSnapshot",
+    "gather_snapshot",
+    "submit_decision",
 ]
