@@ -57,7 +57,7 @@
   - _Requirements: 1, 8_
   - _Boundary: tests_
   - _Depends: 2.1_
-- [ ] 3.3 (P) Signal-model tests
+- [x] 3.3 (P) Signal-model tests
   - Aggregation with Σ=1 weights + trend-strength damping + conflict → s≈0 → HOLD; logistic-probability monotonicity; the thresholded decision (P > θ → LONG/SHORT, P ≤ θ → HOLD) under the tighten-only effective threshold; the advisory sizing hint increasing above θ and absent on HOLD; the non-final flag always set and the direction never flipped; invalid-direction → HOLD+reason and feature-failure → HOLD+reason; the substrate carrying feature values / probability / effective threshold / version / calibration; determinism on identical inputs; no LLM/MCP/DB.
   - Observable: the suite passes; the tighten-only threshold, conflict → HOLD, invalid-direction → HOLD, and determinism cases are explicitly asserted.
   - _Requirements: 2, 3, 4, 5, 6, 7, 8_

@@ -772,3 +772,357 @@ def test_decide_is_deterministic_full_decision_equality():
         a = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
         b = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
         assert a == b
+
+
+# ===========================================================================
+# Task 3.3 — coverage-completion additions (the FINAL inner-ring gate).
+#
+# The bulk of the decision-core contract is already covered above (tasks
+# 2.2/2.3/2.4). 3.3 adds only what was genuinely MISSING:
+#
+#   1. **Isolation (R8.2/R8.3) — the new item.** Assert `signal_model.py`'s OWN
+#      direct import surface is confined to stdlib + the EXACT allowed
+#      `src.reactive.{types,params,features}` deps (design §Allowed Dependencies:
+#      `types → params → features → signal_model`). NO overlays/indicators (those
+#      are `features.py`'s deps, not this module's), NO intraday
+#      `src.micro.signal_model`, NO LLM/MCP/network/DB. AST-over-source (the
+#      harness loads numpy/scipy/httpx/pandas, so a `sys.modules` probe is
+#      polluted — mirrors the established `test_features.py` predicate). Includes
+#      a self-proving negative so the green real-surface result is meaningful.
+#   2. **End-to-end conflict→HOLD through `decide`** (design §Testing Strategy
+#      line 241). 2.2 asserted `s≈0` at the AGGREGATION level only; here we assert
+#      the surviving-conflict feature set actually EMITS HOLD through the full
+#      public `decide` pipeline (s≈0 → P≈0.5 ≤ θ → HOLD, reason=None — a real
+#      sub-threshold derivation, not an abstain).
+#   3. **End-to-end determinism spanning the conflict→HOLD path** — the 2.4
+#      full-decision `==` test spans actionable / sub-threshold-HOLD / tightened /
+#      invalid / insufficient_history, but NOT the surviving-conflict→HOLD nor the
+#      `degenerate_features` abstain. Close those two gaps so determinism is
+#      byte-identical-asserted across ALL `decide` outcome classes.
+# ===========================================================================
+
+import ast  # noqa: E402  (3.3 isolation test — kept local to this section)
+import sys  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import src.reactive.signal_model as signal_model_mod  # noqa: E402
+
+# LLM/MCP/network/DB + heavy-numeric families that would break the "pure leaf,
+# no LLM/MCP/live-DB" contract if imported DIRECTLY by signal_model.py (R8.2).
+# numpy/scipy/pandas are listed because the design says this module needs NO
+# numeric lib at all (pure arithmetic via `math`) — a direct numpy import would
+# be a regression even though it is not strictly an I/O family. The stdlib
+# allowlist below is the load-bearing general check; this list is the
+# reviewer-legible guard against the named offenders (mirrors test_features.py).
+_FORBIDDEN_SM_IMPORT_SUBSTRINGS = (
+    "psycopg",
+    "sqlalchemy",
+    "httpx",
+    "requests",
+    "urllib3",
+    "aiohttp",
+    "mcp",
+    "llm",
+    "anthropic",
+    "openai",
+    "boto3",
+    "numpy",
+    "scipy",
+    "pandas",
+)
+
+# The EXACT intra-`src` modules signal_model.py is permitted to depend on. Per
+# design §Allowed Dependencies the strict left→right chain is
+# `types → params → features → signal_model`, so the decision core imports ONLY
+# its three sibling reactive contracts. Deliberately TIGHTER than features.py's
+# allowlist: signal_model must NOT import the overlay cores / indicators
+# directly (those are `features.py`'s deps — it consumes the already-computed
+# `FeatureSet`), and must NEVER touch the intraday `src.micro.signal_model`.
+# Exact-match (not a `src.reactive.*` prefix) so a future `src.reactive.db` or
+# `src.reactive.telemetry.*` import would be flagged, not silently admitted.
+_ALLOWED_SM_SRC_MODULES = frozenset(
+    {
+        "src.reactive.types",
+        "src.reactive.params",
+        "src.reactive.features",
+    }
+)
+
+
+def _check_sm_import_surface(source: str) -> list[str]:
+    """Return a list of isolation violations for `source` (empty = clean).
+
+    AST over the *source text* — NOT `sys.modules` — because the test harness
+    itself loads numpy/scipy/httpx/pandas (see the validation command), so a
+    `sys.modules` probe would be polluted and report false positives. This
+    inspects what signal_model.py actually DECLARES as direct imports.
+
+    A violation is any import whose top-level root is neither stdlib nor `src`,
+    OR any `src.`-prefixed import not in the exact `_ALLOWED_SM_SRC_MODULES` set.
+    """
+    allowed_roots = set(sys.stdlib_module_names) | {"__future__", "src"}
+    violations: list[str] = []
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in allowed_roots:
+                    violations.append(f"import {alias.name}")
+                elif root == "src" and alias.name not in _ALLOWED_SM_SRC_MODULES:
+                    # Plain `import src.micro.signal_model` must be caught too —
+                    # not only the `from ... import` form (else the intraday
+                    # model could slip in via the plain-import style).
+                    violations.append(f"import {alias.name} (src not in allowlist)")
+        elif isinstance(node, ast.ImportFrom):
+            if node.level != 0 or node.module is None:
+                violations.append("relative import (level>0 or no module)")
+                continue
+            root = node.module.split(".")[0]
+            if root not in allowed_roots:
+                violations.append(f"from {node.module}")
+            elif root == "src" and node.module not in _ALLOWED_SM_SRC_MODULES:
+                violations.append(f"from {node.module} (src not in allowlist)")
+    return violations
+
+
+# --- Isolation (R8.2 / R8.3): signal_model.py's OWN import surface ----------
+
+
+def test_signal_model_import_surface_is_stdlib_plus_allowed_reactive_only():
+    """R8.2/R8.3 (the 3.3 new item): signal_model.py is a pure leaf. Its DIRECT
+    import surface must be confined to stdlib + the EXACT allowed reactive deps
+    (`src.reactive.{types,params,features}`) — no LLM/MCP/network/DB, no numeric
+    lib, and crucially NO overlay cores / indicators (features.py's deps) and NO
+    intraday `src.micro.signal_model`. `sys.stdlib_module_names` is the robust
+    general allowlist (catches ANY third-party import, incl. numpy/scipy/pandas,
+    not only the enumerated offenders)."""
+    source = Path(signal_model_mod.__file__).read_text()
+    violations = _check_sm_import_surface(source)
+    assert violations == [], (
+        f"signal_model.py has forbidden direct imports {violations} — breaks the "
+        "pure-leaf isolation contract (R8.2/R8.3; design §Allowed Dependencies)"
+    )
+
+
+def test_signal_model_import_surface_check_actually_catches_violations():
+    """Self-proving: the isolation predicate is not vacuous — it FLAGS each
+    forbidden form. Run it over a crafted bad source (without touching src/): a
+    third-party import, the EXCLUDED intraday model, the overlay cores (allowed
+    for features.py but NOT for the decision core), and a non-allowlisted `src`
+    module must all be reported; the clean stdlib + allowed-reactive imports must
+    NOT be. If this passes, the green real-surface result above is meaningful."""
+    bad_source = (
+        "import numpy\n"
+        "from src.micro.signal_model import softmax3\n"  # excluded intraday (from-form)
+        "import src.micro.signal_model\n"  # excluded intraday (plain-import form)
+        "from src.overlays.flow.bin_classifier import classify_flow\n"  # features' dep, not core's
+        "from src.reactive.db import write_row\n"
+        "import math\n"  # stdlib — must NOT be flagged
+        "from src.reactive.features import FeatureSet\n"  # allowed — must NOT be flagged
+        "from src.reactive.params import ParamSnapshot\n"  # allowed — must NOT be flagged
+    )
+    violations = _check_sm_import_surface(bad_source)
+    assert "import numpy" in violations
+    assert "from src.micro.signal_model (src not in allowlist)" in violations
+    # The plain `import src.micro.signal_model` form must ALSO be caught — the
+    # exact-allowlist is enforced in both AST branches, not just `ImportFrom`.
+    assert "import src.micro.signal_model (src not in allowlist)" in violations
+    # The overlay cores are features.py's deps, NOT the decision core's — the
+    # tighter allowlist correctly flags them here.
+    assert "from src.overlays.flow.bin_classifier (src not in allowlist)" in violations
+    assert "from src.reactive.db (src not in allowlist)" in violations
+    # The clean stdlib + allowed-reactive imports must NOT be reported.
+    assert not any("math" in v for v in violations)
+    assert not any("features" in v for v in violations)
+    assert not any("params" in v for v in violations)
+
+
+def test_signal_model_has_no_forbidden_io_or_numeric_imports():
+    """R8.2: explicit, reviewer-legible guard against the named LLM/MCP/network/
+    DB + heavy-numeric families as DIRECT signal_model.py imports. Redundant with
+    the stdlib allowlist above by design — documents that R8.2's specific
+    offenders (incl. numpy/scipy/pandas, which the design says this pure-arithmetic
+    module never needs) are absent from the direct surface."""
+    source = Path(signal_model_mod.__file__).read_text()
+    tree = ast.parse(source)
+    roots: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                roots.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module:
+                roots.add(node.module.split(".")[0])
+    for root in roots:
+        for forbidden in _FORBIDDEN_SM_IMPORT_SUBSTRINGS:
+            assert forbidden not in root, (
+                f"signal_model imports forbidden I/O/LLM/heavy-numeric family "
+                f"{root!r} (matched {forbidden!r}) — violates R8.2 (no LLM/MCP/"
+                "live-DB; the decision core is pure `math` arithmetic)"
+            )
+
+
+def test_signal_model_does_not_import_intraday_model_by_root_module():
+    """R1 adjacent / R8.3: belt-and-braces — `src.micro` must not appear AT ALL in
+    signal_model.py's direct imports. The intraday `/micro` model is a sibling
+    that this design explicitly leaves untouched (it reuses only the *pattern*,
+    not the module); a direct `src.micro.*` dependency would couple the days-to-
+    weeks Edge core to the intraday module and is forbidden here (overlays/
+    indicators reuse lives behind the `features` adapter, not in the core)."""
+    source = Path(signal_model_mod.__file__).read_text()
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("src.micro"), (
+                    f"signal_model.py directly imports {alias.name} — the decision "
+                    "core must not depend on the intraday `src.micro` module"
+                )
+        elif isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module:
+                assert not node.module.startswith("src.micro"), (
+                    f"signal_model.py directly imports from {node.module} — the "
+                    "decision core must not depend on the intraday `src.micro` module"
+                )
+
+
+# --- End-to-end conflict→HOLD through the public `decide` (design line 241) --
+#
+# 2.2 proved a surviving cross-family conflict aggregates to `s≈0` at the
+# AGGREGATION level. 3.3 closes the loop: assert that same feature set actually
+# EMITS HOLD through the full public `decide` pipeline (s≈0 → P≈0.5 ≤ θ → HOLD)
+# — the conservative-Edge default surfaced end-to-end, not just in the score.
+
+
+# A surviving-conflict feature set: trend(+1) vs meanrev(−1), flow=0
+# (trend_strength=0 ⇒ meanrev UNDAMPED) ⇒ s≈0 under near-equal weights.
+_CONFLICT = _fs(trend_vote=1.0, flow_vote=0.0, meanrev_vote=-1.0)
+
+
+def test_decide_surviving_conflict_holds_via_full_pipeline_long():
+    """The conflict→HOLD design default (line 241) END-TO-END through `decide`:
+    a surviving trend/meanrev conflict (s≈0) yields P≈0.5, which is ≤ the 0.55
+    default threshold ⇒ HOLD. Crucially `reason is None` — this is a REAL
+    sub-threshold derivation (the conservative-Edge prudence), NOT an abstain;
+    and no actionable sizing hint. Uses EQUAL_WEIGHTS so s is an exact zero."""
+    snap = ParamSnapshot(
+        weights=EQUAL_WEIGHTS,
+        temperature=DEFAULTS.temperature,
+        threshold=0.55,
+        calibration=DEFAULTS.calibration,
+        code_version="reactive-signal-model@vT",
+        param_version="equalw@vT",
+    )
+    d = decide(_CONFLICT, "LONG", snap)
+    assert d.probability == pytest.approx(0.5)  # s≈0 → signed 0 → P 0.5
+    assert d.decision == "HOLD"
+    assert d.reason is None  # a derived sub-threshold HOLD, not an abstain
+    assert d.sizing_hint is None
+    assert d.non_final is True
+
+
+def test_decide_surviving_conflict_holds_for_both_directions():
+    """The conflict→HOLD default is direction-symmetric: the SAME surviving
+    conflict (s≈0) HOLDs whether the caller asks LONG or SHORT (project only
+    flips the sign of ~0, leaving P≈0.5 ≤ θ either way). Reinforces that the
+    HOLD is the no-edge default, not a side-specific artifact."""
+    snap = ParamSnapshot(
+        weights=EQUAL_WEIGHTS,
+        temperature=DEFAULTS.temperature,
+        threshold=0.55,
+        calibration=DEFAULTS.calibration,
+        code_version="c",
+        param_version="p",
+    )
+    for direction in ("LONG", "SHORT"):
+        d = decide(_CONFLICT, direction, snap)
+        assert d.decision == "HOLD"
+        assert d.reason is None
+        assert d.probability == pytest.approx(0.5)
+
+
+def test_decide_damped_conflict_becomes_actionable_contrast():
+    """CONTRAST pair (mirrors the 2.2 aggregation-level contrast, now end-to-end):
+    the SAME opposing trend(+1)/meanrev(−1) but with flow=+1 (trend_strength=1)
+    damps the meanrev term to 0 ⇒ trend+flow win ⇒ s decisive ⇒ P > θ ⇒ the
+    decision becomes the actionable LONG. Proves the damping is what (de)permits
+    the conflict-HOLD through the full `decide`, not an incidental zero."""
+    snap = ParamSnapshot(
+        weights=EQUAL_WEIGHTS,
+        temperature=DEFAULTS.temperature,
+        threshold=0.55,
+        calibration=DEFAULTS.calibration,
+        code_version="c",
+        param_version="p",
+    )
+    surviving = decide(_CONFLICT, "LONG", snap)  # flow=0 → s≈0 → HOLD
+    damped = decide(
+        _fs(trend_vote=1.0, flow_vote=1.0, meanrev_vote=-1.0), "LONG", snap
+    )
+    assert surviving.decision == "HOLD"
+    assert damped.decision == "LONG"
+    assert damped.probability > surviving.probability
+
+
+# --- End-to-end determinism spanning ALL decide outcome classes (R8.1) ------
+#
+# The 2.4 `test_decide_is_deterministic_full_decision_equality` spans actionable
+# / sub-threshold-HOLD / tightened-HOLD / invalid-direction / insufficient_history.
+# It does NOT span the surviving-conflict→HOLD path nor the `degenerate_features`
+# abstain — close both so byte-identical determinism is asserted across EVERY
+# `decide` outcome class (the final inner-ring determinism gate).
+
+
+def test_decide_deterministic_across_conflict_and_degenerate_paths():
+    """Byte-identical `ReactiveDecision` (frozen dataclass `==`) on the two
+    outcome classes the 2.4 determinism test omitted: the surviving-conflict→HOLD
+    derivation and the `degenerate_features` abstain. Completes R8.1 coverage so
+    determinism holds across actionable / sub-threshold-HOLD / conflict-HOLD /
+    tightened-HOLD / invalid-direction / insufficient_history / degenerate."""
+    snap = ParamSnapshot(
+        weights=EQUAL_WEIGHTS,
+        temperature=DEFAULTS.temperature,
+        threshold=0.55,
+        calibration=DEFAULTS.calibration,
+        code_version="reactive-signal-model@vT",
+        param_version="equalw@vT",
+    )
+    cases = [
+        (_CONFLICT, "LONG", None),                                 # surviving conflict → HOLD
+        (_CONFLICT, "SHORT", None),                                # conflict, other side
+        (FeatureFailure(reason="degenerate_features"), "LONG", None),  # degenerate abstain
+    ]
+    for feats, direction, runtime in cases:
+        a = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
+        b = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
+        assert a == b
+
+
+def test_decide_full_decision_equality_spans_every_outcome_class():
+    """The consolidated determinism gate: one parametrize-free sweep asserting
+    byte-identical `decide` output across ALL SEVEN outcome classes in a single
+    test, so a future refactor that introduces nondeterminism on any path is
+    caught here regardless of which earlier per-class test it slips past."""
+    snap = ParamSnapshot(
+        weights=EQUAL_WEIGHTS,
+        temperature=DEFAULTS.temperature,
+        threshold=0.55,
+        calibration=DEFAULTS.calibration,
+        code_version="reactive-signal-model@vT",
+        param_version="equalw@vT",
+    )
+    cases = [
+        (_STRONG_LONG, "LONG", None),                              # actionable LONG
+        (_fs(-1.0, -1.0, -1.0), "SHORT", None),                    # actionable SHORT
+        (_FLAT, "LONG", None),                                     # sub-threshold HOLD
+        (_CONFLICT, "LONG", None),                                 # conflict HOLD
+        (_STRONG_LONG, "LONG", 0.99),                              # tightened to HOLD
+        (_STRONG_LONG, None, None),                                # invalid direction
+        (FeatureFailure(reason="insufficient_history"), "LONG", None),
+        (FeatureFailure(reason="degenerate_features"), "SHORT", None),
+    ]
+    for feats, direction, runtime in cases:
+        a = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
+        b = decide(feats, direction, snap, runtime_threshold=runtime)  # type: ignore[arg-type]
+        assert a == b
