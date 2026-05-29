@@ -37,7 +37,7 @@
 
 - [ ] 2. Transport and mapping
 
-- [ ] 2.1 (P) Implement the signed REST transport to the Gate venue
+- [x] 2.1 (P) Implement the signed REST transport to the Gate venue
   - Sign requests (APIv4 HMAC-SHA512) for the `/tradfi` endpoint set and return raw venue JSON only.
   - Parse the rate-limit signals and back off on a rate-limit condition; discover the effective limit at runtime; never raise — return structured transport errors (authentication failure, unreachable, rate-limited).
   - Observable: against the mock, an authentication failure and a rate-limit response each yield a structured error result (not an exception), and a normal call returns parsed JSON.
