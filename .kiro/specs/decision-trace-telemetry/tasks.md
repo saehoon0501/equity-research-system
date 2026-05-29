@@ -43,7 +43,7 @@
   - _Boundary: trace_writer_
   - _Depends: 1.1_
 
-- [ ] 2.2 (P) Implement the read/replay surface
+- [x] 2.2 (P) Implement the read/replay surface
   - Implement the consumer-agnostic read surface that retrieves trace rows filtered by any subset of the correlation keys plus a since/until time bound and kind.
   - Read-only; returns decision and linked fill rows joinable by the parent id; surfaces the event timestamp + walk-forward window so a consumer can enforce its own temporal firewall (this surface provides, never enforces).
   - Observable: a query by a (code version, parameter version, walk-forward window) tuple returns the matching decision and its linked fill, and an until-bound query excludes rows whose event timestamp is past the bound.
