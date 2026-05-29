@@ -127,7 +127,7 @@
   - _Boundary: tests order-path_
   - _Depends: 5.1_
 
-- [ ] 6.2 (P) Unit-test the readouts, transport errors, and history
+- [x] 6.2 (P) Unit-test the readouts, transport errors, and history
   - Cover positions/assets/symbols/history mapping including venue-supplied profit/loss and swap, stop-out exposure without a derived liquidation distance, ticker-only identity, empty sets, authentication/unreachable/rate-limit transport errors, the no-telemetry invariant, and the forced-liquidation flag.
   - Observable: tests pass for each acceptance criterion in the readout/transport/history set.
   - _Requirements: 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 4.1, 5.2, 5.3, 9.1, 9.2, 9.3, 9.4, 9.5, 10.1, 10.2, 10.3, 10.4_
