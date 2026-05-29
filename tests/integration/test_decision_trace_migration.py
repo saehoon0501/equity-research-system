@@ -1,9 +1,32 @@
 """`integration_live` inner-ring tests for migration 048's append-only DB surface.
 
 Shared file for tasks 3.2–3.4 (design.md "File Structure Plan"); this commit
-adds tasks 3.2 (trace append-only guard) and 3.3 (ledger migration-safety +
-guard extension). Task 3.4 (link/firewall/idempotency) lands later in this
-same file.
+adds task 3.4 (decision→fill link, late-fill temporal firewall, and write-path
+idempotency) on top of the already-landed tasks 3.2 (trace append-only guard)
+and 3.3 (ledger migration-safety + guard extension).
+
+Task 3.4 (requirements 1.4, 3.2, 5.1, 5.2, 6.1, 9.3; design "System Flows"
+async decision→fill + "Late-fill attribution + temporal firewall", "Testing
+Strategy → Integration" link/firewall/idempotency bullets): drives the REAL
+Python write/read path (`write_decision_trace`/`write_fill_outcome` →
+`query_trace`), not raw SQL. (1) Link: insert a decision then a linked fill
+(`fill.parent_trace_id == decision.trace_id`; the fill carries the DECISION's
+window per attribution), then a `(code_version, param_version,
+walk_forward_window)` query returns BOTH, joinable by parent id. (2) Late-fill
+firewall: a decision in window N + a linked fill whose `event_ts` lands in
+window N+1 (but attributed to the decision's window) → an until-N-boundary read
+EXCLUDES the late fill (predicate on `event_ts`) while the fill row still
+carries the decision's window (§14.6 firewall: held out of in-sample fitting
+yet attributed correctly). (3) Idempotency: a re-send of the same client-minted
+trace_id through the writer is a no-op (`ON CONFLICT (trace_id) DO NOTHING` →
+write count 1 then 0). Plus a lightweight build-order gate (R9.3): the
+inner-ring suite files must exist before any outer-ring scoring is wired.
+
+RED-first is N/A for 3.4: the writer + reader are already implemented (tasks
+2.1/2.2), so the suite is green on the first run. The tests stay discriminating
+nonetheless — the link test fails if the join/attribution is wrong, the
+firewall test fails if the `until` predicate leaks the late fill, and the
+idempotency test fails if `ON CONFLICT` is missing.
 
 Task 3.2 (requirements 2.1, 2.2, 9.1; design "Testing Strategy → Integration"
 append-only bullet + "Data Models → Physical (migration 048)" two guard
@@ -51,9 +74,23 @@ so nothing is ever actually deleted/updated/truncated). NEVER
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
 from psycopg.types.json import Jsonb
+
+# Task 3.4 drives the REAL Python write/read path (not raw SQL), so it imports
+# the leaf writers/reader + the schema row types. 3.2/3.3 above stay raw-SQL.
+from src.reactive.telemetry.reader import query_trace
+from src.reactive.telemetry.schema import (
+    CorrelationKeys,
+    DecisionTraceRow,
+    FillOutcomeRow,
+)
+from src.reactive.telemetry.trace_writer import (
+    write_decision_trace,
+    write_fill_outcome,
+)
 
 # Fixed namespace for deterministic, idempotent fixture ids (mirrors the uuid5
 # convention in tests/integration/test_contamination_check.py and the smoke
@@ -406,3 +443,299 @@ def test_ledger_guard_freezes_version_column_but_allows_window_close(
     assert row is not None, "seeded ledger row missing after guard probes"
     assert row[0] is None, "measurement_date probe should have been rolled back (still NULL)"
     assert row[1] is None, "code_version rejection probe must not have mutated the row"
+
+
+# =============================================================================
+# Task 3.4 — decision→fill link, late-fill temporal firewall, idempotency, and
+# the inner-ring build-order gate (requirements 1.4, 3.2, 5.1, 5.2, 6.1, 9.3;
+# design "System Flows" async decision→fill + "Late-fill attribution + temporal
+# firewall", "Testing Strategy → Integration" link/firewall/idempotency bullets).
+#
+# Unlike 3.2/3.3 (raw SQL), these drive the REAL Python write/read path:
+# write_decision_trace / write_fill_outcome → query_trace. All filter values are
+# bound (the reader whitelists filter keys), and every row carries a complete
+# CorrelationKeys, so a missing-key row would be rejected at the writer boundary.
+#
+# Non-destructive on the SHARED dev DB:
+#   * Link + firewall rows use DETERMINISTIC uuid5 ids + the writer's
+#     ON CONFLICT (trace_id) DO NOTHING — re-running is a clean no-op, and the
+#     assertions are on the QUERY result (never the write count), so they stay
+#     green whether the row was just inserted or already present from a prior
+#     run. Each test also uses a test-unique code_version/param_version so the
+#     (cv, pv, window) query is scoped to exactly its own rows on the shared DB.
+#   * The idempotency test uses a per-RUN-UNIQUE uuid4 trace_id precisely
+#     because it asserts the WRITE COUNT (1 then 0); a fixed uuid5 would return
+#     0 on the second run and break the assertion. uuid4 rows persist harmlessly
+#     (append-only, no teardown).
+# No DELETE/TRUNCATE/wipe; the `expect_rejection` commit-on-success residual
+# (tasks.md Implementation Notes) is irrelevant here — no destructive probes.
+# =============================================================================
+
+# --- Task 3.4 deterministic fixture ids (uuid5; own rows, distinct seeds) -----
+# Link test: a decision + its linked fill share one (cv, pv, window) scope.
+_LINK_DECISION_ID = str(uuid.uuid5(_NS, "task-3.4-link-decision"))
+_LINK_FILL_ID = str(uuid.uuid5(_NS, "task-3.4-link-fill"))
+_LINK_RUN_ID = str(uuid.uuid5(_NS, "task-3.4-link-run"))
+_LINK_CODE_VERSION = "task-3.4-link-cv"
+_LINK_PARAM_VERSION = "task-3.4-link-pv"
+_LINK_WINDOW = "2026Q1"
+
+# Firewall test: decision in window N (Jan), fill lands in window N+1 (Apr) but
+# is ATTRIBUTED to the decision's window (2026Q1). Distinct cv/pv scope.
+_FW_DECISION_ID = str(uuid.uuid5(_NS, "task-3.4-firewall-decision"))
+_FW_FILL_ID = str(uuid.uuid5(_NS, "task-3.4-firewall-fill"))
+_FW_RUN_ID = str(uuid.uuid5(_NS, "task-3.4-firewall-run"))
+_FW_CODE_VERSION = "task-3.4-firewall-cv"
+_FW_PARAM_VERSION = "task-3.4-firewall-pv"
+_FW_WINDOW = "2026Q1"
+# event_ts: decision in window N, fill in window N+1; explicit UTC ('Z') so the
+# timestamptz comparison can't be shifted by the session's time zone.
+_FW_DECISION_TS = "2026-01-15T12:00:00Z"  # window N (2026Q1)
+_FW_FILL_TS = "2026-04-15T12:00:00Z"  # window N+1 (2026Q2) — the LATE fill
+_FW_N_BOUNDARY = "2026-03-31T23:59:59Z"  # in-sample boundary at the end of N
+
+
+@pytest.mark.integration_live
+def test_decision_fill_link_query_returns_both_joinable(conn):
+    """Decision→fill link through the real write/read path (R1.4, 3.2, 6.1).
+
+    Insert a `decision` via `write_decision_trace`, then a linked `fill` via
+    `write_fill_outcome` whose `parent_trace_id` is the decision's `trace_id`
+    and whose `walk_forward_window` is the DECISION's window (attribution
+    follows the decision, per design "System Flows"). A `query_trace` filtered
+    by the shared `(code_version, param_version, walk_forward_window)` then
+    returns BOTH rows, joinable by `fill.parent_trace_id == decision.trace_id`.
+
+    Asserts the QUERY result, NEVER the writer's return count — deterministic
+    uuid5 + ON CONFLICT means a re-run writes 0 rows but the rows are present,
+    so the query assertion stays green across re-runs.
+    """
+    keys = CorrelationKeys(
+        run_id=_LINK_RUN_ID,
+        code_version=_LINK_CODE_VERSION,
+        param_version=_LINK_PARAM_VERSION,
+        walk_forward_window=_LINK_WINDOW,
+    )
+    decision = DecisionTraceRow(
+        trace_id=_LINK_DECISION_ID,
+        keys=keys,
+        event_ts="2026-01-10T09:30:00Z",
+        # plain dict — the writer json.dumps()es it; do NOT wrap in Jsonb.
+        trace={"gate_link": "Survive", "probability": 0.61, "declined": False},
+    )
+    # Fill carries the DECISION's window (attribution follows the decision).
+    fill = FillOutcomeRow(
+        trace_id=_LINK_FILL_ID,
+        parent_trace_id=_LINK_DECISION_ID,
+        keys=keys,  # same (cv, pv, window) — window = the decision's
+        event_ts="2026-01-10T09:31:00Z",
+        trace={"expected_price": "100.00", "actual_fill_price": "100.05",
+               "slippage": "0.05"},
+    )
+
+    # Live writes require a real conn (conn=None would be a dry-run / no write).
+    # Idempotent across re-runs via ON CONFLICT; we do NOT assert the count.
+    write_decision_trace([decision], conn=conn)
+    write_fill_outcome([fill], conn=conn)
+
+    # Read both back via a (cv, pv, window) query — scoped to this test's own
+    # rows by the test-unique cv/pv, so exactly the decision + its fill match.
+    rows = query_trace(
+        {
+            "code_version": _LINK_CODE_VERSION,
+            "param_version": _LINK_PARAM_VERSION,
+            "walk_forward_window": _LINK_WINDOW,
+        },
+        conn=conn,
+    )
+    assert len(rows) == 2, (
+        f"(cv, pv, window) query should return the decision + its fill, got {len(rows)}"
+    )
+
+    by_kind = {r["kind"]: r for r in rows}
+    assert set(by_kind) == {"decision", "fill"}, (
+        f"query should return one decision + one fill, got kinds {sorted(by_kind)}"
+    )
+    decision_row = by_kind["decision"]
+    fill_row = by_kind["fill"]
+
+    # The join: the fill's parent_trace_id equals the decision's trace_id.
+    # Both come from the DB as uuid.UUID (psycopg3 default loader), so this is
+    # a UUID == UUID comparison; also coerce-check against the minted string id.
+    assert fill_row["parent_trace_id"] == decision_row["trace_id"], (
+        "fill.parent_trace_id must join to the decision's trace_id"
+    )
+    assert str(decision_row["trace_id"]) == _LINK_DECISION_ID
+    assert str(fill_row["trace_id"]) == _LINK_FILL_ID
+    assert str(fill_row["parent_trace_id"]) == _LINK_DECISION_ID
+    # The fill carries the decision's window (attribution).
+    assert fill_row["walk_forward_window"] == _LINK_WINDOW
+    assert decision_row["walk_forward_window"] == _LINK_WINDOW
+
+
+@pytest.mark.integration_live
+def test_late_fill_firewall_excludes_fill_but_attributes_to_decision_window(conn):
+    """Late-fill temporal firewall through the real write/read path (R5.1, 5.2,
+    1.4; design "Late-fill attribution + temporal firewall", §14.6).
+
+    A decision in walk-forward window N (Jan, 2026Q1) plus a linked fill whose
+    `event_ts` lands in window N+1 (Apr, 2026Q2) BUT whose `walk_forward_window`
+    is the DECISION's window (2026Q1 — attribution follows the decision). Then:
+
+      * An until-N-boundary read (`until='2026-03-31T23:59:59Z'`) EXCLUDES the
+        late fill — its `event_ts` (Apr 15) is past the boundary — while still
+        INCLUDING the decision (Jan 15 ≤ boundary). This is the consumer-side
+        firewall predicate on `event_ts` the reader PROVIDES but does not
+        enforce (R5.2).
+      * Separately, the fill ROW still carries `walk_forward_window == '2026Q1'`
+        (the decision's window) — attribution is correct even though the fill
+        is held out of in-sample fitting. This is exactly the §14.6 guarantee:
+        a forward-window fill is firewalled out yet attributed to the decision.
+    """
+    keys = CorrelationKeys(
+        run_id=_FW_RUN_ID,
+        code_version=_FW_CODE_VERSION,
+        param_version=_FW_PARAM_VERSION,
+        walk_forward_window=_FW_WINDOW,  # decision's window = 2026Q1
+    )
+    decision = DecisionTraceRow(
+        trace_id=_FW_DECISION_ID,
+        keys=keys,
+        event_ts=_FW_DECISION_TS,  # window N (Jan 15)
+        trace={"gate_link": "Edge", "probability": 0.55, "declined": False},
+    )
+    # The LATE fill: its event_ts is in window N+1 (Apr 15), but it is
+    # ATTRIBUTED to the decision's window (2026Q1) via keys.walk_forward_window.
+    late_fill = FillOutcomeRow(
+        trace_id=_FW_FILL_ID,
+        parent_trace_id=_FW_DECISION_ID,
+        keys=keys,  # walk_forward_window = 2026Q1 (the decision's), NOT 2026Q2
+        event_ts=_FW_FILL_TS,  # window N+1 (Apr 15) — past the N boundary
+        trace={"expected_price": "50.00", "actual_fill_price": "50.20",
+               "slippage": "0.20"},
+    )
+
+    write_decision_trace([decision], conn=conn)
+    write_fill_outcome([late_fill], conn=conn)
+
+    # (1) Firewall read: until the N boundary. The predicate is event_ts ≤ until,
+    # so the Apr-15 fill is held OUT while the Jan-15 decision is included.
+    in_sample = query_trace(
+        {
+            "code_version": _FW_CODE_VERSION,
+            "param_version": _FW_PARAM_VERSION,
+            "until": _FW_N_BOUNDARY,
+        },
+        conn=conn,
+    )
+    in_sample_ids = {str(r["trace_id"]) for r in in_sample}
+    assert _FW_DECISION_ID in in_sample_ids, (
+        "the decision (event_ts in window N) must be inside the until-N read"
+    )
+    assert _FW_FILL_ID not in in_sample_ids, (
+        "the late fill (event_ts in window N+1) must be EXCLUDED by the "
+        "until-N-boundary predicate — the firewall leaked it"
+    )
+    in_sample_kinds = {r["kind"] for r in in_sample}
+    assert "fill" not in in_sample_kinds, (
+        "no fill row should survive the until-N firewall (the only fill is late)"
+    )
+
+    # (2) Attribution: the fill ROW itself still carries the DECISION's window
+    # (2026Q1), even though its event_ts is in N+1. Pull it via a kind='fill'
+    # query scoped to this test's cv/pv (no `until` bound this time).
+    fills = query_trace(
+        {
+            "code_version": _FW_CODE_VERSION,
+            "param_version": _FW_PARAM_VERSION,
+            "kind": "fill",
+        },
+        conn=conn,
+    )
+    assert len(fills) == 1, (
+        f"exactly the one late fill should match this test's cv/pv, got {len(fills)}"
+    )
+    fill_row = fills[0]
+    assert str(fill_row["trace_id"]) == _FW_FILL_ID
+    assert fill_row["walk_forward_window"] == _FW_WINDOW, (
+        "the late fill must be ATTRIBUTED to the decision's window (2026Q1), "
+        f"not the fill's landing window — got {fill_row['walk_forward_window']!r}"
+    )
+    assert str(fill_row["parent_trace_id"]) == _FW_DECISION_ID, (
+        "the late fill must still join to its decision"
+    )
+
+
+@pytest.mark.integration_live
+def test_writer_resend_same_trace_id_is_noop(conn):
+    """Idempotency: a re-send of the SAME client-minted trace_id is a no-op
+    (`ON CONFLICT (trace_id) DO NOTHING`; design trace_writer "Idempotency").
+
+    Uses a per-RUN-UNIQUE uuid4 trace_id (NOT a fixed uuid5) BECAUSE this is the
+    one 3.4 test that asserts the WRITER'S RETURN COUNT (the number of rows
+    actually written): the first write returns len 1, an identical re-send
+    returns len 0. A fixed uuid5 would already exist on a second run and the
+    first write would return 0 — so the count assertion needs an id that is
+    fresh every run. uuid4 rows persist harmlessly (append-only, no teardown).
+    """
+    unique_trace_id = str(uuid.uuid4())  # fresh every run — see docstring
+    unique_run_id = str(uuid.uuid4())
+    keys = CorrelationKeys(
+        run_id=unique_run_id,
+        code_version="task-3.4-idempotency-cv",
+        param_version="task-3.4-idempotency-pv",
+        walk_forward_window="2026Q1",
+    )
+    row = DecisionTraceRow(
+        trace_id=unique_trace_id,
+        keys=keys,
+        event_ts="2026-02-01T10:00:00Z",
+        trace={"gate_link": "Survive", "declined": True},
+    )
+
+    # First write actually inserts → exactly one row written.
+    first = write_decision_trace([row], conn=conn)
+    assert len(first) == 1, (
+        f"first write of a fresh trace_id should write 1 row, got {len(first)}"
+    )
+
+    # Re-send the SAME row (same client-minted trace_id) → ON CONFLICT DO
+    # NOTHING → zero rows written (idempotent no-op).
+    second = write_decision_trace([row], conn=conn)
+    assert len(second) == 0, (
+        "re-sending the same client-minted trace_id must be a no-op "
+        f"(ON CONFLICT DO NOTHING → 0 written), got {len(second)} — "
+        "idempotency (ON CONFLICT) is missing or broken"
+    )
+
+    # The single row is present exactly once (read it back to confirm it stuck).
+    rows = query_trace({"run_id": unique_run_id}, conn=conn)
+    assert len(rows) == 1, (
+        f"exactly one row should exist for the unique run_id, got {len(rows)}"
+    )
+    assert str(rows[0]["trace_id"]) == unique_trace_id
+
+
+@pytest.mark.integration_live
+def test_inner_ring_suites_exist_before_outer_ring_wiring():
+    """Build-order gate (R9.3): the inner-ring suites must be in place before
+    any version-attributed outer-ring (eval-loop) scoring is wired against the
+    ledger (design "Testing Strategy → Build order").
+
+    A lightweight guard: assert both inner-ring suite files exist — the
+    pure-unit writer suite (3.1) and THIS integration_live suite (3.2–3.4). If
+    a future change wires outer-ring scoring while deleting/relocating these,
+    this test fails, surfacing the build-order violation (P14 / R9.3).
+    """
+    # parents[2] is the repo root (matches the conftest convention:
+    # tests/integration/<file> → [0]=integration, [1]=tests, [2]=repo root).
+    repo_root = Path(__file__).resolve().parents[2]
+    unit_suite = repo_root / "tests" / "unit" / "reactive" / "telemetry" / "test_trace_writer.py"
+    integration_suite = repo_root / "tests" / "integration" / "test_decision_trace_migration.py"
+
+    assert unit_suite.exists(), (
+        f"inner-ring pure-unit writer suite missing (R9.3 build-order gate): {unit_suite}"
+    )
+    assert integration_suite.exists(), (
+        f"inner-ring integration_live suite missing (R9.3 build-order gate): {integration_suite}"
+    )
