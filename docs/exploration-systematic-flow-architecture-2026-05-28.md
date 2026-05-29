@@ -276,3 +276,16 @@ Firewall test on `/research-company` output:
 Options were (a) keep slow layer as a **thin veto-only gap-risk filter** (separable, toggleable), vs (b) **pure-reactive** — fold gap-risk directly into the survival gate.
 
 **Decision: (a) first — not on merits, but because it is the only configuration that makes §12.5 runnable.** The whole point (§12.5) is to *measure* whether the gap-risk filter earns its keep; you can only A/B filter-gated-reactive vs pure-reactive if the filter exists as a separable stage. (b) hard-folds gap-risk into the gate and destroys the comparison before it can run. So: build (a) as a toggleable filter stage → run the ledger test → **collapse to (b) iff the ledger shows the filter is vestigial.** (b) is the migration target, not the starting point. Revisit if the filter proves un-toggleable in practice.
+
+## 13. The value chain — lexicographic precedence (operator-confirmed 2026-05-29)
+
+The decision layer's structuring unit is not the data payload but **the value the system protects**. Those values form a strict chain; each link is a **precondition for the next being allowed to matter at all**:
+
+**Survive ⊳ Preserve ⊳ Edge ⊳ Return**
+
+- **Survive** — don't get liquidated. If this fails, nothing below it exists.
+- **Preserve** — don't bleed capital/carry needlessly. Only meaningful once survival is secured.
+- **Edge** — be on the right side. Only worth having if you're still in the game to express it.
+- **Return** — size/optimize. The last and lowest value, not the first.
+
+**Structuring rule: lexicographic, not weighted.** Never trade a higher link for any amount of a lower one — no return improvement ever buys down survival. This is P7 lifted from "stages get more conservative" up to "values are strictly ordered." The layer walks the chain top-down and **stops the instant a higher value is threatened**; Edge and Return get no vote until Survive has already said yes.
