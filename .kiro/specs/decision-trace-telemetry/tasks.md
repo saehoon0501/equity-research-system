@@ -53,7 +53,7 @@
 
 - [ ] 3. Validation: inner-ring tests (pure-unit + integration_live)
   - The three integration sub-tasks (3.2–3.4) all live in the single integration test file from the design's File Structure Plan, so they are intentionally **not** `(P)` with each other and run in order.
-- [ ] 3.1 (P) Pure-unit writer tests
+- [x] 3.1 (P) Pure-unit writer tests
   - Cover dry-run (returns the shaped row, writes nothing), fail-fast on a missing correlation key, a fill requiring a parent id, and a decision forbidding one — no LLM, no MCP, no live DB, sub-second.
   - Observable: the unit suite runs without a database and asserts the dry-run no-write and each fail-fast rejection.
   - _Requirements: 9.1_
