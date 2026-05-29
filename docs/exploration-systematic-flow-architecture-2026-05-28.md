@@ -238,3 +238,38 @@ STILL OPEN (behind gate.com 403; need authenticated/browser read):
 - Whether the 50% stop-out / per-symbol margin requirement varies by name or tier.
 - Index/oracle price construction during closed sessions; gap handling on reopen.
 - Insolvency waterfall — whether a CFD holder is an unsecured creditor of Gate (offshore, bars US persons, not SEC/CFTC-registered).
+
+## 12. Decision-layer epistemics — reactive, not predictive (operator-decided 2026-05-29)
+
+Horizon fork (from §11 correction): **fork 3 selected** — slow-layer thesis is a directional *prior only*; the CFD layer runs days-to-weeks on its **own survival clock**, decoupled from the months-horizon thesis. Forks 1 (low-vol-only, full 4–5x) and 2 (high-vol + cushion) rejected: (1) doesn't need this apparatus; (2) a cushion that restores ~−20% liq distance turns nominal 5x into real ~2.5x — defeats its own premise.
+
+### 12.1 Why reactive, not predictive
+- **Prediction** forecasts a level and demands you *bear path risk to capture convergence*. At 4x / −10–12.5% stop, **path risk is the killer** → prediction's central demand is exactly what you can't afford.
+- A live thesis manufactures **conviction**, and conviction is the mechanism by which a levered position holds *through* its stop into liquidation.
+- ⟹ the CFD layer is a **reactive/responsive model** (momentum / mean-reversion / flow / vol + account-aware survival gate). It forecasts nothing; it disciplines the path.
+
+### 12.2 The one thing reaction can't self-supply
+- Reaction is **blind until the move starts** → at 4x, "blind until it starts" can mean learning via a **gap through the stop** (going-concern, fraud restatement, guidance cliff, halt). Stops don't fill through gaps.
+- Forward gap-sight is the *only* non-vestigial contribution of the predictive stack. It is a **tail-risk exclusion filter, not a thesis**.
+
+### 12.3 The slow layer collapses to a veto-only filter
+Firewall test on `/research-company` output:
+| Slow-layer output | In the CFD layer |
+|---|---|
+| DCF target / price level | **OUT** — wrong horizon |
+| Conviction tier, multi-month hold mandate | **OUT** — the liquidation mechanism |
+| Directional sign | **NOT from fundamentals** — `tactical-overlay` relative-strength supplies the side more honestly at this horizon |
+| Going-concern / Altman-Z / fraud / earnings-gap proximity | **KEPT** — but this is `catalyst-scout` + quality gate, a small subset |
+
+⟹ for fork 3 the full thesis apparatus is **largely vestigial**; what survives is a narrow gap-risk filter already provided by quality gate + catalyst calendar.
+
+### 12.4 Architectural consequence — current hierarchy is inverted
+- Today: slow layer = brain, overlays = "soft modulators, none overrides" (`pm-supervisor` surfacing of `tactical`/`flow`). **Backwards** for a levered reactive model.
+- Correct topology: **reactive stack = decider** (momentum/mean-reversion/flow/vol + survival gate); **slow layer = veto-only kill-list** beside it (can remove a name for gap-risk; cannot size, set conviction, or override a stop). P7 at its limit — predictive layer is not upstream of sizing at all.
+
+### 12.5 Make it falsifiable (P14 outer-ring), don't decide by argument
+- Test **filter-gated reactive** vs **pure reactive** on `counterfactual_ledger`, survival-net risk-adjusted return. If the filter doesn't improve it, the slow layer is fully vestigial for this layer → drop it.
+
+### 12.6 Open sub-fork (undecided)
+- (a) keep slow layer as a **thin veto-only gap-risk filter** (testable, possibly droppable), or
+- (b) **pure-reactive** — fold gap-risk into the survival gate itself (an earnings date / going-concern flag is just another input to "is the stop trustworthy"). Simpler, more honest about what the model is.
