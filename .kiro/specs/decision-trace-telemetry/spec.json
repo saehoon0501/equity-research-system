@@ -1,10 +1,10 @@
 {
   "feature_name": "decision-trace-telemetry",
   "created_at": "2026-05-29T11:03:09Z",
-  "updated_at": "2026-05-29T12:31:37Z",
+  "updated_at": "2026-05-29T13:20:00Z",
   "language": "en",
-  "phase": "design-generated",
-  "notes": "init + requirements generated together 2026-05-29 (decision-trace fork). Model-trace-only scope; single append-only decision_process_trace (typed identity/version/window cols + JSONB blob); counterfactual_ledger model-version migration claims number 048 (coordinate if the survival-gate fork also adds a migration).",
+  "phase": "tasks-generated",
+  "notes": "init + requirements generated together 2026-05-29 (decision-trace fork). Model-trace-only scope; single append-only decision_process_trace (typed identity/version/window cols + JSONB blob); counterfactual_ledger model-version migration claims number 048 (047 is highest today; coordinate if the survival-gate fork also adds a migration). Tasks generated 2026-05-29 after a NEEDS_FIXES sanity review: repo has NO migration runner (db/README.md) so integration tests apply 048 via a psycopg harness (task 1.3) over a bootstrapped 003->030 ledger; design.md 'migration framework' wording corrected to the numbered-.sql convention.",
   "approvals": {
     "requirements": {
       "generated": true,
@@ -12,10 +12,10 @@
     },
     "design": {
       "generated": true,
-      "approved": false
+      "approved": true
     },
     "tasks": {
-      "generated": false,
+      "generated": true,
       "approved": false
     }
   },

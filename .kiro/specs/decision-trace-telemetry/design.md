@@ -36,7 +36,7 @@
 - The 4-bin label scoring (existing eval loop — extended additively, never reimplemented).
 
 ### Allowed Dependencies
-- Postgres (the project DB) and the existing migration framework.
+- Postgres (the project DB) and the repo's numbered-migration **convention** (`db/migrations/NNN_*.sql`, applied by hand via `psql`/`mcp__postgres` — there is **no migration-runner framework**, per `db/README.md`).
 - The repo's direct-psycopg write convention (`src/shared/regime_sidecar/persistence.py`, `src/supervisor/emitter.py`) — `_dsn()` + `.transaction()` + `conn=None` dry-run.
 - The existing `counterfactual_ledger` (migs 003/011/030) and its `counterfactual_ledger_guard()` trigger — extended, not rewritten.
 - **Must not** depend on MCP for writes (the daemon writes the DB directly, §14.10), on account/survival state, or on the daemon's internal types.
@@ -83,7 +83,7 @@ Key decisions (not restated from the diagram): the daemon is the only writer-cal
 |-------|------------------|-----------------|-------|
 | Data / Storage | PostgreSQL (project DB) | `decision_process_trace` table + JSONB payload + ledger extension | reuses append-only guard-trigger + JSONB conventions |
 | Backend / leaf | Python 3.11 + psycopg (per repo) | `write_decision_trace` / `write_fill_outcome` / `query_trace` | direct-psycopg, `conn=None` dry-run; non-MCP (§14.10) |
-| Infrastructure / Runtime | DB migration framework | migration 048 (idempotent expand-then-contract) | no down-migration (repo convention) |
+| Infrastructure / Runtime | Numbered `.sql` migration convention (no runner — `db/README.md`) | migration 048 (idempotent, additive) | hand-applied via `psql`/`mcp__postgres`; no down-migration (repo convention); tests apply the `.sql` via `_dsn()`/psycopg |
 
 ## File Structure Plan
 
@@ -251,9 +251,12 @@ ALTER TABLE counterfactual_ledger
     ADD COLUMN IF NOT EXISTS walk_forward_window TEXT;
 CREATE INDEX IF NOT EXISTS idx_counterfactual_version_window
     ON counterfactual_ledger (code_version, param_version, walk_forward_window);
--- extend counterfactual_ledger_guard(): add the three columns to the immutable set
--- (IS DISTINCT FROM checks) so they are insert-set-only, never mutated post-insert.
--- (CREATE OR REPLACE FUNCTION ... ; existing window-close completion fields stay mutable.)
+-- extend counterfactual_ledger_guard(): CREATE OR REPLACE starting from migration 030's
+-- CURRENT 19-column immutable blacklist (NOT 003's older 11-column body), then add the three
+-- new columns with NULL-safe IS DISTINCT FROM so they are insert-set-only. The replace swaps the
+-- whole body, so it must reproduce 030's full immutable set + the 3 additions; window-close
+-- completion fields (legacy evaluation_window_end/system_return/baseline_return + HIGH-4
+-- measurement_date/*_return_pct) stay mutable.
 ```
 
 ## Error Handling
