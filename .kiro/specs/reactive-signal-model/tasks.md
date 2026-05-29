@@ -23,7 +23,7 @@
   - _Requirements: 1_
   - _Boundary: features_
   - _Depends: 1.1_
-- [ ] 2.2 Aggregate the family votes and project onto the caller direction
+- [x] 2.2 Aggregate the family votes and project onto the caller direction
   - Combine the votes into a directional score with near-equal normalized weights (Σ=1) and the mean-reversion term dampened by trend strength (`s = w_t·trend + w_f·flow + w_m·(meanrev·(1−trend_strength))`), keeping the score in [−1, +1]; project onto the caller-supplied direction (signed = s for LONG, −s for SHORT). The model accepts but never selects or flips the direction.
   - Observable: aligned families produce a decisive score while a cross-family conflict that survives damping produces s≈0; with synthetic votes the projection sign follows the caller direction.
   - _Requirements: 1, 3_
