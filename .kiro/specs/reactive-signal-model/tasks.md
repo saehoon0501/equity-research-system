@@ -29,7 +29,7 @@
   - _Requirements: 1, 3_
   - _Boundary: signal_model_
   - _Depends: 2.1, 1.2_
-- [ ] 2.3 Derive the probability and expose the snapshot's calibration evidence
+- [x] 2.3 Derive the probability and expose the snapshot's calibration evidence
   - Derive the probability that the caller-supplied direction is the correct side from the projected score via the temperature-scaled 2-class logistic (`P = 1/(1+exp(−signed/temperature))`) — a model-derived score, monotonic in the projection, never asserted; the reference intraday hold-logit is deliberately dropped so HOLD comes only from the threshold, never from a probability term.
   - Expose the calibration evidence carried in the active snapshot (Brier + reliability) alongside the probability; never compute calibration metrics here.
   - Observable: a positive projection yields P > 0.5 and a negative projection P < 0.5, monotonic in the score; the exposed calibration evidence equals the snapshot's (None under defaults).

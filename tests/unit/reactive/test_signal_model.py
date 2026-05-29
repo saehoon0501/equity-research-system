@@ -27,13 +27,14 @@ arithmetic directly with synthetic votes.
 from __future__ import annotations
 
 import itertools
+import math
 
 import pytest
 
 from src.reactive.features import FeatureSet
-from src.reactive.params import DEFAULTS
-from src.reactive.signal_model import aggregate_score, project
-from src.reactive.types import Weights
+from src.reactive.params import DEFAULTS, ParamSnapshot
+from src.reactive.signal_model import aggregate_score, expose_calibration, probability, project
+from src.reactive.types import CalibrationEvidence, Weights
 
 # --- Helpers ----------------------------------------------------------------
 
@@ -250,3 +251,137 @@ def test_aggregate_is_deterministic():
     a = aggregate_score(fs, DEFAULTS.weights)
     b = aggregate_score(fs, DEFAULTS.weights)
     assert a == b
+
+
+# --- Probability derivation: the 2-class logistic (R2, P15) -----------------
+#
+# Task 2.3. `P = 1/(1+exp(−signed/temperature))` where `signed` is the 2.2
+# `project(...)` output. The probability is MODEL-DERIVED (a logistic over the
+# aggregated/projected score), monotonic increasing in `signed`, in the OPEN
+# interval (0,1), with `signed=0 → 0.5`. The reference intraday hold-logit is
+# DELIBERATELY DROPPED (design §"Probability derivation" / Boundary line 28) —
+# HOLD comes ONLY from the threshold in 2.4, NEVER from a probability term.
+# No threshold/decision/sizing/substrate here (that crosses the 2.4 boundary).
+
+
+def test_probability_signed_zero_is_one_half():
+    """`signed = 0 → P = 0.5` exactly — the logistic's symmetry point (no edge ⇒
+    even odds). A linear/clamped placeholder centered elsewhere fails this."""
+    assert probability(0.0, DEFAULTS.temperature) == pytest.approx(0.5)
+
+
+def test_probability_positive_projection_above_half():
+    """A positive projection (caller direction favored) → P > 0.5."""
+    assert probability(0.5, DEFAULTS.temperature) > 0.5
+
+
+def test_probability_negative_projection_below_half():
+    """A negative projection (caller direction disfavored) → P < 0.5."""
+    assert probability(-0.5, DEFAULTS.temperature) < 0.5
+
+
+def test_probability_strictly_monotonic_in_signed():
+    """STRICTLY increasing in `signed` across the projection domain — the
+    discriminating property of a real logistic. A constant/clamped/saturating
+    stub (or a flat placeholder) fails because distinct `signed` → distinct P.
+    Uses strict `<` (not `<=`): with `signed ∈ [−1,1]` and T≈1 there is no
+    float saturation, so the curve is strictly rising everywhere."""
+    xs = [-1.0, -0.7, -0.3, -0.05, 0.0, 0.05, 0.3, 0.7, 1.0]
+    ps = [probability(x, DEFAULTS.temperature) for x in xs]
+    for lo, hi in zip(ps, ps[1:]):
+        assert lo < hi
+
+
+def test_probability_in_open_unit_interval():
+    """`P ∈ (0,1)` — strictly inside the open interval across the projection
+    domain (`|signed| ≤ 1`, where upstream votes live) and modestly beyond. A
+    logistic never reaches 0 or 1; this guards against a clamped/linear stub that
+    would hit an endpoint at e.g. `signed = ±1`. (Not asserted at extreme
+    saturating inputs like ±100, where `1/(1+exp(∓100))` rounds to exactly 1.0/
+    0.0 in IEEE754 — a float-representation artifact, not a model property, and
+    outside the bounded operating domain anyway.)"""
+    for x in (-3.0, -1.0, -0.01, 0.0, 0.01, 1.0, 3.0):
+        p = probability(x, DEFAULTS.temperature)
+        assert 0.0 < p < 1.0
+
+
+def test_probability_matches_closed_form_logistic():
+    """Pin the exact closed form `1/(1+exp(−signed/T))` — a wrong sign, a missing
+    `/T`, or a different curve (e.g. linear/tanh-scaled) diverges from this."""
+    signed, temp = 0.4, 1.3
+    expected = 1.0 / (1.0 + math.exp(-signed / temp))
+    assert probability(signed, temp) == pytest.approx(expected)
+
+
+def test_lower_temperature_sharpens_probability():
+    """Lower temperature SHARPENS the probability: for the SAME nonzero `signed`,
+    a smaller T pushes P further from 0.5 (more extreme/decisive). Framed as
+    `abs(P − 0.5)` so it holds for both signs of `signed` (lower T pushes P→1
+    when signed>0 but P→0 when signed<0). A stub that ignores T fails."""
+    signed = 0.5
+    sharp = probability(signed, 0.25)   # low temperature
+    soft = probability(signed, 4.0)     # high temperature
+    assert abs(sharp - 0.5) > abs(soft - 0.5)
+    # Mirror check for a negative projection (sign-robust).
+    sharp_neg = probability(-signed, 0.25)
+    soft_neg = probability(-signed, 4.0)
+    assert abs(sharp_neg - 0.5) > abs(soft_neg - 0.5)
+
+
+def test_probability_long_short_symmetric_on_mirrored_signed():
+    """The logistic is symmetric about 0.5: `P(signed) + P(−signed) == 1`.
+    Combined with 2.2's `project(s, LONG) == −project(s, SHORT)`, this is the
+    LONG/SHORT mirror of the derived probability (design §Testing Strategy 2.x)."""
+    for x in (0.0, 0.1, 0.5, 1.0):
+        assert probability(x, DEFAULTS.temperature) + probability(
+            -x, DEFAULTS.temperature
+        ) == pytest.approx(1.0)
+
+
+def test_probability_is_deterministic():
+    """Identical (signed, temperature) → identical P (P14/R8.1)."""
+    assert probability(0.37, 0.9) == probability(0.37, 0.9)
+
+
+# --- Calibration exposure: carried through, never computed (R2.4, R7) -------
+#
+# Task 2.3. The snapshot's `CalibrationEvidence` is EXPOSED alongside the
+# probability — passed through UNCHANGED, never computed/mutated here. Computing
+# Brier/reliability over realized outcomes is the tuning loop's job (R7.4); this
+# module does no metric math.
+
+
+def test_expose_calibration_passes_snapshot_evidence_through_by_identity():
+    """`expose_calibration` returns the SNAPSHOT's exact `CalibrationEvidence`
+    object — identity (`is`), not just equality. Identity is the discriminating
+    check: `CalibrationEvidence` is a frozen dataclass, so `==` would still pass
+    if the value were RECONSTRUCTED; `is` proves it is carried through, not
+    recomputed/rebuilt (R7.4 — calibration is exposed, never computed)."""
+    evidence = CalibrationEvidence(brier=0.21, reliability=0.88)
+    snap = ParamSnapshot(
+        weights=DEFAULTS.weights,
+        temperature=DEFAULTS.temperature,
+        threshold=DEFAULTS.threshold,
+        calibration=evidence,
+        code_version="t",
+        param_version="t",
+    )
+    assert expose_calibration(snap) is evidence
+
+
+def test_expose_calibration_under_defaults_is_unestablished_none():
+    """Under the inner-ring `DEFAULTS`, the exposed calibration is the
+    UNESTABLISHED `CalibrationEvidence(None, None)` — exposed (not computed)
+    exactly as carried (design §params Invariants: DEFAULTS.calibration == None).
+    Both the value (`==`) and the identity (`is`) hold."""
+    exposed = expose_calibration(DEFAULTS)
+    assert exposed == CalibrationEvidence(brier=None, reliability=None)
+    assert exposed is DEFAULTS.calibration  # carried through, not rebuilt
+
+
+def test_expose_calibration_does_not_mutate_or_compute():
+    """The pass-through neither mutates the snapshot's evidence nor fills in any
+    metric: a snapshot whose calibration is None stays None after exposure (no
+    Brier/reliability is fabricated here — that is the tuning loop's job)."""
+    exposed = expose_calibration(DEFAULTS)
+    assert exposed.brier is None and exposed.reliability is None

@@ -1,16 +1,25 @@
 """Reactive Signal Model: the decision core (`signal_model`).
 
-Task 2.2 — the **directional aggregation** of the family votes and the **signed
-projection** onto the caller-supplied direction. This is the front half of the
-pure deterministic pipeline (design §Architecture Pattern):
+Tasks 2.2 + 2.3 — the front half of the pure deterministic pipeline
+(design §Architecture Pattern):
 
-    features → [aggregate → signed projection] → 2-class logistic → threshold → decide
+    features → [aggregate → signed projection → 2-class logistic] → threshold → decide
 
-Tasks 2.3/2.4 (and 3.3) EXTEND this module with the logistic `P(direction
-correct)`, the tighten-only threshold, the `ReactiveDecision`/substrate, and the
-`decide(...)` entry point. The two functions here are deliberately standalone and
-side-effect-free so that future `decide()` composes them — there is no placeholder
-`decide` here (that would cross the 2.3/2.4 boundary and fake-green the threshold).
+- 2.2 landed the **directional aggregation** (`aggregate_score`) of the family
+  votes and the **signed projection** (`project`) onto the caller-supplied
+  direction.
+- 2.3 lands the **2-class logistic** (`probability`) deriving `P(direction
+  correct)` from the projected score, and the **calibration-exposure** path
+  (`expose_calibration`) that carries the snapshot's `CalibrationEvidence`
+  through unchanged.
+
+Task 2.4 (and 3.3) EXTEND this module with the tighten-only threshold, the
+`ReactiveDecision`/substrate, and the `decide(...)` entry point that composes
+these standalone functions. The functions here are deliberately standalone and
+side-effect-free so that future `decide()` chains them
+(`signed = project(aggregate_score(...), direction)` → `probability(signed,
+snapshot.temperature)`) — there is no placeholder `decide`/threshold here (that
+would cross the 2.4 boundary and fake-green the decision).
 
 **Aggregation rule (design §"Decision core — `signal_model`"):**
 
@@ -47,9 +56,11 @@ isolatable (R8.1). Dependency direction (design §Allowed Dependencies):
 
 from __future__ import annotations
 
+import math
+
 from src.reactive.features import FeatureSet
-from src.reactive.params import Weights
-from src.reactive.types import Direction
+from src.reactive.params import ParamSnapshot, Weights
+from src.reactive.types import CalibrationEvidence, Direction
 
 
 def aggregate_score(features: FeatureSet, weights: Weights) -> float:
@@ -102,3 +113,74 @@ def project(s: float, direction: Direction) -> float:
         `signed`, oriented so that `signed > 0` favors the caller's direction.
     """
     return s if direction == "LONG" else -s
+
+
+def probability(signed: float, temperature: float) -> float:
+    """Derive `P(caller direction is the correct side)` via a 2-class logistic.
+
+        P = 1 / (1 + exp(−signed / temperature))
+
+    where `signed` is the 2.2 `project(...)` output (the directional aggregate
+    oriented onto the caller-supplied side). This is a **model-derived**
+    probability (a logistic over a deterministic score; P15 option (a)) — it is
+    NOT asserted from qualitative reasoning. Properties (all unit-tested):
+
+    - monotonic **increasing** in `signed` (more favorable score ⇒ higher P);
+    - in the **open** interval `(0, 1)` for every finite `signed`;
+    - `signed = 0 → 0.5` (no edge ⇒ even odds);
+    - symmetric about 0.5: `P(signed) + P(−signed) == 1` (the LONG/SHORT mirror,
+      combined with `project`'s sign flip);
+    - lower `temperature` **sharpens** P (pushes it further from 0.5).
+
+    The reference intraday `_softmax3` carried an explicit HOLD logit
+    (conviction-deficit × liquidity); this model **drops it entirely** (design
+    §"Probability derivation", Boundary line 28): HOLD comes ONLY from the
+    `probability`-vs-threshold comparison downstream (task 2.4), never from a
+    term inside the probability. Direction being caller-supplied, the long/short
+    pair reduces to this single logistic.
+
+    **Calibration is established downstream, not here.** Under inner-ring
+    `DEFAULTS` the `temperature` is an un-fit prior, so this is a model-derived
+    SCORE whose calibration is *unestablished* until `walkforward-tuning-loop`
+    fits `temperature`/`weights` and computes Brier/reliability (R7.4). This
+    function computes no calibration metric.
+
+    Args:
+        signed: the projected directional score (`+ ⇒ favors caller direction`),
+            typically `project(aggregate_score(features, weights), direction)`.
+            Bounded `|signed| ≤ 1` when the upstream votes are in range, so plain
+            `math.exp` cannot overflow.
+        temperature: the snapshot's logistic temperature (`> 0`; positivity is
+            the `params` snapshot's contract, not re-validated here). Higher ⇒
+            softer (P closer to 0.5); lower ⇒ sharper (P further from 0.5).
+
+    Returns:
+        `P ∈ (0, 1)` — the derived confidence the caller-supplied direction is
+        the correct side.
+    """
+    return 1.0 / (1.0 + math.exp(-signed / temperature))
+
+
+def expose_calibration(snapshot: ParamSnapshot) -> CalibrationEvidence:
+    """Expose the snapshot's calibration evidence — carried through, never computed.
+
+    Returns `snapshot.calibration` **unchanged** (the same object). The model
+    *exposes* the calibration evidence the active snapshot carries (R2.4, R7.1)
+    alongside the derived probability; it NEVER computes Brier/reliability over
+    realized outcomes — that batch computation is owned by `walkforward-tuning-
+    loop` (R7.4). At the inner ring (`DEFAULTS`) this is the unestablished
+    `CalibrationEvidence(None, None)`; once the tuning loop closes the loop, the
+    pinned snapshot carries the fitted values and they pass straight through.
+
+    This is a deliberate identity pass-through (not a reconstruction): the
+    returned object **is** `snapshot.calibration`, so nothing here mutates or
+    fabricates a metric. (Task 2.4's `decide` places this evidence onto the
+    `DecisionSubstrate` for telemetry.)
+
+    Args:
+        snapshot: the active, pinned `ParamSnapshot` consumed by value (P2).
+
+    Returns:
+        The snapshot's `CalibrationEvidence`, carried through unchanged.
+    """
+    return snapshot.calibration
