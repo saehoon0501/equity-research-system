@@ -60,7 +60,7 @@
   - _Boundary: unit tests_
   - _Depends: 2.1_
 
-- [ ] 3.2 Trace-table append-only integration test (integration_live)
+- [x] 3.2 Trace-table append-only integration test (integration_live)
   - Using the harness (chain already applied), insert a decision row via direct SQL with a deterministic `uuid5` id (`ON CONFLICT DO NOTHING`, per the repo convention), then via the savepoint helper assert each of DELETE, UPDATE (any column), and TRUNCATE is rejected by the guard.
   - Observable: the suite passes against live Postgres, demonstrating trace-row immutability against all three of update, delete, and truncate.
   - _Requirements: 2.1, 2.2, 9.1_
@@ -89,3 +89,5 @@
 - `.env` has an unquoted value on line 6 (`EDGAR_USER_AGENT`) that breaks bash `set -a; . ./.env` sourcing. Use `python-dotenv` (`load_dotenv`) for DB creds (as `tests/integration/test_contamination_check.py::_dsn` does), or `eval $(grep -E '^POSTGRES_(USER|DB|PASSWORD)=' .env)` in shell — NOT `set -a` sourcing. (1.3 harness + 3.x tests.)
 - Live dev DB is SHARED across worktrees (container `equity-research-db`, started by another compose project `refactorplugin-restructure`). It is up/healthy on 127.0.0.1:5432. Migration 048 is additive + idempotent; never `docker compose down`/wipe. The `003→030→048` chain is applied (1.2 applied it live).
 - JSONB `trace` serialization: the writer uses `json.dumps(..., default=_trace_json_default)` mirroring `src/supervisor/emitter.py` (which uses `_json_default` from `src/shared/audit_trail/hmac_verify.py`). Convention: `Decimal`/`datetime`/`date`/`UUID` land as JSON **strings** (precision-preserving); numpy scalars land as JSON **numbers** via `.item()`. Downstream consumers (reader 2.2, tuner) must NOT assume those fields are JSON numbers; the `trace` blob is type-unvalidated by design (P13). Bare `json.dumps` (no `default=`) fails ONLY on the live path (dry-run skips it) — a live round-trip test is required to catch it.
+- Harness residual (`expect_rejection` in conftest.py, task 1.3): it COMMITS the savepoint if a probed op unexpectedly *succeeds* (then raises AssertionError) — so if a guard were ever missing, a TRUNCATE/DELETE probe could mutate the SHARED dev DB before the assertion fires. Moot today (048's guards exist + verified). If hardening later: make the helper ROLLBACK-on-success. Be cautious adding new `expect_rejection` probes against destructive ops in 3.3/3.4.
+- Commit hygiene: other worktrees' spec.json flag-flips (e.g. `.kiro/specs/reactive-signal-model/spec.json`, survival-gate/*) drift into this shared tree — stage ONLY this spec's files per task; never `git add -A`.
