@@ -1,0 +1,23 @@
+{
+  "feature_name": "broker-cfd-adapter",
+  "created_at": "2026-05-29T08:38:20Z",
+  "updated_at": "2026-05-29T09:28:01Z",
+  "language": "en",
+  "phase": "requirements-generated",
+  "notes": "Unblocked 2026-05-29: operator supplied the official Gate TradFi API spec (gate-tradfi-api-reference.md). Requirements revised against verified endpoints/fields. Long+short both in scope (operator-confirmed). Leverage-configuration + secondary residuals (insolvency, gap handling, rate limits) under deep-research; true residuals tracked in gate-api-gaps.md, none blocking.",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}

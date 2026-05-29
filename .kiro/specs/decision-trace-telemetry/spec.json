@@ -1,0 +1,23 @@
+{
+  "feature_name": "decision-trace-telemetry",
+  "created_at": "2026-05-29T11:03:09Z",
+  "updated_at": "2026-05-29T12:31:37Z",
+  "language": "en",
+  "phase": "design-generated",
+  "notes": "init + requirements generated together 2026-05-29 (decision-trace fork). Model-trace-only scope; single append-only decision_process_trace (typed identity/version/window cols + JSONB blob); counterfactual_ledger model-version migration claims number 048 (coordinate if the survival-gate fork also adds a migration).",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}

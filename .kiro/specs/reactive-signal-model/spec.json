@@ -1,0 +1,22 @@
+{
+  "feature_name": "reactive-signal-model",
+  "created_at": "2026-05-29T10:34:26Z",
+  "updated_at": "2026-05-29T13:40:00Z",
+  "language": "en",
+  "phase": "design-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
