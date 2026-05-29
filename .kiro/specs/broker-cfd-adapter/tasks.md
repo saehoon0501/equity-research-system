@@ -73,7 +73,7 @@
   - _Boundary: validation_
   - _Depends: 3.1_
 
-- [ ] 3.3 (P) Implement the paper/dry-run simulator
+- [x] 3.3 (P) Implement the paper/dry-run simulator
   - Given a validated intent and the current bid/ask, return a structured simulated confirmation without invoking the venue order-create operation.
   - Reuse the identical validation and mapping path used by live so paper coverage is meaningful (this component does not itself run validation; the operations layer sequences validate-then-simulate).
   - Observable: in paper mode a BUY returns a simulated confirmation priced from the ticker bid/ask with no order POST issued (asserted against the mock).
