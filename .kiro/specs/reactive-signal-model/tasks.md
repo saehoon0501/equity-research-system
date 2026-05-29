@@ -45,7 +45,7 @@
   - _Depends: 2.3_
 
 - [ ] 3. Validation: inner-ring unit tests
-- [ ] 3.1 (P) Parameter tests
+- [x] 3.1 (P) Parameter tests
   - Defaults instantiate complete and frozen with calibration evidence None; the tighten-only resolver applies a higher runtime threshold and rejects a lower one (retaining the snapshot threshold); weights are normalized (Σ=1); determinism on identical inputs.
   - Observable: the suite passes with no LLM, MCP, or live-database access; the tighten-only higher-applied and lower-rejected cases are explicitly asserted.
   - _Requirements: 6, 8_
