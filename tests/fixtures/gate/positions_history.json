@@ -1,0 +1,30 @@
+[
+  {
+    "position_id": "POS-490001",
+    "symbol": "AAPL",
+    "realized_pnl": "44.40",
+    "position_status": 1,
+    "close_detail": "manual close",
+    "counterparty_price": "214.80",
+    "close_price": "214.80",
+    "swap": "-1.26",
+    "fee": "0.00",
+    "margin_level": "812.40",
+    "stop_out_level": "50",
+    "time_done": 1748480000
+  },
+  {
+    "position_id": "POS-490002",
+    "symbol": "TSLA",
+    "realized_pnl": "-310.18",
+    "position_status": 2,
+    "close_detail": "forced liquidation",
+    "counterparty_price": "168.42",
+    "close_price": "168.42",
+    "swap": "-4.80",
+    "fee": "0.00",
+    "margin_level": "48.90",
+    "stop_out_level": "50",
+    "time_done": 1748490000
+  }
+]

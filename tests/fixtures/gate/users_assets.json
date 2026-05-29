@@ -1,0 +1,9 @@
+{
+  "equity": "10234.56",
+  "margin_level": "842.10",
+  "balance": "10180.00",
+  "margin": "1215.00",
+  "margin_free": "9019.56",
+  "unrealized_pnl": "54.56",
+  "settlement_currency": "USD"
+}

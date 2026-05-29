@@ -1,0 +1,28 @@
+[
+  {
+    "order_id": "ORD-100001",
+    "symbol": "AAPL",
+    "state": "pending",
+    "finished": false,
+    "side": 2,
+    "volume": "1.00",
+    "price": "212.40",
+    "price_type": "trigger",
+    "price_tp": "230.00",
+    "price_sl": "200.00",
+    "create_time": 1748560000
+  },
+  {
+    "order_id": "ORD-100002",
+    "symbol": "MSFT",
+    "state": "pending",
+    "finished": false,
+    "side": 1,
+    "volume": "0.50",
+    "price": "415.10",
+    "price_type": "trigger",
+    "price_tp": "390.00",
+    "price_sl": "430.00",
+    "create_time": 1748560500
+  }
+]

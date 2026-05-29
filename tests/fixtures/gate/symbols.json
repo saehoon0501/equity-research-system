@@ -1,0 +1,42 @@
+[
+  {
+    "symbol": "AAPL",
+    "symbol_desc": "Apple Inc.",
+    "category_id": 2,
+    "status": "open",
+    "trade_mode": 4,
+    "next_open_time": 0,
+    "price_precision": "2",
+    "settlement_currency": "USD"
+  },
+  {
+    "symbol": "MSFT",
+    "symbol_desc": "Microsoft Corporation",
+    "category_id": 2,
+    "status": "open",
+    "trade_mode": 4,
+    "next_open_time": 0,
+    "price_precision": "2",
+    "settlement_currency": "USD"
+  },
+  {
+    "symbol": "TSLA",
+    "symbol_desc": "Tesla Inc.",
+    "category_id": 2,
+    "status": "closed",
+    "trade_mode": 3,
+    "next_open_time": 1748620800,
+    "price_precision": "2",
+    "settlement_currency": "USD"
+  },
+  {
+    "symbol": "EURUSD",
+    "symbol_desc": "Euro / US Dollar",
+    "category_id": 1,
+    "status": "open",
+    "trade_mode": 4,
+    "next_open_time": 0,
+    "price_precision": "5",
+    "settlement_currency": "USD"
+  }
+]

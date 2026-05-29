@@ -27,7 +27,7 @@
   - _Boundary: config_
   - _Depends: 1.1_
 
-- [ ] 1.4 (P) Establish test fixtures and a mock venue transport
+- [x] 1.4 (P) Establish test fixtures and a mock venue transport
   - Capture representative Gate `/tradfi` JSON responses (symbol detail, assets, mt5-account, tickers, orders, positions, history) as fixtures.
   - Provide a mock transport that returns canned responses so leaf functions are unit-testable with no live venue.
   - Observable: the fixtures load and the mock transport returns a canned positions/assets payload in a smoke unit test.

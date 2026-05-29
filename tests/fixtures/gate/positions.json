@@ -1,0 +1,22 @@
+[
+  {
+    "position_id": "POS-500001",
+    "symbol": "AAPL",
+    "margin": "424.80",
+    "unrealized_pnl": "37.20",
+    "unrealized_pnl_rate": "0.0876",
+    "volume": "1.00",
+    "price_open": "210.36",
+    "position_dir": "Long"
+  },
+  {
+    "position_id": "POS-500002",
+    "symbol": "MSFT",
+    "margin": "415.10",
+    "unrealized_pnl": "-12.50",
+    "unrealized_pnl_rate": "-0.0301",
+    "volume": "0.50",
+    "price_open": "415.10",
+    "position_dir": "Short"
+  }
+]

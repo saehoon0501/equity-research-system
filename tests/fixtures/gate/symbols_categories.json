@@ -1,0 +1,18 @@
+[
+  {
+    "category_id": 1,
+    "category_name": "Forex"
+  },
+  {
+    "category_id": 2,
+    "category_name": "Stocks"
+  },
+  {
+    "category_id": 3,
+    "category_name": "Indices"
+  },
+  {
+    "category_id": 4,
+    "category_name": "Commodities"
+  }
+]

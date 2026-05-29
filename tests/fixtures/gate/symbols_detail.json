@@ -1,0 +1,53 @@
+[
+  {
+    "symbol": "AAPL",
+    "symbol_desc": "Apple Inc.",
+    "category_id": 2,
+    "trade_mode": 4,
+    "max_order_volume": "100",
+    "min_order_volume": "0.01",
+    "contract_volume": "1",
+    "leverage": "5",
+    "price_precision": "2",
+    "price_sl_level": "0.5",
+    "swap_cost_type": "1",
+    "buy_swap_cost_rate": "-0.0021",
+    "sell_swap_cost_rate": "-0.0008",
+    "swap_cost_3day": "3",
+    "trade_timezone": "America/New_York"
+  },
+  {
+    "symbol": "MSFT",
+    "symbol_desc": "Microsoft Corporation",
+    "category_id": 2,
+    "trade_mode": 4,
+    "max_order_volume": "100",
+    "min_order_volume": "0.01",
+    "contract_volume": "1",
+    "leverage": "5",
+    "price_precision": "2",
+    "price_sl_level": "0.5",
+    "swap_cost_type": "1",
+    "buy_swap_cost_rate": "-0.0019",
+    "sell_swap_cost_rate": "-0.0007",
+    "swap_cost_3day": "3",
+    "trade_timezone": "America/New_York"
+  },
+  {
+    "symbol": "TSLA",
+    "symbol_desc": "Tesla Inc.",
+    "category_id": 2,
+    "trade_mode": 3,
+    "max_order_volume": "50",
+    "min_order_volume": "0.01",
+    "contract_volume": "1",
+    "leverage": "3",
+    "price_precision": "2",
+    "price_sl_level": "0.5",
+    "swap_cost_type": "1",
+    "buy_swap_cost_rate": "-0.0035",
+    "sell_swap_cost_rate": "-0.0012",
+    "swap_cost_3day": "3",
+    "trade_timezone": "America/New_York"
+  }
+]

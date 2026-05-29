@@ -1,0 +1,6 @@
+{
+  "leverage": "5",
+  "stop_out_level": "50",
+  "status": 3,
+  "settlement_currency": "USD"
+}
