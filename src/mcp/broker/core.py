@@ -75,8 +75,9 @@ adapter's responsibility, emission is not.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 # Layers above ``core`` in the dependency direction. Imported BY NAME (production
 # posture: broker dir on sys.path[0] when launched as `python server.py`).
@@ -120,6 +121,17 @@ _TICKER_PATH_FMT = "/tradfi/symbols/{symbol}/tickers"
 # 1=not opened, 2=pending review, 3=active). Only status 3 is an ACTIVE account
 # (Req 1.10); anything else is treated as not-active (conservative).
 _ACCOUNT_STATUS_ACTIVE = 3
+
+# Async submit->poll->reconcile bounds (Task 4.3). Order placement is ASYNCHRONOUS
+# — the venue acknowledges with a queue-task-id, not a fill (Req 1.7) — so ``core``
+# CONFIRMS by polling active orders/positions until the result is observed OR the
+# attempt cap is hit, at which point the outcome is surfaced as ``unconfirmed``
+# (never assumed filled — Req 9.2). Both the poll interval and the attempt cap are
+# INJECTABLE through ``submit_decision`` (the ``poll_sleep`` callable + the
+# ``poll_max_attempts`` int) so unit tests neither really sleep nor spin; these are
+# the conservative production defaults only.
+_DEFAULT_POLL_MAX_ATTEMPTS = 5
+_DEFAULT_POLL_INTERVAL_S = 0.5
 
 
 # --------------------------------------------------------------------------- #
@@ -570,6 +582,10 @@ def submit_decision(
     *,
     clients: Optional[ReadoutClients] = None,
     runtime_mode: Optional[_config.RuntimeMode] = None,
+    prior_queue_task_id: Optional[str] = None,
+    poll_sleep: Callable[[float], None] = time.sleep,
+    poll_max_attempts: int = _DEFAULT_POLL_MAX_ATTEMPTS,
+    poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
 ) -> OrderResult:
     """Route a P9 ``Label`` + ``Direction`` to the right operation; never raises.
 
@@ -597,6 +613,17 @@ def submit_decision(
        8.3 conditions). The validation chain's ``_check_live_send`` already refuses
        a non-paper run missing a clearance with LIVE_SEND_BLOCKED (step 4), so by
        this point a non-paper run is fully cleared; route to :func:`_submit_live`.
+
+    Live transmit (Task 4.3) is ASYNC: :func:`_submit_live` runs a double-send guard
+    BEFORE any POST (Req 7.4 — correlate the retained ``prior_queue_task_id`` against
+    active orders/positions, reusing ``snapshot.open_positions``) and, after the
+    POST, confirms by POLLING orders/positions until observed or the attempt cap is
+    hit (Req 1.7), surfacing ``unconfirmed`` rather than assuming a fill (Req 9.2).
+    On a RE-SEND the caller passes ``prior_queue_task_id`` (the id retained on the
+    prior unconfirmed result) so the guard can suppress a duplicate; a first send
+    passes ``None`` and always transmits. The poll backoff (``poll_sleep`` +
+    ``poll_interval_s``) and the attempt cap (``poll_max_attempts``) are injectable
+    so tests neither sleep nor spin.
 
     No ``volume`` mutation, no second positions fetch, no telemetry (Req 9.4).
     """
@@ -656,7 +683,191 @@ def submit_decision(
         )
 
     action = _mappers.map_decision_to_action(intent)
-    return _submit_live(intent, snapshot, action, _resolve(clients))
+    return _submit_live(
+        intent,
+        snapshot,
+        action,
+        _resolve(clients),
+        prior_queue_task_id=prior_queue_task_id,
+        poll_sleep=poll_sleep,
+        poll_max_attempts=poll_max_attempts,
+        poll_interval_s=poll_interval_s,
+    )
+
+
+def _extract_queue_task_id(ack: Any) -> Optional[str]:
+    """Pull the venue queue-task-id out of an order/close ack envelope (Req 1.7).
+
+    Placement is ASYNCHRONOUS — the venue acks with a queue-task-id under
+    ``data.id`` (reference gotcha #1), NOT a fill. The envelope is
+    ``{"label","message","data":{"id":...}}``; prefer ``data.id``, falling back to a
+    top-level ``id``. ``None`` when the ack carries neither (a degenerate ack the
+    poll loop then treats as unconfirmable by id — it still correlates by
+    symbol/side / position-id). The id is the correlation key the 7.4 double-send
+    guard retains.
+    """
+    if not isinstance(ack, dict):
+        return None
+    data = ack.get("data")
+    if isinstance(data, dict) and data.get("id") is not None:
+        return str(data["id"])
+    if ack.get("id") is not None:
+        return str(ack["id"])
+    return None
+
+
+def _correlate_open_order(
+    intent: OrderIntent, orders: Any, *, queue_task_id: Optional[str]
+) -> Optional[dict[str, Any]]:
+    """Find the order this BUY produced in an ``/tradfi/orders`` read-back.
+
+    Correlation key, most-specific first: the retained ``queue_task_id`` (the venue
+    echoes it as ``queue_task_id`` / ``task_id`` on the active order — Req 7.4), else
+    the (symbol, side) the intent maps to. Returns the confirmation dict (``filled``
+    when the venue marks the order ``finished``, else ``unconfirmed`` — never assume
+    a fill, Req 9.2) or ``None`` when no correlating order is present yet (the poll
+    loop retries; the guard reads "no prior order").
+    """
+    if not isinstance(orders, list):
+        return None
+    want_side = (
+        _mappers.SIDE_BUY if intent.direction is Direction.LONG else _mappers.SIDE_SELL
+    )
+    for o in orders:
+        if not isinstance(o, dict):
+            continue
+        task_match = queue_task_id is not None and (
+            str(o.get("queue_task_id")) == queue_task_id
+            or str(o.get("task_id")) == queue_task_id
+        )
+        attr_match = (
+            str(o.get("symbol")) == intent.symbol and o.get("side") == want_side
+        )
+        if task_match or attr_match:
+            price = o.get("price")
+            vol = o.get("volume")
+            return {
+                "status": "filled" if o.get("finished") else "unconfirmed",
+                "order_id": str(o.get("order_id")) if o.get("order_id") else None,
+                "fill_price": float(price) if price is not None else None,
+                "fill_volume": float(vol) if vol is not None else None,
+                "raw": o,
+            }
+    return None
+
+
+def _correlate_close_position(
+    intent: OrderIntent, positions: Any
+) -> Optional[dict[str, Any]]:
+    """Confirm a TRIM/SELL close in a ``/tradfi/positions`` read-back, by the
+    caller-supplied ``position_id`` (Req 1.9).
+
+    A TRIM leaves the position present (smaller volume) -> ``filled`` with the
+    remaining volume. A SELL fully closes -> the position is ABSENT -> ``filled``
+    full close. Returns the confirmation dict, or ``None`` when the positions book
+    could not be read as a list (the poll loop retries / surfaces ``unconfirmed``).
+    """
+    if not isinstance(positions, list):
+        return None
+    for p in positions:
+        if isinstance(p, dict) and str(p.get("position_id")) == intent.position_id:
+            # Position still open -> a partial (TRIM) close confirmed.
+            vol = p.get("volume")
+            return {
+                "status": "filled",
+                "position_id": intent.position_id,
+                "fill_volume": float(vol) if vol is not None else None,
+                "raw": p,
+            }
+    # Position absent from a successfully-read book -> a full close (SELL) confirmed.
+    return {"status": "filled", "position_id": intent.position_id, "raw": None}
+
+
+def _double_send_guard(
+    intent: OrderIntent,
+    snapshot: PreTransmitSnapshot,
+    clients: ReadoutClients,
+    *,
+    prior_queue_task_id: Optional[str],
+) -> Optional[dict[str, Any]]:
+    """Correlate a PRIOR unconfirmed submission against the active book BEFORE any
+    re-transmit, so a retry creates no duplicate (Req 7.4).
+
+    The venue has no native idempotency key (requirements §7.4), so the adapter
+    mitigates duplicate sends by retaining the prior submission's queue-task-id and
+    correlating it against the active book before re-sending. The guard ONLY fires
+    on a RE-SEND — i.e. when the caller passes the ``prior_queue_task_id`` returned
+    on the prior (unconfirmed) :class:`OrderResult`. A FIRST send carries no prior
+    id (``None``) and the guard returns ``None`` immediately, so a first send always
+    transmits (it never false-positives off an unrelated pre-existing order).
+
+    On a re-send:
+
+    * **Opens (BUY):** read active orders ONCE keyed on the retained queue-task-id
+      (the venue echoes it as ``queue_task_id`` / ``task_id`` on the resulting active
+      order). A correlating order means the prior submit already landed -> return it
+      (``filled``/``unconfirmed``) and do NOT POST a duplicate.
+    * **Closes (TRIM/SELL):** REUSE ``snapshot.open_positions`` — the SINGLE
+      pre-transmit positions read (the design's one-read seam, NOT a second fetch).
+      If the caller-identified target position is already ABSENT, the prior close
+      already landed -> surface that confirmation rather than re-issuing the close.
+
+    Returns the already-existing confirmation dict when a prior submission is
+    detected (caller skips the POST), else ``None`` (proceed to transmit).
+    """
+    # FIRST send (no retained id) -> nothing to correlate; always transmit.
+    if prior_queue_task_id is None:
+        return None
+
+    if intent.decision is Label.BUY:
+        # A fresh orders read keyed ONLY on the retained queue-task-id (not symbol/
+        # side — that would false-positive off an unrelated pre-existing order).
+        outcome = clients.gate_client.request(
+            "GET", _ORDERS_PATH, transport=clients.transport
+        )
+        orders = _ok_or_raise(outcome, what="double-send guard (orders read)")
+        return _correlate_open_order_by_task(orders, queue_task_id=prior_queue_task_id)
+
+    # TRIM/SELL close: reuse the snapshot's SINGLE positions read (no second fetch).
+    # If the caller-identified position is already absent, the prior close landed ->
+    # surface the (full-close) confirmation rather than re-issuing the close.
+    if intent.position_id is not None and not any(
+        p.position_id == intent.position_id for p in snapshot.open_positions
+    ):
+        return {"status": "filled", "position_id": intent.position_id, "raw": None}
+    return None
+
+
+def _correlate_open_order_by_task(
+    orders: Any, *, queue_task_id: str
+) -> Optional[dict[str, Any]]:
+    """Find an active order produced by ``queue_task_id`` (the 7.4 re-send key).
+
+    The venue echoes the queue-task-id on the resulting active order as
+    ``queue_task_id`` / ``task_id``. A match means the prior (unconfirmed) submit
+    already produced an order -> return it (``filled`` when ``finished``, else
+    ``unconfirmed`` — still no duplicate POST). ``None`` when no active order carries
+    the id (the prior submit truly didn't land -> safe to (re)transmit).
+    """
+    if not isinstance(orders, list):
+        return None
+    for o in orders:
+        if not isinstance(o, dict):
+            continue
+        if (
+            str(o.get("queue_task_id")) == queue_task_id
+            or str(o.get("task_id")) == queue_task_id
+        ):
+            price = o.get("price")
+            vol = o.get("volume")
+            return {
+                "status": "filled" if o.get("finished") else "unconfirmed",
+                "order_id": str(o.get("order_id")) if o.get("order_id") else None,
+                "fill_price": float(price) if price is not None else None,
+                "fill_volume": float(vol) if vol is not None else None,
+                "raw": o,
+            }
+    return None
 
 
 def _submit_live(
@@ -664,45 +875,81 @@ def _submit_live(
     snapshot: PreTransmitSnapshot,
     action: "_mappers.VenueAction",
     clients: ReadoutClients,
+    *,
+    prior_queue_task_id: Optional[str] = None,
+    poll_sleep: Callable[[float], None] = time.sleep,
+    poll_max_attempts: int = _DEFAULT_POLL_MAX_ATTEMPTS,
+    poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
 ) -> OrderResult:
-    """Transmit a fully-cleared live order and confirm it by reading back (Task 4.2
-    BASIC path; Task 4.3 HARDENS this into the async poll-loop + double-send guard).
+    """Transmit a fully-cleared live order through the async submit->poll->reconcile
+    lifecycle, with a double-send guard (Task 4.3).
 
     UNREACHABLE in v0.1 (paper default, Req 8.1) — exercised only when a caller
-    forces all four Req 8.3 clearances. This is a COMPLETE basic transmit+confirm,
-    NOT a stub: it (1) POSTs the mapped venue action via ``gate_client`` (the venue
-    acknowledges asynchronously with a queue-task-id, not a fill — reference gotcha
-    #1), and (2) confirms ONCE by reading back the relevant book — orders for a BUY
-    open, positions for a TRIM/SELL close — surfacing the venue fill when present,
-    else ``unconfirmed`` (never assume a fill — Req 1.7/9.2).
+    forces all four Req 8.3 clearances. The hardened lifecycle:
 
-    SEAM FOR TASK 4.3: the retained ``queue_task_id`` is returned on ``result.raw``
-    so 4.3's double-send guard can correlate it against active orders/positions
-    BEFORE any re-send, REUSING ``snapshot.open_positions`` (no second fetch). 4.3
-    replaces the single read-back below with a bounded poll loop and folds in that
-    correlation; the transmit half stays as written here.
+    1. **Double-send guard FIRST (Req 7.4).** Before any POST, correlate the
+       retained ``prior_queue_task_id`` against the active book
+       (:func:`_double_send_guard`): reuse ``snapshot.open_positions`` for a close
+       and a fresh task-id-keyed orders read for an open. If the prior submission of
+       this intent already produced an order/position, RETURN it — issue NO second
+       POST (no duplicate position). A first send (``prior_queue_task_id`` is
+       ``None``) correlates nothing -> proceed.
+    2. **Transmit (Req 1.7).** POST the mapped action; the venue acks ASYNCHRONOUSLY
+       with a queue-task-id under ``data.id`` (NOT a fill). The id is retained on
+       ``result.raw["queue_task_id"]`` as the correlation key for any later resend.
+    3. **Poll->reconcile (Req 1.7).** Poll the relevant book — orders for a BUY open,
+       positions for a TRIM/SELL close — until the result is OBSERVED or the
+       (injectable) attempt cap is reached, sleeping the (injectable) interval
+       between attempts. A confirmed observation -> ``filled`` (+ fill data); the cap
+       reached with no observation -> ``unconfirmed`` — NEVER assume a fill (Req 9.2).
+
+    A transport failure on the POST surfaces as a structured BrokerReadoutError via
+    :func:`_ok_or_raise` (the daemon/server boundary handles it).
     """
-    # 1) Transmit the mapped action. The venue returns a queue-task-id under data.id
-    #    (async ack, not a fill). A transport failure surfaces as a structured
-    #    BrokerReadoutError via _ok_or_raise (the daemon/server boundary handles it).
+    # 1) DOUBLE-SEND GUARD (Req 7.4) — correlate BEFORE transmitting. A prior
+    #    submission already landed -> return it, NO second POST (no duplicate).
+    prior = _double_send_guard(
+        intent, snapshot, clients, prior_queue_task_id=prior_queue_task_id
+    )
+    if prior is not None:
+        return _result_from_confirmation(
+            intent, prior, queue_task_id=prior_queue_task_id
+        )
+
+    # 2) Transmit the mapped action (async ack -> queue-task-id, not a fill).
     post_outcome = clients.gate_client.request(
         action.method, action.endpoint, body=action.body, transport=clients.transport
     )
     ack = _ok_or_raise(post_outcome, what="live order submit")
-    queue_task_id = ack.get("id") if isinstance(ack, dict) else None
-    if isinstance(ack, dict) and isinstance(ack.get("data"), dict):
-        # Venue ack envelope is {"label","message","data":{"id":...}} — prefer data.id.
-        queue_task_id = ack["data"].get("id", queue_task_id)
+    queue_task_id = _extract_queue_task_id(ack)
 
-    # 2) Confirm by reading back ONCE (Task 4.3 makes this a bounded poll loop).
-    if intent.decision is Label.BUY:
-        confirmation = _confirm_open(intent, clients)
-    else:
-        confirmation = _confirm_close(intent, clients)
+    # 3) Poll->reconcile until observed or the attempt cap is hit (Req 1.7); an
+    #    exhausted cap surfaces ``unconfirmed`` (never assume a fill — Req 9.2).
+    confirmation = _poll_confirm(
+        intent,
+        clients,
+        queue_task_id=queue_task_id,
+        poll_sleep=poll_sleep,
+        poll_max_attempts=poll_max_attempts,
+        poll_interval_s=poll_interval_s,
+    )
+    return _result_from_confirmation(intent, confirmation, queue_task_id=queue_task_id)
 
+
+def _result_from_confirmation(
+    intent: OrderIntent,
+    confirmation: dict[str, Any],
+    *,
+    queue_task_id: Optional[str],
+) -> OrderResult:
+    """Fold a confirmation dict into the typed :class:`OrderResult`.
+
+    The retained ``queue_task_id`` rides on ``raw`` as the 7.4 correlation key for
+    any later resend; ``confirmation`` is either a fresh poll result or a
+    double-send-guard hit (both share the same shape).
+    """
     raw: dict[str, Any] = {
         "queue_task_id": queue_task_id,
-        "endpoint": action.endpoint,
         "confirmation": confirmation.get("raw"),
     }
     return OrderResult(
@@ -715,64 +962,59 @@ def _submit_live(
     )
 
 
-def _confirm_open(intent: OrderIntent, clients: ReadoutClients) -> dict[str, Any]:
-    """Read back ``GET /tradfi/orders`` ONCE and correlate the just-opened order by
-    symbol+side (BASIC confirm; Task 4.3 polls + correlates the queue-task-id).
+def _poll_confirm(
+    intent: OrderIntent,
+    clients: ReadoutClients,
+    *,
+    queue_task_id: Optional[str],
+    poll_sleep: Callable[[float], None],
+    poll_max_attempts: int,
+    poll_interval_s: float,
+) -> dict[str, Any]:
+    """Bounded submit->poll->reconcile confirmation loop (Req 1.7, 9.2).
 
-    Surfaces the venue order id + fill on a match; otherwise ``unconfirmed`` (never
-    assume a fill — Req 1.7/9.2). Venue numerics arrive as strings; parse here.
+    Polls the relevant book — ``/tradfi/orders`` for a BUY open, ``/tradfi/positions``
+    for a TRIM/SELL close — up to ``poll_max_attempts`` times, correlating each
+    read-back (by the retained ``queue_task_id`` then symbol/side for an open; by
+    ``position_id`` for a close). The FIRST observed confirmation wins. Between
+    attempts (only when another attempt will follow) it sleeps ``poll_interval_s``
+    through the INJECTABLE ``poll_sleep`` so tests neither really sleep nor spin.
+
+    If the cap is reached with no confirming observation, returns
+    ``{"status": "unconfirmed"}`` — the async outcome is SURFACED as unconfirmed,
+    never assumed filled (Req 9.2). A bounded loop (``max(1, cap)`` attempts) also
+    guarantees the venue is polled at least once.
     """
-    outcome = clients.gate_client.request(
-        "GET", _ORDERS_PATH, transport=clients.transport
-    )
-    orders = _ok_or_raise(outcome, what="live order confirm (orders read-back)")
-    want_side = (
-        _mappers.SIDE_BUY if intent.direction is Direction.LONG else _mappers.SIDE_SELL
-    )
-    if isinstance(orders, list):
-        for o in orders:
-            if str(o.get("symbol")) == intent.symbol and o.get("side") == want_side:
-                price = o.get("price")
-                vol = o.get("volume")
-                return {
-                    "status": "filled" if o.get("finished") else "unconfirmed",
-                    "order_id": str(o.get("order_id")) if o.get("order_id") else None,
-                    "fill_price": float(price) if price is not None else None,
-                    "fill_volume": float(vol) if vol is not None else None,
-                    "raw": o,
-                }
-    # No correlating order yet -> surface unconfirmed (the 4.3 poll loop retries).
-    return {"status": "unconfirmed", "raw": None}
+    attempts = max(1, poll_max_attempts)
+    for attempt in range(attempts):
+        if intent.decision is Label.BUY:
+            outcome = clients.gate_client.request(
+                "GET", _ORDERS_PATH, transport=clients.transport
+            )
+            book = _ok_or_raise(outcome, what="live order confirm (orders read-back)")
+            confirmation = _correlate_open_order(
+                intent, book, queue_task_id=queue_task_id
+            )
+        else:
+            outcome = clients.gate_client.request(
+                "GET", _POSITIONS_PATH, transport=clients.transport
+            )
+            book = _ok_or_raise(
+                outcome, what="live close confirm (positions read-back)"
+            )
+            confirmation = _correlate_close_position(intent, book)
 
+        # A definitive ``filled`` observation ends the loop immediately. An order
+        # correlated-but-not-yet-``finished`` (``unconfirmed``) keeps polling — the
+        # fill may land on a later attempt — until the cap.
+        if confirmation is not None and confirmation.get("status") == "filled":
+            return confirmation
 
-def _confirm_close(intent: OrderIntent, clients: ReadoutClients) -> dict[str, Any]:
-    """Read back ``GET /tradfi/positions`` ONCE and confirm the close by the
-    caller-supplied ``position_id`` (BASIC confirm; Task 4.3 polls + reuses the
-    snapshot read).
+        # Sleep the injectable interval only when another attempt will follow.
+        if attempt < attempts - 1:
+            poll_sleep(poll_interval_s)
 
-    A SELL fully closes (the position should be ABSENT after the close); a TRIM
-    reduces it (still present, smaller volume). Either way the absence of the
-    transport error means the close was accepted; we surface ``filled`` when the
-    position is gone (full close) or still present (partial), else ``unconfirmed``.
-    Conservative: never assume a fill beyond what the read-back shows (Req 9.2).
-    """
-    outcome = clients.gate_client.request(
-        "GET", _POSITIONS_PATH, transport=clients.transport
-    )
-    positions = _ok_or_raise(outcome, what="live close confirm (positions read-back)")
-    if isinstance(positions, list):
-        for p in positions:
-            if str(p.get("position_id")) == intent.position_id:
-                # Position still open -> a partial (TRIM) close confirmed.
-                vol = p.get("volume")
-                return {
-                    "status": "filled",
-                    "position_id": intent.position_id,
-                    "fill_volume": float(vol) if vol is not None else None,
-                    "raw": p,
-                }
-        # Position absent -> a full close (SELL) confirmed.
-        return {"status": "filled", "position_id": intent.position_id, "raw": None}
+    # Cap exhausted with no confirming fill -> surface unconfirmed (Req 9.2).
     return {"status": "unconfirmed", "raw": None}
 
 

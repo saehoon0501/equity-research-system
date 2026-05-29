@@ -100,7 +100,7 @@
   - _Boundary: core_
   - _Depends: 4.1, 3.2, 3.3_
 
-- [ ] 4.3 Implement the async order lifecycle and double-send guard
+- [x] 4.3 Implement the async order lifecycle and double-send guard
   - Treat submission as asynchronous: confirm the result by polling orders and positions, and surface an unconfirmed outcome rather than assuming a fill.
   - Retain the returned queue-task-id and correlate it against active orders/positions before any resend (reusing the positions read from the 4.2 snapshot) so a retry creates no duplicate position.
   - Observable: an async submission is confirmed by polling and an unconfirmed outcome is surfaced (never assumed filled); a simulated resend after an unconfirmed submit creates no second position.
