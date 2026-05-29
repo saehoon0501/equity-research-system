@@ -22,7 +22,7 @@
   - _Requirements: 2.1, 2.2, 4.1, 4.2, 4.3, 4.4, 5.1, 7.4, 8.1_
   - _Boundary: migration 048_
 
-- [ ] 1.3 Build the shared `integration_live` test harness
+- [x] 1.3 Build the shared `integration_live` test harness
   - Follow the existing `integration_live` convention (`tests/integration/test_contamination_check.py`): a `_dsn()`/`.env` psycopg connection against the **shared, already-running dev DB** — there is no fresh-schema/`search_path` precedent and no migration runner (`db/README.md`), so do NOT bootstrap a throwaway schema.
   - Provide a session-scoped fixture that **idempotently applies the chain `003 → 030 → 048`** (all `IF NOT EXISTS`/`CREATE OR REPLACE`, so safe to re-run and safe if the operator already applied them) so the suite is self-bootstrapping and robust to dev-DB migration drift; this leaves 048 permanently applied, which is also what the execution-daemon will need.
   - Provide a savepoint-based "expect-rejection" helper so a deliberately-failing op (a guard `RAISE`) can be asserted without poisoning the connection for later assertions (no rollback/savepoint precedent exists in the tree — this is the first).
