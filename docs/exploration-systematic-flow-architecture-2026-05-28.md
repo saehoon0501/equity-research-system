@@ -333,11 +333,11 @@ The split that keeps "tune at runtime AND after-market, params AND code" safe is
 |  | Runtime (market open, hot path) | After-market (closed) |
 |---|---|---|
 | **Params** | **SELECT** among pre-validated sets via a reproducible regime signal + **TIGHTEN** Survive/Preserve (P7 one-way). No fresh fitting. Auto. | **FIT** new values (LLM) → held-out / champion-challenger → promote. Gated; autonomous-capable. |
-| **Structure / code** | ✗ never | LLM diff → inner-ring suite green (P14) + evaluator + human sign-off → versioned deploy at clean boundary → rollback path. |
+| **Structure / code** | ✗ never | LLM diff → inner-ring suite green (P14) + evaluator + §13 guard → versioned deploy at clean boundary → rollback path. **Fully autonomous — no human sign-off** (operator-decided 2026-05-29). |
 
 Headline: **runtime only *applies* what was already validated** (regime-select + survival-tighten); **all *fitting* of new values — param or code — happens after-market under OOS discipline.** The regime selector is reproducible code (vol regime, §6 CTA regime); the LLM tunes the *menu*, runtime selects from it. The hours-long fit duration is independent confirmation — runtime fitting was never feasible.
 
-**Next-session-readiness asymmetry:** param-fit is autonomous-gated → can be next-session-ready if it clears the window; code change needs human sign-off → ready *whenever approved*, deployed at the next clean boundary. ⟹ the champion must be able to run indefinitely with no pending code change.
+**Both tracks promote autonomously** (operator-decided 2026-05-29 — no human sign-off on any promotion; see §14.11 #2). They differ in *gate weight*, not in *who approves*: a param-fit clears the forward-window OOS-beat + evaluator + §13 guard; a code change additionally clears the full inner-ring suite (P14). So both can be next-session-ready the moment their gates pass — but a code deploy still lands only at the next clean boundary (§14.5), so the champion must tolerate an arbitrary gap with a gate-passed-but-not-yet-deployed code version pending.
 
 ### 14.5 Version-pinned position lifecycle + atomic hot-swap
 
@@ -391,7 +391,7 @@ Consequences for tuning:
 ### 14.11 Open operator questions (genuinely theirs — not resolved by recommendation)
 
 1. **Open-position policy across a version change** — §14.5 records *version-pinned lifecycle* as the recommended path; confirm vs. the simpler *require-flat-book-for-structure-deploy* (rejected here as incompatible with days-to-weeks holds, but it is your call).
-2. **Promotion authority** — §14.4 has param-fit auto-promoting (autonomous gate) and code requiring human sign-off. Given §11.5 (live leveraged routing = highest blast radius), do you want **human sign-off on *all* live promotions**, param included?
+2. **Promotion authority — RESOLVED 2026-05-29: full autonomous, no human sign-off on *any* promotion** (param-snapshot FIT *and* code/structure deploy). Consequence to keep visible: the autonomous gates (P14 inner-ring green, evaluator, §13 lexicographic guard) plus the §11.5 safety apparatus (account-aware survival/liquidation gate, sleeve caps, per-order size limit, **kill switch**) are now the *entire* defense between an LLM-authored change and the live levered book — there is no human backstop. ⟹ (a) those gates' rigor is load-bearing in a way it was not when a human stood behind them; (b) "no sign-off" removes the *per-promotion approval*, **not** the §11.5 kill switch (operator emergency halt stays); (c) full autonomy is safe in the paper/challenger phase, but before any *live real-money* cutover the gates + kill switch must be proven green (P14 + §11.5).
 3. **Forward-window numeric policy** — the min-N-closed-trades / min-survival-event-count floor before a promotion decision is allowed (§14.6). Needs a number, likely empirically.
 4. **Aggregate cost ceiling** for the hours-long tuning batch (§14.9 / T4 gap).
 5. **Anchored/rolling split sign-off** (§14.6) — recorded as recommended; confirm.
