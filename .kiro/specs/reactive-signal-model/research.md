@@ -98,3 +98,17 @@ Verified by reading `src/overlays/{tactical,flow,reversion}/bin_classifier.py` +
 - **Weights** → normalized `Σw = 1` (so `s ∈ [−1,+1]`); interpretive only (temperature would otherwise absorb scale) — settled, not a critical issue.
 
 **Real verification now shifts from doc review to P14 unit tests** (Bar-is-a-dict, atr→None, the discriminator all resolve the instant code+tests exist). Self-validation ceiling reached; next action is `/kiro-spec-tasks`, not a pass 3.
+
+---
+
+## Correlation-key seam vs the LANDED decision-trace-telemetry contract (2026-05-30)
+
+**Trigger:** operator flagged that this spec lists only 2 of the 4 correlation keys the landed telemetry table demands. Verified against the shipped artifacts (fork's lane — cited, not edited): `db/migrations/048_decision_trace_telemetry.sql` + `src/reactive/telemetry/schema.py`.
+
+**Landed contract:** `decision_process_trace` has **4 typed correlation columns** — `run_id NOT NULL`, `code_version NOT NULL`, `param_version NOT NULL`, `walk_forward_window NULL` — plus a JSONB `trace`. `CorrelationKeys` = `{run_id, code_version, param_version, walk_forward_window}`.
+
+**Resolution — the 2/2 split is FORCED, not a defect.** The telemetry design makes the `execution-daemon` the *writer's caller / row-assembler*: it mints the client-side `trace_id` and pins `event_ts` (decision time). A pure feature→probability model can supply neither — so the daemon is unavoidably the assembler. This model legitimately emits only the **2 keys it owns** (`code_version` = its own version; `param_version` = the consumed `ParamSnapshot` version, same semantics as telemetry's column). `run_id` (run-context) and `walk_forward_window` (tuning-orchestration context) are not model inputs/outputs. There is no architecturally consistent world where the model carries 4 — it can never be a self-contained telemetry row. (Making the model carry 4 would be a change to the *telemetry* contract — fork's lane — not this spec.)
+
+**What WAS wrong (now fixed in design.md):** the spec called `code_version`/`param_version` "the shared correlation keys," which understated the landed 4-key contract and never handed the other two to the daemon. Fixed: cite the landed 4-key `CorrelationKeys`; state the substrate→row mapping (the 2 keys promote to typed columns; `feature_values`/`probability`/`effective_threshold`/`calibration` → JSONB `trace`); pin `param_version`/`code_version` semantic identity across the seam.
+
+**⚠️ Forward-obligation (currently UN-OWNED):** no briefed spec assigns population of `run_id` + `walk_forward_window`. The telemetry spec states only a generic "complete `CorrelationKeys`" precondition; `execution-daemon` (the assembler) is **un-briefed**. Pinned in this spec's design Open Questions as a forward-obligation: **`execution-daemon` MUST populate `run_id` + `walk_forward_window` when assembling the `DecisionTraceRow`.** If lost, the first live write throws `run_id NOT NULL`. Carry into the `execution-daemon` brief.
