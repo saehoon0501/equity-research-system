@@ -1,7 +1,7 @@
 {
   "feature_name": "broker-cfd-adapter",
   "created_at": "2026-05-29T08:38:20Z",
-  "updated_at": "2026-05-29T14:08:36Z",
+  "updated_at": "2026-05-29T14:21:46Z",
   "language": "en",
   "phase": "design-generated",
   "notes": "Unblocked 2026-05-29: operator supplied the official Gate TradFi API spec (gate-tradfi-api-reference.md). Requirements revised against verified endpoints/fields. Long+short both in scope (operator-confirmed). Leverage-configuration + secondary residuals (insolvency, gap handling, rate limits) under deep-research; true residuals tracked in gate-api-gaps.md, none blocking. Review-gate pass 2026-05-29: added Req 7.4 (double-send/duplicate-position guard) + Req 10 (order/position-history readout incl. forced-liquidation flags); dropped R6.2 order-queuing (no queue in v0.1 — closed session always rejects); moved R9.5 rate-limit protocol detail to a design note; cleared the stale leverage caveat; reconciled short-scope in gate-tradfi-api-reference.md. Still pending operator approval.",
