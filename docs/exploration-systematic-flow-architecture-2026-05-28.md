@@ -207,7 +207,10 @@ Status: vehicle selected; architecture above still EXPLORATION. Gate = **executi
 | 4x | 370 | min-4x floor == product ceiling → zero margin headroom |
 | 3.33x | 6 | below floor → untradeable at 4x |
 
-- min-4x sits AT the product ceiling. Liquidation distance at 4x (low maintenance margin) ≈ −18–20% → survivable swing, fragile multi-month on high-beta names. → survival/liquidation gate is mandatory upstream.
+- min-4x sits AT the product ceiling.
+- **Liquidation = MT5 stop-out at margin level ≤ 50%** (verified, gate.com help + chainwire/mexc 2026-01-14; CFD differs from perps, which liquidate at MMR ≤ 100%). Worst-case distance (account holds only the position's used margin, zero free-margin buffer): **−12.5% @4x, −10% @5x**. This is ~35–45% TIGHTER than the prior −18–20% estimate (which wrongly assumed near-zero maintenance margin) — survival distance is worse, not better.
+- **Cross-margin only** (no isolated). ⟹ true liquidation distance is **account-level, not per-trade**: free margin / other collateral widens it, concentration narrows it. Survival layer must model account equity vs. aggregate used margin, not a fixed per-position %.
+- ⟹ survival/liquidation gate is mandatory upstream and must be account-aware.
 
 ### 11.4 broker_mcp build constraints
 - Tools: `place_order`, `get_positions`, `get_account_assets`.
@@ -216,14 +219,22 @@ Status: vehicle selected; architecture above still EXPLORATION. Gate = **executi
 - Enforce per-symbol `leverages` array (reject over-cap; reject the 6 sub-4x names).
 - Enforce hours via `status` (open/closed) + `next_open_time` (reject/queue when closed).
 - `BUY/HOLD/TRIM/SELL` (P9) → order side/size; TRIM/SELL reduce/close via positions endpoint.
+- **Order types: market / trigger / TP/SL only** (no resting limit-book depth — book is best-bid/ask, market-price fill). Order units = **lots or USDx-value**. Each buy/sell opens an independent position (no netting except same-pair long/short lot offset).
+- **PnL uses counterparty prices** (not a mark/oracle) — slippage/spread is the fill reality; don't assume mid.
 
 ### 11.5 Safety gate (blocking, pre-build)
 - Live leveraged order routing is **beyond v0.1 paper-only scope** — highest blast-radius node in repo.
 - Required upstream of `place_order` before any live send: survival/liquidation gate · sleeve caps · per-order size limit · kill switch.
 - Per P7, broker adapter is the most conservative node: may reject, never upsize.
 
-### 11.6 Residual gaps (behind gate.com 403; need authenticated/browser read)
-- CFD overnight financing/swap rate (the multi-month carry cost) — not in `/tradfi/symbols`.
-- Exact maintenance-margin / stop-out level per symbol.
+### 11.6 Residual gaps
+RESOLVED 2026-05-29 (gate.com help text, operator-supplied):
+- **Stop-out level** → margin level ≤ 50% (see §11.3). No longer a gap.
+- **Overnight swap/financing** → confirmed it exists, charged on positions held *through market closure*; **rate is variable daily**, driven by the underlying's interest rates + instrument, per Gate's "CFD Fee Calculation". NOT a single quotable rate — the multi-month carry model must read the per-position daily holding fee from the account, not a constant. (Distinct from perp funding, which settles every n hours on USDT notional.)
+- Trading commission: from $0.018/trade, deducted from balance at position open; varies by instrument.
+
+STILL OPEN (behind gate.com 403; need authenticated/browser read):
+- Numeric swap rates per symbol (only the *mechanism* is confirmed, not the daily values).
+- Whether the 50% stop-out / per-symbol margin requirement varies by name or tier.
 - Index/oracle price construction during closed sessions; gap handling on reopen.
 - Insolvency waterfall — whether a CFD holder is an unsecured creditor of Gate (offshore, bars US persons, not SEC/CFTC-registered).
