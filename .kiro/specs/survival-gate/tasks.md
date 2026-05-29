@@ -21,12 +21,12 @@
   - Operational-state store holds the current safe-mode grade and kill-switch flag; transitions may tighten or engage, while loosening or disengaging requires the explicit operator path (no auto-loosen).
   - Observable: the migration applies cleanly; an attempted update or delete on the event log is rejected; the state store round-trips a tighten transition and blocks an un-gated loosen.
   - _Requirements: 8, 9_
-  - _Boundary: db schema (events + state migration)_
+  - _Boundary: db schema (events + state migration — migration 049, first free above the landed 048)_
 - [ ] 2.2 Seed the survival parameter namespace
-  - Insert the survival-namespace parameter rows whose keys correspond one-to-one to the pinned survival-parameter set, following the existing namespaced-seed pattern; takes a distinct migration sequence number after 2.1's migration.
+  - Insert the survival-namespace parameter rows whose keys correspond one-to-one to the pinned survival-parameter set, following the existing namespaced-seed pattern; uses migration 050 (the distinct sequence number after 2.1's migration 049).
   - Observable: the active-parameters view returns every survival key, and each key matches a field of the pinned parameter set.
   - _Requirements: 10_
-  - _Boundary: db schema (params seed migration)_
+  - _Boundary: db schema (params seed migration — migration 050)_
   - _Depends: 1.2_
 
 - [ ] 3. Core: per-order admission veto
