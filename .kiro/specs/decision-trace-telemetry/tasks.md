@@ -66,7 +66,7 @@
   - _Requirements: 2.1, 2.2, 9.1_
   - _Depends: 1.2, 1.3_
 
-- [ ] 3.3 Ledger migration-safety + guard-extension integration test (integration_live)
+- [x] 3.3 Ledger migration-safety + guard-extension integration test (integration_live)
   - Against the migrated DB, assert **post-migration invariants** (not a live before/after diff, which goes vacuous once 048 is permanently applied): the full enumerated pre-048 ledger column set (the 003 + 030 columns) is still present with unchanged types, the three new version columns exist and are nullable, and the version+window index exists. The enumerated pre-048 column list IS the "before" — a dropped/retyped column fails the assertion, so this still catches regressions (R4.2 preservation).
   - Insert a representative legacy-style row (NULL version columns, deterministic `uuid5` + `ON CONFLICT`); confirm a stratified postmortem read (e.g. by `summary_code`/`window`/`gics_sector`) still returns it.
   - Assert the guard extension via the savepoint helper: an UPDATE of a new version column post-insert is rejected, while a window-close completion field (e.g. `measurement_date`) still updates.
