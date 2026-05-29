@@ -75,7 +75,7 @@
   - _Requirements: 4.2, 4.4, 9.2_
   - _Depends: 1.2, 1.3_
 
-- [ ] 3.4 Link, firewall, and idempotency integration test (integration_live)
+- [x] 3.4 Link, firewall, and idempotency integration test (integration_live)
   - Through the write/read path (harness chain already applied; deterministic `uuid5` ids per the convention): insert a decision then a linked fill; assert the read surface returns both for a (code version, parameter version, walk-forward window) query, joinable by parent id.
   - Late-fill firewall: a decision in window N plus a linked fill whose event timestamp falls in window N+1 → an until-N-boundary read excludes the late fill while the fill still attributes to the decision's window.
   - Idempotency: re-writing a row with the same client-minted id through the writer is a no-op.
