@@ -4,7 +4,7 @@
 
 - [ ] 1. Foundation: package, types, configuration, test harness
 
-- [ ] 1.1 Scaffold the broker server package and secrets configuration
+- [x] 1.1 Scaffold the broker server package and secrets configuration
   - Create the server package skeleton following the house MCP layout (manifest requiring Python ≥3.11 with mcp / httpx / python-dotenv; a consumer README skeleton; non-packaged uv project).
   - Add `GATE_API_KEY` and `GATE_API_SECRET` to the example environment file, noting the Gate CFD execution venue is distinct from the pre-existing schwab block.
   - Confirm the canonical host directory is the new broker server directory; do not resurrect the stale `broker_mcp` stub.
@@ -147,3 +147,8 @@
   - _Requirements: 1.7, 9.3_
   - _Boundary: tests integration_
   - _Depends: 5.1_
+
+## Implementation Notes
+
+- **Test environment (from 1.1):** the repo's `pytest tests/` does NOT run green under the host's system Python — ~18 PRE-EXISTING collection errors (missing `src` on PYTHONPATH + missing third-party deps like `polygon`/`yfinance`/`mcp`). This is an environment gap, not a regression. Treat regression as a DELTA against that baseline (no NEW failures referencing the changed boundary), not absolute green. Run broker checks inside the broker uv venv: `uv run --directory src/mcp/broker python ...`. Broker unit tests (1.4, 6.x) need an interpreter that has `mcp`/`httpx` — i.e. the broker uv venv — so plan the test invocation to run under `uv run --directory src/mcp/broker` (and make broker modules importable, e.g. via importlib-by-path like `tests/unit/mcp/test_polygon.py`, or by running pytest from within the package).
+- **Packaging (from 1.1):** broker `pyproject.toml` mirrors the house `massive` shape (python>=3.11; deps mcp/httpx/python-dotenv; `[tool.uv] package=false`). `uv.lock` is tracked; `.venv` is gitignored.
