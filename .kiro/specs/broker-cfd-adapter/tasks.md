@@ -120,7 +120,7 @@
 
 - [ ] 6. Test suites and live validation
 
-- [ ] 6.1 (P) Unit-test the order path, validation chain, gating, and paper simulation
+- [x] 6.1 (P) Unit-test the order path, validation chain, gating, and paper simulation
   - Cover decision routing and action mapping, the full rejection matrix, live-send gating and the kill switch, the double-send guard, and paper simulation — all against the mock transport.
   - Observable: tests pass for each acceptance criterion in the order/validation/gating/paper set, and the validation chain order is asserted.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 1.9, 1.10, 1.11, 4.2, 4.3, 5.1, 6.1, 7.1, 7.2, 7.3, 7.4, 8.1, 8.2, 8.3, 8.4, 8.5_
