@@ -194,7 +194,7 @@ Status: vehicle selected; architecture above still EXPLORATION. Gate = **executi
 
 ### 11.2 Execution path
 - Signed REST (APIv4 key + secret + SIGN). **No MT5 bridge** — REST proxies exist despite MT5 backing.
-- Home: `src/mcp/broker_mcp/` (already scaffolded; P1-correct — execution is a leaf-level MCP tool).
+- Home: `src/mcp/broker/` (already scaffolded; P1-correct — execution is a leaf-level MCP tool).
 - Endpoints (probe-confirmed: 400=exists/needs-auth, 404=absent):
   - `POST/GET /tradfi/orders` — order placement
   - `GET /tradfi/positions` — open positions
@@ -214,7 +214,7 @@ Status: vehicle selected; architecture above still EXPLORATION. Gate = **executi
 - **Cross-margin only** (no isolated). ⟹ true liquidation distance is **account-level, not per-trade**: free margin / other collateral widens it, concentration narrows it. Survival layer must model account equity vs. aggregate used margin, not a fixed per-position %.
 - ⟹ survival/liquidation gate is mandatory upstream and must be account-aware.
 
-### 11.4 broker_mcp build constraints
+### 11.4 broker build constraints
 - Tools: `place_order`, `get_positions`, `get_account_assets`.
 - Symbol map = identity on US ticker; filter `is_base: true` (skip variants e.g. `NAS100200`).
 - **`symbol_desc` is unreliable** — `AAPL`→"American Airlines", `ABNB`→"AbbVie". Map/validate by ticker only.
@@ -303,7 +303,7 @@ FAST CLOCK — in-session, hot path, NON-LLM, retail latency
   websocket price          ─┐
   REST account state        ├─→ lexicographic gate (Survive ▸ Preserve ▸ Edge ▸ Return)
   ACTIVE (code_v, param_v)  ─┘        │
-                                      ▼  broker_mcp place/close
+                                      ▼  broker place/close
                                       │  emits decision-trace telemetry (§14.8)
                                       │  + queues anomaly events (§14.3)
 SLOW CLOCK — after-market, LLM, ASYNC, hours-long batch
@@ -384,9 +384,9 @@ Consequences for tuning:
 
 ### 14.10 P1-cleanliness — where the code lives
 
-- The daemon is a **leaf executor + event emitter**: it runs the gate the slow layer armed, fires orders via `broker_mcp` (`src/mcp/broker_mcp/`, §11.2), emits telemetry, queues events. It **never dispatches an agent** — so it is not the forbidden Python orchestrator (P1 / Decision 6).
+- The daemon is a **leaf executor + event emitter**: it runs the gate the slow layer armed, fires orders via `broker` (`src/mcp/broker/`, §11.2), emits telemetry, queues events. It **never dispatches an agent** — so it is not the forbidden Python orchestrator (P1 / Decision 6).
 - The tuning loop is a vanilla Claude Code orchestration (read telemetry + ledger → analyze → gated envelope → DB write), fired by scheduler/queue — orchestration stays in markdown.
-- The daemon speaks **Gate REST directly** (or imports `broker_mcp` leaf funcs), **not MCP** — MCP is the Claude→tool seam, not a daemon→tool one.
+- The daemon speaks **Gate REST directly** (or imports `broker` leaf funcs), **not MCP** — MCP is the Claude→tool seam, not a daemon→tool one.
 
 ### 14.11 Open operator questions (genuinely theirs — not resolved by recommendation)
 
