@@ -1,0 +1,92 @@
+# Research & Design Decisions — execution-daemon
+
+## Summary
+- **Feature**: `execution-daemon`
+- **Discovery Scope**: Complex Integration (the convergence node — imports four leaf modules in-process, writes telemetry, runs a persistent loop)
+- **Key Findings**:
+  - All dependency entry points are **plain synchronous functions**; the repo's only `asyncio` is quarantined inside one MCP websocket server. The single-threaded blocking loop is **mandated** (survival-gate's op-state-freshness / kill-switch-TOCTOU guarantee depends on it), not merely convenient.
+  - The house DB convention is direct psycopg3 with a per-module `_dsn()` and a **caller-passed `conn`**; the landed telemetry writer's `conn=None` means **dry-run**, so the daemon must own and pass its own connection. No connection pool exists in-repo.
+  - The `parameters` / `parameters_active` / `run_parameters_snapshot` machinery already pins a **whole resolved key→value map per run** (REPEATABLE READ, sha256-hashed). Reactive `ParamSnapshot` and survival `SurvivalParameters` resolve from this **same** machinery (distinct namespaces) — no separate reactive-layer param table exists.
+  - `walk_forward_window`'s writer (`walkforward-tuning-loop`) is **un-built** (no spec dir). The window exists only as a nullable correlation column. The daemon must inject it; for v0.1 it bootstraps from the param epoch.
+  - Append-only DB table + plpgsql BEFORE-trigger guard is the unambiguous house pattern for event logs (`counterfactual_ledger`, `decision_process_trace`, `survival_gate_events`). No file-queue precedent.
+  - **No persistent/daemon process exists in the repo today**; `docker-compose.yml` runs only postgres. The daemon is a genuinely new process shape — launch/supervision designed from scratch, kept P1-clean.
+
+## Research Log
+
+### Loop concurrency model
+- **Context**: Brief Q (loop model) — asyncio vs blocking?
+- **Findings**: broker `core.py` has zero `asyncio`/`async def`; `submit_decision`/`get_positions`/`get_account_assets`/`get_history` are sync. The "async submit→poll→reconcile" is the *venue's* order semantics (queue-task-id, blocking poll until confirmed/`unconfirmed`), not Python coroutines. `reactive.decide` and `survival.admit`/`assess` are pure sync leaves. Only `src/mcp/massive/server.py` uses asyncio (per-call MCP, not in the daemon's import path).
+- **Implications**: eval loop = plain single-threaded blocking `while` loop + a cadence timer. survival-gate design `:77` makes single-threaded serialization a correctness requirement (op-state read-modify-write atomic per evaluation); introducing concurrency is a named revalidation trigger.
+
+### DB connection / transaction pattern
+- **Context**: Brief Q1 (connection-lifecycle model).
+- **Findings**: `trace_writer.py`/`reader.py`/`regime_sidecar/persistence.py`/`supervisor/emitter.py` each declare a local `_dsn()` from `POSTGRES_*` env. Writers take `conn: Any = None`; for the **writer**, `conn=None` = dry-run (no connection opened), so a live write **requires a caller-passed `conn`**. Batch INSERT runs in one `conn.transaction()` with `ON CONFLICT (trace_id) DO NOTHING RETURNING` (idempotency). No shared pool/`get_conn` helper exists.
+- **Implications**: daemon owns **one** psycopg3 connection, opened at startup via the same `_dsn()` convention, serialized through the single-threaded loop (no pool, no dedicated write conn needed — the loop already serializes). Passes `conn` explicitly to `write_decision_trace`/`write_fill_outcome`. Inherits the `conn.transaction()` atomic-batch idiom for persist-then-act.
+
+### Parameter machinery, run_id, hot-swap source
+- **Context**: Brief Q2 (run_id scope, window source) + Q4 (hot-swap read source).
+- **Findings**: `run_parameters_snapshot` (mig 034) is one row per run capturing the whole resolved map + sha256 hash + `parameters_version_max`, read as a single-txn REPEATABLE READ of `parameters_active`. `run_id` is the snapshot PK; today it is **LLM-minted** by `/research-company` (no Python minting precedent). Reactive + survival params live in the same `parameters` machinery (overlay seeds in migs 038/039/043; survival adds a `survival.*` namespace) — **no separate reactive param table**.
+- **Implications**: hot-swap read source = the existing machinery, read as a whole versioned object once per cycle (P2 pointer-flip), reactive + survival namespaces pinned **jointly**. `run_id` scope decision below.
+
+### walk_forward_window provenance
+- **Context**: Brief Q2 (how the daemon learns the window).
+- **Findings**: exists only as a nullable TEXT correlation column (`decision_process_trace` mig 048 `:75`, `counterfactual_ledger`) and a nullable `CorrelationKeys` field; reactive design states it is not a model input/output, "supplied by the daemon." Exploration §14.6: window-advance = promotion = the after-market `walkforward-tuning-loop` writing validated versions to the P2 param-version table. **That tuning loop has no spec dir — un-built.**
+- **Implications**: design-target = daemon reads the window from the pinned param epoch (advanced by the tuning loop); v0.1 = bootstrap window label tied to the param-snapshot epoch. The tuning-loop-driven advance is a **forward contract** (revalidation trigger when `walkforward-tuning-loop` lands), not existing machinery.
+
+### Append-only event-queue substrate
+- **Context**: Brief Q3 (event-queue substrate).
+- **Findings**: house pattern = DB table + BEFORE-trigger guard rejecting UPDATE/DELETE (and TRUNCATE for `decision_process_trace`). No file-queue precedent (the `memos/envelopes/` JSON files are per-agent artifact handoff, not an event log).
+- **Implications**: event queue = new append-only table `execution_daemon_event_queue` with the guard-trigger pattern; the tuning loop drains via SELECT + a drained-watermark. Migration coordination: 048 landed, 049/050 reserved by survival-gate → daemon takes **051+**.
+
+### Process shape / launch / scheduler
+- **Context**: Brief process-model question (P1 boundary).
+- **Findings**: no persistent process in-repo; `docker-compose.yml` runs only postgres; no APScheduler/crontab/timer primitive. The brief flags the new-shape concern explicitly.
+- **Implications**: launch via a new `docker compose` service (or a supervised `python -m src.reactive.daemon` entrypoint) with a restart policy; the `assess`-cadence + walk-forward-boundary scheduler is built in-cluster from a monotonic clock, kept P1-clean (leaf executor + event emitter, never an agent dispatcher).
+
+## Architecture Pattern Evaluation
+| Option | Description | Strengths | Risks / Limitations | Notes |
+|--------|-------------|-----------|---------------------|-------|
+| Single-threaded blocking loop (chosen) | One `while` loop, blocking dep calls, cadence timer, one serialized conn | Satisfies op-state-freshness mandate; simplest; matches all-sync deps | Blocking poll can stall the loop on a slow venue call | Bound poll with a timeout; surface `unconfirmed` |
+| asyncio event loop | Coroutine-driven concurrency | Non-blocking I/O | **Violates** survival's single-threaded op-state guarantee; no async deps to justify it | Rejected |
+| Multi-process / worker pool | Parallel evaluation | Throughput | Breaks kill-switch TOCTOU + op-state atomicity; over-built for one paper account | Rejected |
+
+## Design Decisions
+
+### Decision: Single-threaded blocking loop, one owned connection
+- **Selected**: a plain `while` loop on a monotonic cadence; one psycopg3 connection owned by the daemon and serialized through the loop; per-cycle `conn.transaction()` for persist-then-act.
+- **Rationale**: mandated by survival-gate op-state freshness; all deps are sync; no pool exists to reuse; simplest correct shape.
+- **Trade-offs**: a slow blocking venue poll stalls the loop — bounded by the broker's poll timeout + `unconfirmed` outcome; acceptable for one paper account.
+
+### Decision: `run_id` scoped to the pinned-param epoch
+- **Selected**: the daemon mints a `run_id` at startup and at **each atomic hot-swap** that adopts a new param-config version. Each mint writes a new `run_parameters_snapshot` row (REPEATABLE-READ resolve of `parameters_active` over the reactive + survival namespaces). All decision/fill traces in that epoch carry that `run_id`; `walk_forward_window` moves with it.
+- **Alternatives**: per-calendar-session/day (rejected — decouples run_id from the param map it should key); per-decision (rejected — defeats correlation).
+- **Rationale**: aligns `run_id` with `run_parameters_snapshot`'s "one row per resolved param map" semantics (P2/P3); makes the epoch boundary = snapshot row = window advance, one coherent seam.
+- **Follow-up**: confirm the snapshot-write path is reusable from Python (today it is markdown-orchestrated for `/research-company`) — this is a build item, not a reuse.
+
+### Decision: event queue + position-version state as new append-only tables (051/052)
+- **Selected**: `execution_daemon_event_queue` (mig 051) and `execution_daemon_position_version` (mig 052), both append-only with the house guard trigger. Op-state + survival events reuse `survival_gate_state` / `survival_gate_events`; the trace reuses `decision_process_trace`; the param map reuses `run_parameters_snapshot`.
+- **Rationale**: adopt every existing table; build only the two genuinely new persistence concerns (a drainable event queue; per-position version pins for the version-pinned lifecycle).
+- **Trade-offs**: two new migrations; coordination required so they land at 051/052 (not 048–050).
+
+### Decision: `walk_forward_window` bootstrapped for v0.1
+- **Selected**: the daemon injects `walk_forward_window` onto every `CorrelationKeys`, sourced from the pinned-param epoch with a bootstrap label for v0.1.
+- **Rationale**: the writer (`walkforward-tuning-loop`) is un-built; the column is nullable; a bootstrap value satisfies the trace contract now and the tuning-loop-driven advance slots in later.
+- **Follow-up**: revalidation trigger when `walkforward-tuning-loop` lands.
+
+## Synthesis Outcomes
+- **Generalization**: one `trace_assembler` interface serves both decision rows and fill rows (fill = decision + `parent_trace_id` + later `event_ts`, same correlation keys); one `commands` interface serves kill-switch / safe-mode / versioned-config-select as gated supervisory commands.
+- **Build vs adopt**: ADOPT the landed telemetry writer, the `parameters`/`run_parameters_snapshot` machinery, `survival_gate_state`/`_events`, the append-only-guard trigger pattern, and the `_dsn()` psycopg3 convention. BUILD the loop/scheduler, gate-orchestrator, trace-assembler, lifecycle-manager, command-surface, and the two new tables.
+- **Simplification**: one connection (no pool, no dedicated write conn — the loop serializes); no asyncio; no tuning-loop-coupled window reader now (bootstrap); no version-management machinery beyond what Req 8 demands.
+
+## Risks & Mitigations
+- **Blocking-poll stall** — a slow venue poll halts the loop, delaying `assess`. Mitigation: bound the broker poll timeout; on timeout surface `unconfirmed` and continue; `assess` cadence is a hard upper bound.
+- **`run_id`/snapshot write path is markdown-orchestrated today** — no Python precedent. Mitigation: build a small Python snapshot-resolver mirroring the `/research-company` §1.5 REPEATABLE-READ read; inner-ring test it.
+- **Version-pinned lifecycle is paper-moot** — its inner-ring coverage is synthetic multi-version fixtures, not paper-exercised paths (operator-accepted, brief 2026-05-30).
+- **Floating window contract** — `walkforward-tuning-loop` un-built; the window-advance contract is forward-looking. Mitigation: bootstrap + revalidation trigger.
+- **Migration-number collision** — must land at 051/052 (049/050 reserved by survival-gate, 048 landed). Mitigation: pin numbers in the File Structure Plan + verify against `db/migrations/` at author time.
+
+## References
+- `docs/exploration-systematic-flow-architecture-2026-05-28.md` §11–§16 — two-clock architecture, §13 lexicographic chain, §14.5/§14.6 version-pinned lifecycle + window-advance, §16.1 intraday-flat.
+- `src/reactive/telemetry/{schema,trace_writer,reader}.py` — landed write/read API.
+- `db/migrations/003` (counterfactual_ledger_guard), `034` (run_parameters_snapshot), `048` (decision_process_trace) — adopted patterns.
+- `.kiro/specs/{broker-cfd-adapter,reactive-signal-model,survival-gate,decision-trace-telemetry}/design.md` — dependency contracts.
