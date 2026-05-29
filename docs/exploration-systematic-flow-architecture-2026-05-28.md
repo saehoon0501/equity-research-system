@@ -12,6 +12,8 @@ A self-contained capture of a strategic conversation that walked the operator fr
 
 It is **not** a spec, **not** a decision log entry, and **not** a build plan. It is a pre-decision strategic record.
 
+**Working mode:** this doc is where open-ended questions get *worked and converged to a path*. Forks are resolved here by reasoned recommendation — recorded as the chosen path (revisable, since this is exploration) — not by deferring the choice to the operator each pass. A fork is escalated to the operator only when it is genuinely theirs: irreversible, resource-committing, or pure preference with no analytic tiebreaker.
+
 ---
 
 ## 2. The 4-layer ladder of operator pushback
@@ -270,6 +272,7 @@ Firewall test on `/research-company` output:
 ### 12.5 Make it falsifiable (P14 outer-ring), don't decide by argument
 - Test **filter-gated reactive** vs **pure reactive** on `counterfactual_ledger`, survival-net risk-adjusted return. If the filter doesn't improve it, the slow layer is fully vestigial for this layer → drop it.
 
-### 12.6 Open sub-fork (undecided)
-- (a) keep slow layer as a **thin veto-only gap-risk filter** (testable, possibly droppable), or
-- (b) **pure-reactive** — fold gap-risk into the survival gate itself (an earnings date / going-concern flag is just another input to "is the stop trustworthy"). Simpler, more honest about what the model is.
+### 12.6 Sub-fork — DECIDED: (a) thin veto-only filter first
+Options were (a) keep slow layer as a **thin veto-only gap-risk filter** (separable, toggleable), vs (b) **pure-reactive** — fold gap-risk directly into the survival gate.
+
+**Decision: (a) first — not on merits, but because it is the only configuration that makes §12.5 runnable.** The whole point (§12.5) is to *measure* whether the gap-risk filter earns its keep; you can only A/B filter-gated-reactive vs pure-reactive if the filter exists as a separable stage. (b) hard-folds gap-risk into the gate and destroys the comparison before it can run. So: build (a) as a toggleable filter stage → run the ledger test → **collapse to (b) iff the ledger shows the filter is vestigial.** (b) is the migration target, not the starting point. Revisit if the filter proves un-toggleable in practice.
