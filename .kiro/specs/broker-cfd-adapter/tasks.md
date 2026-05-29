@@ -83,7 +83,7 @@
 
 - [ ] 4. Operations layer (leaf functions)
 
-- [ ] 4.1 Implement the readout leaf functions
+- [x] 4.1 Implement the readout leaf functions
   - Provide positions, account-assets, tradable-symbols/validate-symbol, and history readouts returning typed results; empty position and history sets return empty rather than an error.
   - Surface account equity and margin state plus the stop-out level for downstream survival logic without computing a liquidation distance; surface fills, realized swap, and forced-liquidation flags via history; emit no telemetry.
   - Observable: positions returns venue profit/loss and an empty set when flat; account assets exposes the stop-out level without a derived liquidation distance; history returns fills/realized swap/forced-liquidation flag and an empty window returns empty.
