@@ -94,7 +94,7 @@
 
 - [ ] 3. Integration: the harness entry point
 
-- [ ] 3.1 Wire `replay_candidate` + the champion re-sim orchestration
+- [x] 3.1 Wire `replay_candidate` + the champion re-sim orchestration
   - `replay_candidate(candidate, window, *, data_port=None, conn=None)`: construct the production `DataPort` over the data client when none is injected; run the simulator; assemble outcomes; return `ReplayResult`
   - Champion re-sim: read the champion's pinned config (`ParamSnapshot` + `SurvivalParameters`) from P2 `run_parameters_snapshot` by `param_version` and the champion fills via `query_trace`; run the simulator on the champion config; call `fidelity.compare(simulated, recorded)` and attach the `FidelityResult`
   - Enforce the consumption boundary: read-only (no writes to trace/ledger); no CPCV / metric / gate / fit / publish / live-trading
@@ -139,3 +139,4 @@
 - 2.5: real `paper.simulate` is un-importable from repo root (bare `from models import` resolves only under the broker MCP launch posture) — MIRRORED its side-aware pricing (LONG->ASK, SHORT->BID uniform, since ProposedOrder.direction encodes the marketable side for opens+reduces). Revalidation seam: if broker is made importable, a CLOSE OrderIntent must carry the HELD-position direction (paper.py keys close on position dir).
 - 2.6: DayRoundTrip{entry_fill,exit_fill,exit_reason,flat_verified,survival_events} is the 2.7 seam. Two revalidation triggers: (a) flatten-leg volume=abs(net from entry_fill) vs stop-hit-leg volume=entry_order.volume — net flat only when equal; (b) close_ts defaults to day (not close instant) — fix when real data_client lands.
 - 2.8: outcomes.assemble_outcome wires all 9 OutcomeRecord fields; admit_reject is CALLER-SUPPLIED (apply_admit_gating returns bare None, cannot carry it) — 3.1 must pass admit_rejected=True when a day was rejected. SEAM: predicted_probability is None on flat days (OutcomeRecord annotation says float) — the tuner must filter flat days before calibrating. realized_label is a pure decision->Label map (not margin-thresholded — consumer applies scorer.score margin per R8.2). (2.8 impl agent socket-crashed AFTER writing+testing; verified independently: 145 pass, 9 fields, no metric/gate surface.)
+- 3.1: harness wired end-to-end (replay_candidate + champion re-sim reading P2 run_parameters_snapshot by param_version from effective_parameters_jsonb, + query_trace fills synthesized via parent_trace_id->decision join). LIMITATION (out-of-boundary, flagged in harness.py): cross-day survival MARGIN does not evolve — admit reads a static seed account; full sequential margin evolution is a later-fidelity revalidation (impl agent socket-crashed after writing+testing; FRESH REVIEWER verified APPROVED, 157 pass).

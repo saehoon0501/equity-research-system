@@ -1,15 +1,15 @@
 """Replay Harness package — the deterministic point-in-time counterfactual
 backtest engine for the reactive CFD layer's after-market tuning.
 
-At task 1.1 only the contract types (`types.py`) exist; the design's end-state
-`__init__` exports `replay_candidate` (the harness entry), but `harness.py` is
-a later task — importing it now would break the package import. This `__init__`
-therefore re-exports only the landed contract types from `.types`; the
-`replay_candidate` export is added when `harness.py` lands.
+Re-exports the landed contract types from `.types` and `replay_candidate` (the
+public harness entry, landed at task 3.1) — the single contract
+`walkforward-tuning-loop` calls per candidate config per CPCV partition (design
+§File Structure Plan line 100).
 """
 
 from __future__ import annotations
 
+from src.reactive.replay.harness import replay_candidate
 from src.reactive.replay.types import (
     Candidate,
     DataPort,
@@ -28,4 +28,5 @@ __all__ = [
     "OutcomeRecord",
     "ReplayResult",
     "ReplayWindow",
+    "replay_candidate",
 ]
