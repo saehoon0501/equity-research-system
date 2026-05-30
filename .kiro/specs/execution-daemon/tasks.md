@@ -32,7 +32,7 @@
   - _Boundary: packaging_
 
 - [ ] 2. Foundation: parameter epoch pin
-- [ ] 2.1 Per-epoch parameter pin + walk_forward_window re-source
+- [x] 2.1 Per-epoch parameter pin + walk_forward_window re-source
   - `params.py`: REPEATABLE-READ resolve of `parameters_active` (reactive + survival namespaces) into a daemon-owned `execution_daemon_epoch` row (`epoch_id`=run_id, `pinned_param_hash`, window); expose `PinnedParams` by value incl. `.reactive_snapshot`; re-source `walk_forward_window` from the P2 param-version registry at hot-swap (v0.1 bootstrap label until the tuner publishes). Never re-resolve mid-cycle (P2). Writes the epoch table, NOT `run_parameters_snapshot`.
   - Observable: against synthetic param rows, a fresh epoch mints a `run_id`, pins a param hash + window, and exposes `PinnedParams.reactive_snapshot`; the pinned value is returned unchanged within a cycle (no mid-cycle re-resolution).
   - _Requirements: 1, 4, 8_
