@@ -345,3 +345,20 @@ Every Phase-1 leaf signature matches the task assumptions exactly: `decide(featu
 **BLOCKED — on `survival-gate` impl (`src/survival/gate.py` + migs 049/050):** 4.1 (orchestrator + admit adaptation), 4.2 (paper lifecycle), 4.3 (version-pinned lifecycle + flatten), 4.4 (loop + service), and tests 5.7/5.8/5.9. Sub-block: 3.5's *real* op-state write (vs synthetic) and 5.1's op-state e2e leg also wait on mig 049.
 
 **Carry-forward decisions for /kiro-impl (not blockers, but don't ship without resolving):** the 3-leg market-feed access mechanism (un-mock task), the daemon runtime dep manifest / containerization choice, and the broker-seam path-scoping. Two of the three (feed, packaging) are the only items that could expand task scope beyond what tasks.md states.
+
+---
+
+# Survival-gate landed — Phase-2 re-plan (2026-05-30, mid-build)
+
+A parallel session merged **survival-gate Phase-1** (`src/survival/{gate,types,params}.py` + migs 049/050) during the execution-daemon Foundation wave. This clears gap **G3** and lets Phase-2 build against the real contract (the gap analysis prescribed this P12 smoke-the-shapes step once survival landed).
+
+**P12 smoke of the landed contract:**
+- `admit(order: ProposedOrder, state: AccountState, op_state: OperationalState, params: SurvivalParameters, clock: ClockState, evaluation: OrderEvaluation) -> AdmitDecision{decision: ALLOW|REJECT, binding_constraint, advisory_max_volume, reason}` (`src/survival/gate.py:497`). True-exit short-circuits to ALLOW before the walk (fail-toward-flat).
+- `assess(state, op_state, params, clock) -> AssessDirective{next_op_state, reduce_directives: ReduceDirective[FLATTEN/REDUCE/FREEZE_ENTRIES], events: SurvivalEvent[]}` (`gate.py:683`); monotonic-tighten; gate performs no I/O.
+- survival owns `ProposedOrder{symbol, intent: Literal[BUY/TRIM/SELL], direction: str, volume, stop_loss}` — **no `position_id`**, `direction` a plain `str` (`types.py:145`).
+
+**BL-3 resolved:** order_builder (3.2) stays daemon-owned + Phase-1 (daemon `ProposedOrder` carries `position_id` + broker `Direction` enum); the §13 orchestrator (4.1) maps daemon→survival `ProposedOrder` at the admit seam (drop `position_id`, `direction.value`) + assembles `AccountState`/`OperationalState`/`SurvivalParameters`/`ClockState`.
+
+**New obligation (was UNKNOWN, now concrete):** `gate.admit` requires an `OrderEvaluation` (`types.py:177`) the daemon must populate — projected margin delta + S&P500∩Gate-441 universe membership + the §12.6 exclusion flag — with reject-leaning defaults (bare `OrderEvaluation()` rejects every open). The original plan folded this into 4.1's "field adaptation"; the landed contract shows it is a distinct projection seam → new task **4.5** (`evaluation.py`) + test **5.11**.
+
+**Plan delta:** un-blocked 4.1–4.4 / 5.7–5.9; refined 4.1 (real admit/assess signatures + BL-3 map) + 4.3 (ReduceDirective); added 4.5 + 5.11 → tasks.md now 28 sub-tasks. Build order unchanged: Phase-1 Core (3.x, survival-independent) first, then Phase-2 (4.x) against the landed contract.

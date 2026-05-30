@@ -1,6 +1,6 @@
 # Implementation Plan
 
-> **Scope:** Builds the Execution Daemon at `src/reactive/daemon/` — the persistent non-LLM fast-clock process that runs the §13 chain (Survive ⊳ Preserve ⊳ Edge ⊳ Return) over four landed leaf modules. Phase 1 (majors 1–3) is buildable now; Phase 2 sub-tasks (orchestrator, paper lifecycle driver, version lifecycle, loop, and their tests) are BLOCKED on `survival-gate` impl (`src/survival/gate.py`) and tagged `_Depends:_ BLOCKED: survival-gate`. Reused landed leaves — `reactive.signal_model.decide`, `reactive.features.compute_features`, `overlays.tactical.bin_classifier.classify`, `reactive.telemetry.{trace_writer,schema}`, `broker.core.{submit_decision,get_positions}` — get NO build task. Migrations 051/052 assume survival-gate's 049/050 land first; if survival renumbers, daemon migrations rev (research.md CN-5). `src/reactive/daemon/` rides the existing namespace package (no pyproject/uv); `tests/unit/reactive/daemon/` needs no `__init__`/conftest (inherits the root `tests/conftest.py`). Gap-analysis additions (research.md, 2026-05-30): task **1.5** (runtime dependency manifest, gap G2) and task **3.6** (concrete 3-leg market-feed client un-mocking 3.1's live fetch, gap G1) are now explicit Phase-1 tasks; the survival-gate Phase-2 contract (G3) remains the only hard external blocker.
+> **Scope:** Builds the Execution Daemon at `src/reactive/daemon/` — the persistent non-LLM fast-clock process that runs the §13 chain (Survive ⊳ Preserve ⊳ Edge ⊳ Return) over four landed leaf modules. Phase 1 (majors 1–3) is buildable now; Phase 2 sub-tasks (orchestrator, paper lifecycle driver, version lifecycle, loop, and their tests) are BLOCKED on `survival-gate` impl (`src/survival/gate.py`) and tagged `_Depends:_ BLOCKED: survival-gate`. Reused landed leaves — `reactive.signal_model.decide`, `reactive.features.compute_features`, `overlays.tactical.bin_classifier.classify`, `reactive.telemetry.{trace_writer,schema}`, `broker.core.{submit_decision,get_positions}` — get NO build task. Migrations 051/052 assume survival-gate's 049/050 land first; if survival renumbers, daemon migrations rev (research.md CN-5). `src/reactive/daemon/` rides the existing namespace package (no pyproject/uv); `tests/unit/reactive/daemon/` needs no `__init__`/conftest (inherits the root `tests/conftest.py`). Gap-analysis additions (research.md, 2026-05-30): task **1.5** (runtime dependency manifest, gap G2) and task **3.6** (concrete 3-leg market-feed client un-mocking 3.1's live fetch, gap G1) are now explicit Phase-1 tasks. **Update 2026-05-30: survival-gate landed** (`src/survival/{gate,types,params}.py` + migs 049/050) — gap G3 cleared, the Phase-2 `BLOCKED` tags are removed, and the landed `gate.admit` contract adds task **4.5** (the `OrderEvaluation` projection) + test **5.11**. See `## Implementation Notes`.
 
 - [ ] 1. Foundation: migrations, config, types, import seams
 - [x] 1.1 Migrations 051/052 + append-only guards
@@ -77,31 +77,37 @@
   - _Boundary: feed_
   - _Depends: 1.2, 1.3, 3.1_
 
-- [ ] 4. Core: §13 orchestration, paper lifecycle, version lifecycle, loop (Phase 2 — blocked on survival-gate)
+- [ ] 4. Core: §13 orchestration, paper lifecycle, version lifecycle, loop (Phase 2 — survival-gate landed 2026-05-30; now buildable)
 - [ ] 4.1 §13 gate orchestration + order_builder→survival.admit adaptation
-  - `orchestrator.py`: the §13 walk — `assess` (Survive gate) → derive "new exposure permitted" from freshly-persisted op-state → `candidate` → `decide(features, direction, params.reactive_snapshot)` → `order_builder` → per-order `admit` (veto); persist-then-act; resize-on-advisory (re-build + re-admit, fixpoint in one pass); declined-trace on HOLD/reject; never-upsize; obtain decisions/verdicts/sizing/venue-actions exclusively from deps. Includes the `order_builder`→`survival.admit` field adaptation and wiring `commands`' op-state write against the real `survival_gate_state`.
-  - Observable: with synthetic deps, a permitted+actionable path builds→admits in order; a kill-switch op-state blocks opens but allows exits; a REJECT+advisory triggers exactly one resize-rebuild-readmit; `admit` never runs before `decide`.
+  - `orchestrator.py`: the §13 walk against the **landed survival contract** — `assess(state, op_state, params, clock) -> AssessDirective{next_op_state, reduce_directives, events}` (Survive gate) → derive "new exposure permitted" from freshly-persisted op-state (`OperationalState.kill_switch_engaged` / `safe_mode_grade ∉ {HALT_NEW, FLATTEN}`) → `candidate` → `decide(features, direction, params.reactive_snapshot)` → `order_builder` → per-order `admit(order, state, op_state, params, clock, evaluation) -> AdmitDecision{decision, binding_constraint, advisory_max_volume, reason}`. **BL-3 adaptation (survival now landed):** map the daemon `ProposedOrder` → survival's `ProposedOrder{symbol, intent, direction:str, volume, stop_loss}` (drop `position_id` — carry it separately for the broker submit; `direction` enum→`.value` str); assemble the other `admit` args — `AccountState` (from `broker.get_positions`/`get_account_assets`), fresh `OperationalState` (from `survival_gate_state`), `SurvivalParameters` (pinned survival namespace), `ClockState`, and the `OrderEvaluation` projection (task 4.5). persist-then-act; **resize-on-advisory**: on REJECT with `advisory_max_volume`, resize + re-build + re-admit (one pass); `binding_constraint` → trace `gate_link`; declined-trace on HOLD/reject; never-upsize; obtain decisions/verdicts/sizing/venue-actions exclusively from deps; wire `commands`' op-state write against the real `survival_gate_state`.
+  - Observable: with the landed survival gate, a permitted+actionable path builds→adapts→admits in order; a kill-switch `OperationalState` blocks opens but a true exit short-circuits to ALLOW; a REJECT+`advisory_max_volume` triggers exactly one resize-rebuild-readmit; `admit` never runs before `decide`.
   - _Requirements: 2, 5, 7, 10_
   - _Boundary: orchestrator_
-  - _Depends: 3.1, 3.2, 3.3, 3.5; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 3.1, 3.2, 3.3, 3.5, 4.5_
 - [ ] 4.2 Paper-mode order lifecycle driver
   - In `orchestrator.py`: drive the admitted order through the paper submit→poll→reconcile lifecycle over the broker's sync leaf funcs — `submit_decision` (paper/dry-run only, no live transmission path) → poll to a terminal outcome (filled / simulated / rejected / unconfirmed); the double-send guard (no duplicate submission while a confirmation is pending); surface `unconfirmed` as unconfirmed (never treated as filled).
   - Observable: an admitted order is submitted at most once while pending, reaches a terminal outcome, and an unconfirmed result is surfaced as unconfirmed rather than filled; no live-transmission path is reachable in paper mode.
   - _Requirements: 3_
   - _Boundary: orchestrator_
-  - _Depends: 4.1; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 4.1_
 - [ ] 4.3 (P) Version-pinned lifecycle + flat-before-close
-  - `lifecycle.py`: flat-before-close action + verify-flat handshake (execute the gate's flatten directives, re-check the flat post-condition, escalate + record a verify-flat failure); version-pin at open/close into `execution_daemon_position_version`; whole-object atomic hot-swap; manage open positions under their opening version; global-tightest survive across versions; adopt the version `commands` selected.
+  - `lifecycle.py`: flat-before-close action + verify-flat handshake — execute the gate's de-risk directives from `AssessDirective.reduce_directives` (`ReduceDirective{kind ∈ FLATTEN/REDUCE/FREEZE_ENTRIES, symbol, target_volume, reason}`; `symbol=None` = account-wide), re-check the flat post-condition, escalate + record a verify-flat failure; persist `AssessDirective.events` (`SurvivalEvent`); version-pin at open/close into `execution_daemon_position_version`; whole-object atomic hot-swap; manage open positions under their opening version; global-tightest survive across versions; adopt the version `commands` selected.
   - Observable: with synthetic survival directives, an in-window closure executes flatten then verifies flat (escalating on failure); a hot-swap flips the whole param object atomically and leaves open positions on their opening version.
   - _Requirements: 6, 8_
   - _Boundary: lifecycle_
-  - _Depends: 2.1, 3.5; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 2.1, 3.5_
 - [ ] 4.4 Evaluation loop + entrypoint + service
   - `loop.py` + `__main__.py`: single-eval-at-a-time loop; poll intake first, then `assess` within cadence + on margin-material events; fail-toward-minimum-exposure on dependency error (reject opens, never block exits/reduces); build conn+config and run, restart-safe. Add a daemon service (paper mode, `restart: unless-stopped`, `depends_on: postgres` healthy) to `docker-compose.yml`.
   - Observable: the loop performs at most one evaluation at a time, polls intake before `assess` each cycle, and on a dependency error rejects opens while allowing exits; the compose service starts the daemon against a healthy postgres.
   - _Requirements: 1, 5, 7, 9_
   - _Boundary: loop_
-  - _Depends: 4.1, 4.2, 4.3; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 4.1, 4.2, 4.3_
+- [ ] 4.5 OrderEvaluation projection (the survival `admit` projection seam)
+  - `evaluation.py`: build the `survival.types.OrderEvaluation` the landed `gate.admit` requires (survival's docstring: "a cross-spec contract the execution-daemon must populate", reject-leaning — bare `OrderEvaluation()` rejects every open). Three legs: (a) `additional_used_margin` = the order's projected margin delta from `volume × reference_price × leverage / contract-size` (broker instrument specs) — `None` only when genuinely unknown (rejects `margin_distance`; never defaults to `0.0`); (b) universe membership (S&P 500 ∩ Gate-441 — a v0.1 config list); (c) the exclusion flag = the slow-layer catalyst/quality screen result (§12.6 entry-exclusion). v0.1: margin computed; universe from config; exclusion fail-safe default (unknown → excluded → reject) with the live §12.6 screen wiring a tracked follow-on. Pure projection; imports only the `OrderEvaluation` type from survival.
+  - Observable: a normal in-universe open yields an `OrderEvaluation` with a positive `additional_used_margin` that `gate.admit` accepts; an unknown-margin / out-of-universe / excluded order yields the reject-leaning `OrderEvaluation` that `admit` rejects.
+  - _Requirements: 2, 10_
+  - _Boundary: evaluation_
+  - _Depends: 1.3, 1.4_
 
 - [ ] 5. Validation: inner-ring unit tests + persistence integration
 - [ ] 5.1 (P) Migration + persistence integration tests
@@ -145,22 +151,31 @@
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 2, 3, 10_
   - _Boundary: tests_
-  - _Depends: 4.1, 4.2; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 4.1, 4.2_
 - [ ] 5.8 (P) Lifecycle tests
   - Flatten-in-window; verify-flat-failure escalation; version-pin; atomic hot-swap; global-tightest survive.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 6, 8_
   - _Boundary: tests_
-  - _Depends: 4.3; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 4.3_
 - [ ] 5.9 (P) Loop tests
   - Single-eval-at-a-time; assess cadence; intake-poll-first cadence; fail-toward-minimum-exposure on dep error.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 1, 5_
   - _Boundary: tests_
-  - _Depends: 4.4; BLOCKED: survival-gate (src/survival/gate.py)_
+  - _Depends: 4.4_
 - [ ] 5.10 (P) Market-feed client tests
   - Massive `dict`→daily `Bar` adapter (intraday→daily aggregation, ≥252 closes, `ts`/`vwap` stripped); SPY leg returns daily adj-close; DGS1 TTL cache hits once per epoch/day (no per-tick GET); 401/403/non-200 surfaced; no FastMCP/websocket import pulled in. Transport mocked (httpx) — inner-ring; a double-guarded opt-in live round-trip skips cleanly with no keys.
   - Observable: the suite passes with no live network (transport mocked); the opt-in live leg skips when feed keys are absent.
   - _Requirements: 12, 1_
   - _Boundary: tests_
   - _Depends: 3.6_
+- [ ] 5.11 (P) OrderEvaluation projection tests
+  - margin delta from `volume × price × leverage`; unknown margin → `None` (admit rejects `margin_distance`); out-of-universe → reject-leaning eval; excluded (slow-layer screen) → reject-leaning eval; a clean in-universe open → admit-acceptable eval; bare `OrderEvaluation()` defaults assert reject-leaning. Against synthetic broker specs + a stub universe/screen.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 2, 10_
+  - _Boundary: tests_
+  - _Depends: 4.5_
+
+## Implementation Notes
+- **2026-05-30 — survival-gate landed mid-build; Phase-2 re-planned.** A parallel session merged survival-gate Phase-1 (`src/survival/{gate,types,params}.py` + migs 049/050) during the Foundation wave. The `BLOCKED: survival-gate` tags on 4.1–4.4 / 5.7–5.9 are cleared. P12 smoke of the landed contract: `admit(order, state, op_state, params, clock, evaluation) -> AdmitDecision`, `assess(state, op_state, params, clock) -> AssessDirective{next_op_state, reduce_directives, events}`. **BL-3 resolved:** survival owns its own `ProposedOrder` (no `position_id`, `direction:str`) — order_builder (3.2) stays daemon-owned + Phase-1; 4.1 maps daemon→survival `ProposedOrder` at the admit seam. **New obligation surfaced:** `gate.admit` requires an `OrderEvaluation` (margin delta + universe + §12.6 exclusion, reject-leaning defaults) the daemon must populate → new task **4.5** (+ test **5.11**). order_builder/candidate (Phase-1 Core) are unaffected by survival; build them first.
