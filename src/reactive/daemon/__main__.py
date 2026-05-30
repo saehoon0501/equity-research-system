@@ -1,19 +1,24 @@
-"""Process entrypoint — ``python -m src.reactive.daemon`` (task 1.2 scaffold).
+"""Process entrypoint — ``python -m src.reactive.daemon`` (task 4.4).
 
-Task 1.2 builds the **scaffold + config/db lifecycle** only. The Observable is:
-``python -m src.reactive.daemon`` imports and constructs a ``DaemonConfig`` from
-env *without opening a connection*.
+The persistent execution daemon's process entrypoint. Two paths:
 
-The full single-eval loop (build conn + config, run the loop, restart-safe) is
-**task 4.4** — Phase 2, blocked on ``survival-gate`` (`src/survival/gate.py`).
-Until that lands, the entrypoint supports two paths:
+  * ``DAEMON_SMOKE=1`` — build the ``DaemonConfig`` from env, print a one-line
+    marker, and exit 0. Opens **no connection** (the by-value config-build
+    Observable from task 1.2; kept so a quick "does the config build?" smoke
+    needs no DB).
+  * default — **run the loop** (task 4.4): build the owned connection + config and
+    drive the persistent single-eval loop via :func:`loop.build_and_run`,
+    restart-safe (the connection lifecycle is a context manager; the epoch is
+    re-minted per start; all durable state is in the append-only DB tables).
 
-  * ``DAEMON_SMOKE=1`` — build the config from env, print a one-line marker, and
-    exit 0. Opens no connection. This is the by-value config-build Observable.
-  * default — build the config (still no connection at this stage of the build),
-    then exit with a clear "loop not yet wired" message rather than pretending
-    to run. Wiring the loop here would require ``survival-gate``, which is not
-    yet on disk; doing so now would violate the Phase-2 dependency gate (P14).
+The live drive (``build_and_run``) needs a running Postgres (a live
+``parameters_active`` to pin, a broker session, the market feed) — an
+``integration_live`` bring-up, **not** an inner-ring unit (P14). The loop LOGIC
+(single-eval, intake-first, cadence, fail-toward-minimum-exposure) is unit-tested
+in ``tests/unit/reactive/daemon/test_loop.py`` against synthetic deps; this
+entrypoint is the production wiring of those tested pieces. Until a DB is up,
+``build_and_run`` raises a clear ``NotImplementedError`` naming the deferred live
+seam rather than pretending to run.
 """
 
 from __future__ import annotations
@@ -25,16 +30,14 @@ from src.reactive.daemon.config import DaemonConfig
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Build the daemon config from env. Returns a process exit code.
+    """Run the daemon (or, under ``DAEMON_SMOKE=1``, just build the config).
 
-    Constructing ``DaemonConfig.from_env`` is a pure read of env and opens no
-    connection (the connection lifecycle is owned explicitly by ``db.py`` and is
-    not entered here in the 1.2 scaffold).
+    Returns a process exit code. The default path enters
+    :func:`src.reactive.daemon.loop.build_and_run` — the persistent loop drive.
     """
-    config = DaemonConfig.from_env()
-
     if os.environ.get("DAEMON_SMOKE") == "1":
         # Config-build smoke: prove construction without opening a connection.
+        config = DaemonConfig.from_env()
         print(
             f"DaemonConfig(paper={config.paper}, "
             f"assess_max_latency_seconds={config.assess_max_latency_seconds}, "
@@ -42,15 +45,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # The eval loop is task 4.4 (blocked on survival-gate); not wired in the 1.2
-    # scaffold. Exit cleanly rather than entering a non-existent loop.
-    print(
-        "execution-daemon: config built; the evaluation loop is not yet wired "
-        "(task 4.4, blocked on survival-gate). Set DAEMON_SMOKE=1 to build the "
-        "config and exit 0.",
-        file=sys.stderr,
-    )
-    return 0
+    # Default: run the persistent loop (task 4.4). Imported here so the smoke /
+    # config path pulls in no loop/DB machinery.
+    from src.reactive.daemon.loop import build_and_run
+
+    try:
+        return build_and_run()
+    except NotImplementedError as exc:
+        # The live drive needs a running DB + broker + feed (deferred
+        # integration_live bring-up, P14). Surface the deferred-seam message
+        # cleanly rather than crashing with a traceback.
+        print(f"execution-daemon: {exc}", file=sys.stderr)
+        return 0
 
 
 if __name__ == "__main__":

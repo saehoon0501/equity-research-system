@@ -27,6 +27,52 @@ services:
       retries: 10
       start_period: 10s
 
+  # The Execution Daemon — the persistent non-LLM fast-clock process (execution-
+  # daemon task 4.4). v0.1 is PAPER-ONLY: DAEMON_PAPER=1 pins the broker's paper
+  # RuntimeMode so no live real-money transmission path is reachable (Req 3.1).
+  # Restart-safe: all durable state lives in the append-only DB tables; the epoch
+  # is re-minted per process start, so `restart: unless-stopped` resumes cleanly
+  # after a crash. It waits for a HEALTHY postgres (service_healthy) so the first
+  # epoch-pin read of parameters_active never races the DB coming up.
+  daemon:
+    image: python:3.11-slim
+    container_name: equity-research-daemon
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The daemon reaches the DB by the compose service name (NOT 127.0.0.1 —
+      # that is the host loopback inside the container). config._dsn() reads
+      # POSTGRES_HOST, defaulting to 127.0.0.1 for host-local dev; override to the
+      # `postgres` service here.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # v0.1 paper-only (Req 3.1) — no live transmission path is wired regardless,
+      # but the flag is pinned explicitly as defense in depth.
+      DAEMON_PAPER: "1"
+      # The fast-clock market-feed provider keys (§14.10 — accessed directly, not
+      # via the MCP wrapper). Threaded from the host env / .env.
+      MASSIVE_API_KEY: ${MASSIVE_API_KEY:-}
+    working_dir: /app
+    volumes:
+      # Mount the repo read-only — the daemon rides the existing namespace package
+      # (no pyproject/uv per the tasks.md scope); it runs `python -m
+      # src.reactive.daemon` from the repo root.
+      - .:/app:ro
+    # Install the daemon's runtime deps from the root manifest (task 1.5), then
+    # run the persistent loop. The live drive against postgres is the deferred
+    # integration_live bring-up (loop.build_and_run) — until that seam is wired,
+    # the entrypoint surfaces a clean deferred-seam message and exits 0; once
+    # wired, this same command runs the loop unchanged.
+    command:
+      - sh
+      - -c
+      - "pip install --no-cache-dir -r requirements.txt && python -m src.reactive.daemon"
+
 volumes:
   postgres_data:
     name: equity-research-db-data

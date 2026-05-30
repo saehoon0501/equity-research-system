@@ -96,7 +96,7 @@
   - _Requirements: 6, 8_
   - _Boundary: lifecycle_
   - _Depends: 2.1, 3.5_
-- [ ] 4.4 Evaluation loop + entrypoint + service
+- [x] 4.4 Evaluation loop + entrypoint + service
   - `loop.py` + `__main__.py`: single-eval-at-a-time loop; poll intake first, then `assess` within cadence + on margin-material events; fail-toward-minimum-exposure on dependency error (reject opens, never block exits/reduces); build conn+config and run, restart-safe. Add a daemon service (paper mode, `restart: unless-stopped`, `depends_on: postgres` healthy) to `docker-compose.yml`.
   - Observable: the loop performs at most one evaluation at a time, polls intake before `assess` each cycle, and on a dependency error rejects opens while allowing exits; the compose service starts the daemon against a healthy postgres.
   - _Requirements: 1, 5, 7, 9_
