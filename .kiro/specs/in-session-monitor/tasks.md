@@ -3,7 +3,7 @@
 > **Phased per design (Option C).** Phase 1 (tasks 1–4 + 6.1) is buildable now against landed telemetry + calibration. **Phase 2 (tasks 5, 6.2) is design-complete but implementation-blocked on `execution-daemon` implementing migration 052 (`execution_daemon_command_intake` + epoch)** — an external cross-spec dependency, not executable until that lands. The audit store is an envelope on disk for v0.1 (no migration); promote to a table only when a consumer must join the "why" (P11) — out of scope here.
 
 - [ ] 1. Foundation: parameter namespace + domain types
-- [ ] 1.1 Seed the monitor parameter namespace
+- [x] 1.1 Seed the monitor parameter namespace
   - Add a numbered append-only parameter-seed migration establishing the drift-rule knobs (sufficiency window floor, rolling window length, baseline-exclusion margin, severity-band cutoffs, the per-version in-sample baseline reference, and cadence) under a dedicated `monitor.*` namespace, following the idempotent guarded-insert seed convention
   - Values are provisional and empirically calibrated (P15) — this task establishes the namespace and shape only, not final numbers
   - Claim the next free migration number after the survival (049/050), daemon (051/052), and walkforward (053+) allocations; verify the free number at apply time
