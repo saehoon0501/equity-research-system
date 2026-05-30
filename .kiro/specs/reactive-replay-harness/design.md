@@ -40,7 +40,7 @@
 ### Allowed Dependencies
 - **Drive (LANDED)**: `src.reactive.signal_model.decide`, `src.reactive.features.compute_features`, `src.reactive.params.ParamSnapshot`, `src.overlays.{tactical,flow,reversion}.bin_classifier`, `src.micro.indicators.atr`, `src.mcp.broker.paper.simulate` + `src.mcp.broker.mappers.map_decision_to_action`, `src.reactive.telemetry.reader.query_trace`, `src.calibration.scorer.Label`.
 - **Drive (DESIGNED — stub in tests, revalidate on landing)**: `src.survival.gate.admit` / `assess` + `SurvivalParameters` / `AccountState` / `Position` / `OperationalState` / `ClockState`.
-- **Read (LANDED)**: `decision_process_trace` (`kind=fill` rows) via `query_trace` + the `_dsn()` + `conn=None` dry-run convention; `src.mcp.fred` `get_series`. The harness does **not** read `counterfactual_ledger` — that table is the slow-layer 90d/1y/3y/5y Brinson-Fachler sector-excess scoring and structurally cannot express intraday-flat reactive P&L (§16.1); the fidelity baseline is fill rows only (see Data Models).
+- **Read (LANDED)**: `decision_process_trace` (`kind=fill` rows) via `query_trace`; the champion's pinned config (`ParamSnapshot` + `SurvivalParameters`) from P2 `run_parameters_snapshot` by `param_version` (for champion re-sim); the `_dsn()` + `conn=None` dry-run convention; `src.mcp.fred` `get_series`. The harness does **not** read `counterfactual_ledger` — that table is the slow-layer 90d/1y/3y/5y Brinson-Fachler sector-excess scoring and structurally cannot express intraday-flat reactive P&L (§16.1); the fidelity baseline is fill rows only (see Data Models).
 - **External**: Massive TradFi-stocks REST APIv2/v3 (`MASSIVE_API_KEY`, `MASSIVE_REST_URL` from `.env`); `httpx`. Mirror `src/mcp/broker/gate_client.py`'s structured-result / no-raise / rate-limit-from-headers transport pattern (apiKey auth, not HMAC).
 - **Forbidden**: importing `walkforward-tuning-loop` / `execution-daemon` / `in-session-monitor`; the real-time `massive` MCP server; computing any metric/gate; writing any DB table; live order placement.
 
@@ -69,7 +69,7 @@ graph TB
         Sim --> Outcomes[outcome record assembly]
         Harness --> Fidelity[champion reproduction check]
         FeatAdapter --> DataClient[massive historical client]
-        Fidelity --> DataClient
+        Sim --> DataClient
     end
     DataClient --> Massive[Massive REST APIv2 v3]
     DataClient --> FRED[fred get_series]
@@ -77,7 +77,8 @@ graph TB
     Sim --> Decide[reactive decide core]
     Sim --> SvGate[survival admit assess DESIGNED]
     Sim --> Paper[broker paper simulate]
-    Fidelity --> Reader[telemetry query_trace fill rows]
+    Harness --> Reader[telemetry query_trace fill rows]
+    Harness --> Snap[run_parameters_snapshot champion config]
 ```
 
 Key decisions (not restated from the diagram): decisions are **daily** (driven by the overlay feature cores), the account path is **intraday** (paper sim + survival), they meet in the `simulator`; the Massive client is a **direct REST leaf** (not MCP); fidelity reads the champion's recorded fills + the ledger read-only.
@@ -102,8 +103,8 @@ src/reactive/replay/              # NEW compute leaf (sibling to src/reactive/te
 ├── features_adapter.py           # assemble daily feature inputs (ticker daily adj-close + SPY + rf + OHLC) and call landed compute_features (caches param-independent features per day)
 ├── simulator.py                  # the two-layer loop: per day drive decide (candidate ParamSnapshot); on actionable, simulate intraday entry/fills via paper.simulate + survival admit/assess (candidate SurvivalParameters) + §16.1 flat-by-close; total-return P&L incl. dividends; reconstructs the divergent account path
 ├── outcomes.py                   # assemble per-period OutcomeRecord (decision, predicted prob, fills, total-return P&L, survival events, realized outcome/label); NO metric/gate
-├── fidelity.py                   # champion-reproduction: re-simulate champion version, compare to recorded fills + ledger; pass / fail / not-evaluable
-└── harness.py                    # replay_candidate(candidate, window, *, conn=None) orchestrates the leaves; the contract walkforward calls
+├── fidelity.py                   # champion-reproduction PURE COMPARATOR: compare simulated-champion records to recorded fills (FIFO-paired); pass / fail / not-evaluable (no I/O, no simulator import)
+└── harness.py                    # replay_candidate(...) orchestrates leaves + the champion re-sim (reads P2 run_parameters_snapshot + champion fills, runs simulator, calls fidelity.compare); the contract walkforward calls
 
 tests/
 ├── unit/reactive/replay/         # NEW per-module unit tests (stub cores + fixture data; no network/DB)
@@ -117,7 +118,7 @@ tests/
 ### Modified Files
 - `.env.example` — document `MASSIVE_REST_URL` use by the historical client (the `MASSIVE_API_KEY` already exists for the real-time MCP).
 
-> Dependency direction (strict, left→right): `types` (incl. the `DataPort` protocol) `→ data_client` (implements `DataPort`) `→ features_adapter → simulator → {outcomes, fidelity} → harness`. `simulator` and `fidelity` receive a `DataPort` **by injection** (the real `data_client` in prod, a fixture in tests) rather than importing it — preserving R9.2 isolation + enabling R2.2 on-demand divergent-name fetches; `simulator` imports the landed reactive `decide` + the DESIGNED survival cores + `broker.paper`/`mappers`; `fidelity` imports `telemetry.reader` (fill rows only). `data_client` imports only `httpx` + FRED. Nothing imports a consumer spec.
+> Dependency direction (strict, left→right): `types` (incl. the `DataPort` protocol) `→ data_client` (implements `DataPort`) `→ features_adapter → simulator → outcomes → harness`; `fidelity` is a **pure comparator** leaf (imports `types` only). `simulator` receives a `DataPort` **by injection** (the real `data_client` in prod, a fixture in tests) — preserving R9.2 isolation + enabling R2.2 on-demand divergent-name fetches; `simulator` imports the landed reactive `decide` + the DESIGNED survival cores + `broker.paper`/`mappers`. The **harness** orchestrates the champion re-sim: it reads the champion's pinned config from P2 `run_parameters_snapshot` (by `param_version`) + the champion fills via `telemetry.reader`, runs `simulator` on that config, then calls `fidelity.compare(...)`. `data_client` imports only `httpx` + FRED. Nothing imports a consumer spec, and **`fidelity` never imports `simulator`** (the harness orchestrates both).
 
 ## System Flows
 
@@ -164,12 +165,12 @@ Gating notes: the daily decision drives the candidate `ParamSnapshot`; the intra
 
 | Component | Layer | Intent | Req Coverage | Key Dependencies (P0/P1) | Contracts |
 |-----------|-------|--------|--------------|--------------------------|-----------|
-| harness | Leaf entry | Orchestrate the leaves; the `replay_candidate` contract | 1,10 | simulator (P0), fidelity (P0) | Service |
+| harness | Leaf entry | Orchestrate leaves + the champion re-sim (reads P2 config + champion fills); `replay_candidate` | 1,7,10 | simulator (P0), fidelity (P0), run_parameters_snapshot (P1) | Service |
 | data_client | Leaf | Point-in-time Massive historical REST + FRED | 4,5,6 | Massive REST (P0), httpx (P0), fred (P1) | Service |
 | features_adapter | Leaf | Daily feature inputs + drive `compute_features` | 3 | reactive features+overlays (P0) | Service |
 | simulator | Leaf | Two-layer loop; counterfactual path; P&L | 2,3,5,6 | decide (P0), survival admit/assess (P0, DESIGNED), paper.simulate (P0) | Service |
 | outcomes | Leaf | Assemble the raw per-period record | 8 | types (P0) | Service |
-| fidelity | Leaf | Champion-reproduction precondition | 7 | telemetry.reader (P0), ledger (P0) | Service, State |
+| fidelity | Leaf (pure) | Champion-reproduction comparator (no I/O) | 7 | types (P0) | Service, State |
 
 ### simulator (the two-layer engine)
 | Field | Detail |
@@ -196,14 +197,23 @@ def simulate(candidate: Candidate, window: ReplayWindow, data_port: DataPort) ->
 - Postconditions: one `OutcomeRecord` per trading day; no day uses data past its own instant for the decision (R4.1).
 - Invariants: identical (candidate, window, **and `data_port` responses**) ⇒ identical records (R9.1 — determinism holds against a fixed/fixture port); driven-core logic never duplicated.
 
+**Core algorithms (pinned to prevent incompatible/non-deterministic implementations):**
+1. **Champion-decision prefetch + divergence detection.** At window start, `query_trace({code_version, param_version, walk_forward_window, kind:"decision", since, until})` once → index champion decisions by `(day, symbol)`. Per day: compute the candidate decision, then it **diverges** iff it differs from the champion's indexed decision for that `(day, symbol)` — *including* champion-HOLD/no-record vs candidate-actionable. Divergent + actionable ⇒ fetch that name's intraday path via `data_port`; non-divergent ⇒ reuse the champion's recorded intraday inputs. Champion decisions are pre-fetched once (no per-day DB round-trip), removing the ordering hazard.
+2. **Decision→order construction.** `decision ∈ {LONG,SHORT}` + `sizing_hint` → `ProposedOrder{symbol, intent=BUY, direction, volume = size_from(sizing_hint, params.per_order_size_max), stop_loss}`; venue side via `map_decision_to_action`; `admit` may reduce to `advisory_max_volume`. HOLD or `admit=REJECT` ⇒ a flat day.
+3. **§16.1 flatten.** At `flatten_lead_seconds` before close, emit the opposite-side close; verify a flat post-condition; the day's realized P&L = `(exit_fill − entry_fill) × filled_volume × dir(+1 LONG / −1 SHORT)` + any same-day cash dividend (R5.1).
+4. **As-of split rule (point-in-time features, R4.2).** Feature-window closes are split-adjusted for ex-dates **≤ the as-of instant only** (in-window pre-T splits applied; post-T splits never): fetch `adjusted=false` raw + apply the splits reference up to T. This keeps momentum continuous across an in-window split without look-ahead — distinct from blanket `adjusted=true` (which folds in post-T splits = leakage).
+5. **Champion P&L fill-pairing (fidelity baseline).** Per `(day, symbol)` under the §16.1 one-position invariant, **FIFO-pair** entry fills against that day's flatten fills (handling partial/multi-row fills by volume); matched legs → `(exit−entry) × min(volumes) × dir`. **If a day shows ambiguous pairing** (not one net round-trip — unmatched or surplus legs), the fidelity comparator **aborts with a pairing-ambiguity signal** (a revalidation trigger surfaced to the consumer), never a silent undercount.
+
 ### data_client (Massive historical REST)
 **Responsibilities & Constraints**: fetch as-of-instant daily + intraday aggregate bars (`adjusted=false`), tick trades, NBBO quotes, grouped daily (universe), and splits/dividends/calendar reference; **never** return data timestamped after the requested instant for decision inputs (R4.1); **fail explicitly** if a window predates the account tier's lookback (R4.3, no silent truncation); retrieve delisted names; paginate past the per-request row cap (R4.4). Mirrors `gate_client.py`: structured `Result`/`Error` (never raises), rate-limit from response headers, `apiKey` auth from `.env`. FRED rf-yield via the landed `fred` access. **Contracts**: Service [x] — `fetch_daily_bars`, `fetch_intraday`, `fetch_quotes`, `fetch_corporate_actions`, `fetch_rf_yield` (signatures finalized at implementation; all point-in-time bounded).
 
-### fidelity (champion-reproduction precondition)
-**Responsibilities & Constraints**: re-simulate the **champion's own version** over a window and compare its P&L to the champion's **recorded fills** (`query_trace` `kind=fill`) — the **sole** baseline. The harness reconstructs the champion's realized P&L from the fill rows by following each fill's `parent_trace_id` to its decision (for symbol + LONG/SHORT) and pairing each intraday-flat day's entry fill(s) with that day's flatten fill(s) — `(exit − entry) × fill_volume × direction`. Because fill rows carry **no `position_id`**, pairing relies on the §16.1 one-position-per-symbol-per-day invariant + the decision linkage; if concurrent same-symbol positions or a `position_id` field are ever introduced, this is a revalidation trigger. The `counterfactual_ledger` is **not** consulted (slow-layer sector-excess scoring, not reactive P&L). Returns **pass** (within configured tolerance), **fail** (engine distrust → consumer withholds promotion, R7.2), or **not-evaluable** (champion fill baseline absent/insufficient, e.g. paper cold-start — R7.3, distinct from fail). Read-only. **Contracts**: Service [x] State [x] — `check_fidelity(window, data_port, conn=None) -> FidelityResult{status: pass|fail|not_evaluable, detail}`.
+### fidelity (champion-reproduction precondition — a pure comparator)
+**Wiring (avoids a layering violation):** `fidelity` does **not** import `simulator`. The **harness** orchestrates the champion re-simulation — it fetches the champion's pinned config (`ParamSnapshot` + `SurvivalParameters`) from P2 `run_parameters_snapshot` by the champion's `param_version` (the config the champion actually ran under, so admit/flatten behavior is reproduced), runs `simulator` on it, and passes the resulting records + the champion's recorded fills to `fidelity`, which is a pure comparator `(simulated_records, recorded_fills) -> FidelityResult`.
+
+**Responsibilities & Constraints**: compare the simulated-champion P&L to the champion's **recorded fills** (`kind=fill`, supplied by the harness) — the **sole** baseline. The comparator reconstructs the recorded-champion P&L from the fill rows via the FIFO entry/exit pairing pinned in the simulator's **Core-algorithms #5** (decision-linked, per-symbol, per-§16.1-day; no `position_id`, so it relies on the one-position invariant and **aborts on ambiguous pairing** rather than undercounting — a revalidation trigger if concurrent same-symbol positions are ever introduced). The `counterfactual_ledger` is **not** consulted (slow-layer sector-excess scoring, not reactive P&L). Returns **pass** (within configured tolerance), **fail** (engine distrust → consumer withholds promotion, R7.2), or **not-evaluable** (champion fill baseline absent/insufficient, e.g. paper cold-start — R7.3, distinct from fail). Pure (no I/O — the harness supplies both sides). **Contracts**: Service [x] State [x] — `compare(simulated_records: list[OutcomeRecord], recorded_fills: list[dict], tolerance: float) -> FidelityResult{status: pass|fail|not_evaluable, detail}`.
 
 ### outcomes + harness
-**outcomes**: assemble the per-period `OutcomeRecord{period, decision, predicted_probability, fills, total_return_pnl, survival_events, realized_outcome, realized_label}` from simulator output; computes **no** survival-net metric, calibration, or gate (R8.2 — the consumer's). **harness**: `replay_candidate(candidate, window, *, data_port=None, conn=None) -> ReplayResult{records, fidelity}` — construct the production `DataPort` over `data_client` when none is injected (tests inject a fixture port), run `simulator`, attach the `fidelity` result; the single contract `walkforward-tuning-loop` calls per config per partition (R1).
+**outcomes**: assemble the per-period `OutcomeRecord{period, decision, predicted_probability, fills, total_return_pnl, survival_events, realized_outcome, realized_label}` from simulator output; computes **no** survival-net metric, calibration, or gate (R8.2 — the consumer's). **harness**: `replay_candidate(candidate: Candidate, window: ReplayWindow, *, data_port=None, conn=None) -> ReplayResult{records, fidelity}` (the `window` arg is a `ReplayWindow{start, end, tickers}` — the caller supplies one per CPCV partition) — construct the production `DataPort` over `data_client` when none is injected (tests inject a fixture port), run `simulator`, attach the `fidelity` result; the single contract `walkforward-tuning-loop` calls per config per partition (R1).
 
 ## Data Models
 
@@ -212,7 +222,28 @@ def simulate(candidate: Candidate, window: ReplayWindow, data_port: DataPort) ->
 - `counterfactual_ledger` — **explicitly NOT read.** Its realized-return columns (`vs_sector_etf_return_pct`, etc.) are slow-layer Brinson-Fachler sector-excess scoring at 90d/1y/3y/5y horizons; they cannot represent intraday-flat reactive P&L, so they are not a valid baseline at any granularity.
 
 ### Owned (in-memory contracts only — no DB table; read-only consumer)
-- `Candidate{param_snapshot?, survival_parameters?, code_version?}`, `ReplayWindow{start, end, tickers}`, `OutcomeRecord` (above), `ReplayResult{records, fidelity}`, `FidelityResult`. No migration (this spec writes no DB table).
+The cross-spec contract `walkforward-tuning-loop`'s `metric` consumes is `OutcomeRecord` — pinned here as an explicit shape so the harness↔tuner seam cannot drift:
+```python
+@dataclass(frozen=True)
+class OutcomeRecord:
+    period: str                  # ISO date of the trading day
+    symbol: str
+    decision: Decision           # Literal["LONG","SHORT","HOLD"] (src.reactive.types)
+    predicted_probability: float # the softmax P at fire (calibration input)
+    fills: list[Fill]            # Fill{side, price, volume, ts} at counterparty prices
+    total_return_pnl: float      # price P&L + same-day cash dividends
+    survival_events: list[str]   # e.g. ["admit_reject","stop_hit","flatten","safe_mode"]
+    realized_outcome: float      # the day's realized round-trip return (calibration target)
+    realized_label: Label        # src.calibration.scorer.Label (BUY/HOLD/TRIM/SELL)
+
+@dataclass(frozen=True)
+class Candidate:    # param_snapshot: ParamSnapshot | None; survival_parameters: SurvivalParameters | None; code_version: str | None
+    ...
+@dataclass(frozen=True)
+class ReplayResult: # records: list[OutcomeRecord]; fidelity: FidelityResult
+    ...
+```
+`walkforward-tuning-loop`'s `metric`/`oos` **import and reference `OutcomeRecord`** (no re-declaration) — this is the agreed seam. No migration (this spec writes no DB table). `DataPort` is a `typing.Protocol` (fetch methods), satisfied by `data_client` in prod and a fixture in tests.
 
 ## Error Handling
 
