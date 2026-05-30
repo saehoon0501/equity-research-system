@@ -9,7 +9,7 @@
   - Claim the next free migration number after the survival (049/050), daemon (051/052), and walkforward (053+) allocations; verify the free number at apply time
   - Observable: applying the migration makes the active-parameters view return the monitor namespace's knobs as resolvable rows
   - _Requirements: 1.1, 2.1, 2.2, 2.3, 8.3_
-- [ ] 1.2 (P) Define the monitor domain types
+- [x] 1.2 (P) Define the monitor domain types
   - Pure typed dataclasses for the shared vocabulary: the envelope verdict (state + severity + binding metric), the drift diagnostic (per-metric observed value + bootstrap CI + survival-band flag + sufficiency), the intervention-intent enum (none / halt-new-entries / tighten-safe-mode / select-safer-config), the intervention command (writer-side row including the idempotency id + issuer), the intervention audit (correlation keys + applied flag + rationale), and the pinned monitor parameters
   - Independent of 1.1 (no shared artifact) — runs alongside it
   - Observable: a unit test imports the types and asserts each dataclass's field set + frozen-ness, and that the intent enum has exactly the four members
