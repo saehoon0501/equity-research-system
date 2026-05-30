@@ -123,3 +123,6 @@
   - Observable: the E2E test asserts both the champion-reproduction pass and the not-evaluable branch
   - _Requirements: 1.1, 7.1, 7.3, 8.1, 9.1_
   - _Depends: 3.1_
+
+## Implementation Notes
+- 1.2: worktree has no root dep manifest; `httpx` was installed into `.venv-replay` (uv). Reuse that venv for all tasks; if rebuilt, `uv pip install httpx pytest python-dotenv` first.
