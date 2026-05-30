@@ -42,7 +42,7 @@
   - _Boundary: features_adapter_
   - _Depends: 1.3_
 
-- [ ] 2.2 (P) Fidelity comparator (pure)
+- [x] 2.2 (P) Fidelity comparator (pure)
   - FIFO entry/exit fill-pairing per (day, symbol) under the §16.1 one-position invariant → recorded-champion P&L; compare to simulated-champion P&L within a configured tolerance; return pass / fail / not-evaluable (sparse or absent baseline ⇒ not-evaluable, distinct from fail); abort with a pairing-ambiguity signal on a non-round-trip day (never a silent undercount)
   - Pure: no I/O, no `simulator` import (the harness supplies both sides)
   - Observable: unit tests — within-tolerance ⇒ pass; injected mismatch ⇒ fail; empty baseline ⇒ not-evaluable; an ambiguous multi-leg day ⇒ pairing-ambiguity abort
@@ -128,3 +128,4 @@
 - 1.2: worktree has no root dep manifest; `httpx` was installed into `.venv-replay` (uv). Reuse that venv for all tasks; if rebuilt, `uv pip install httpx pytest python-dotenv` first.
 - 1.3: `fetch_quotes`/`fetch_trades` bound at DAY granularity; if the simulator (2.3+) passes a sub-day instant for instant-precision fills, tighten the bound there to avoid same-day-later leakage (R4.1). And `DataPort.fetch_corporate_actions` reconciled types.py to `-> dict {splits,dividends}`.
 - 1.4: survival stubs mirror the in-progress survival-gate-impl: `admit(order,state,op_state,params,clock,evaluation)` carries a 6th `OrderEvaluation` arg (design omitted it) — task 2.4 must construct it. Stub INPUTS are `Any` (name/order match only). On survival landing: delete local mirrors, import from src.survival, re-run signature tests.
+- 2.2: fidelity.compare takes HARNESS-SYNTHESIZED recorded-fill dicts {day,symbol,direction,side,actual_fill_price,fill_volume} (schema fill rows lack symbol/side — they live in the decision JSONB; the harness/3.1 must do the parent_trace_id->decision join). DIVIDEND-BASIS asymmetry: recorded side price-only vs simulated total-return -> a dividend day can false-fail (conservative, P7). 3.1/4.3 + calibration: set tolerance to absorb it OR strip dividends from the simulated side before compare.
