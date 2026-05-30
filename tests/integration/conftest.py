@@ -84,7 +84,10 @@ def _dsn() -> str:
 
 @pytest.fixture(scope="session")
 def apply_migration_chain() -> str:
-    """Idempotently apply `003 → 030 → 048` to the shared dev DB.
+    """Idempotently apply `003 → 030 → 048 → 049 → 050` to the shared dev DB.
+
+    (049 = survival_gate state+events; 050 = survival.* param seed — appended
+    by survival-gate tasks 2.1/2.2.)
 
     Executes each migration's FULL text in one `execute()` call with the
     connection in autocommit — the file's own `BEGIN; … COMMIT;` drives the
@@ -92,7 +95,7 @@ def apply_migration_chain() -> str:
     bodies and `COMMENT ON … '…; …'` strings contain semicolons.
 
     Returns the DSN so dependent fixtures can reuse it. No teardown — the
-    tables are append-only and 048 is meant to stay applied.
+    tables are append-only and these migrations are meant to stay applied.
     """
     dsn = _dsn()
     with psycopg.connect(dsn, autocommit=True) as conn:

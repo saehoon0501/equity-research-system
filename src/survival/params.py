@@ -1,8 +1,10 @@
 """Pinned survival-parameter set + the tighten-only runtime-override resolver.
 
 This is the ``params`` module of the ``survival`` package (dependency direction
-``types → params → gate``): it imports only from :mod:`src.survival.types` and
-the standard library. It owns the *pinned survival-parameter set* as a unit —
+``types → params → gate``): it imports only from the standard library and
+nothing upward (no ``gate`` import). ``SurvivalParameters`` is defined locally
+here (co-located with ``DEFAULTS``/``resolve``/``tighten_only`` per task 1.2),
+not imported from ``types``. It owns the *pinned survival-parameter set* as a unit —
 the :class:`SurvivalParameters` frozen dataclass, the module-constant
 :data:`DEFAULTS`, the by-value :func:`resolve`, and the tighten-only
 :func:`tighten_only` runtime-override resolver.
