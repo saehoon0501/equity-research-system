@@ -7,7 +7,7 @@ The Execution Daemon is the persistent, non-LLM **fast-clock process** of the re
 Primary roles: the **Operator** (starts / monitors / halts the daemon, reads telemetry), the **reactive CFD trading system** (the automated flow itself), and the **downstream consumers** (the walk-forward tuning loop and the in-session monitor).
 
 ## Boundary Context
-- **In scope**: the persistent single-evaluation-at-a-time loop + scheduling cadence; §13 orchestration of the four dependencies; the paper-mode submit→poll→reconcile order lifecycle incl. double-send guard and resize-on-advisory; complete telemetry row assembly (decision + linked fill, full correlation keys, derived gate fields); persist-then-act ordering + operational-state freshness; flat-before-close action + verify-flat handshake; the full version-pinned position lifecycle + atomic hot-swap; after-market event-queue emission; exposure of kill-switch / safe-mode / versioned-config command seams.
+- **In scope**: the persistent single-evaluation-at-a-time loop + scheduling cadence; §13 orchestration of the four dependencies; the candidate assembly (fast-clock market-data fetch, feature computation, tactical-relative-strength direction selection); the decision→order construction (intent translation, survival-capped volume, protective stop-loss, position targeting); the paper-mode submit→poll→reconcile order lifecycle incl. double-send guard and resize-on-advisory; complete telemetry row assembly (decision + linked fill, full correlation keys, derived gate fields); persist-then-act ordering + operational-state freshness; flat-before-close action + verify-flat handshake; the full version-pinned position lifecycle + atomic hot-swap; after-market event-queue emission; exposure of kill-switch / safe-mode / versioned-config command seams.
 - **Out of scope**: live real-money routing (paper/dry-run only); the survival, edge, and sizing *logic* (owned by the dependencies — the daemon orchestrates, never recomputes); parameter fitting/tuning + calibration; the trace store's schema and write primitives; the in-session supervisory loop itself; any dispatch or orchestration of LLM workers.
 - **Adjacent expectations**: the broker adapter exposes place/readout/history operations and surfaces fill/swap/forced-liquidation data; the signal model emits a directional decision plus a decision substrate carrying its two version keys; the survival gate emits admit/assess verdicts, operational-state transitions, and events, and declares the persist-then-act, assess-cadence, and single-threaded-loop contracts ON the daemon; the decision-trace store provides an idempotent, append-only write surface keyed on a client-minted trace identifier and a four-key correlation set; the tuning loop supplies versioned parameters the daemon hot-swaps and drains the daemon's event queue; the in-session monitor issues commands only through the daemon's exposed kill-switch / safe-mode / versioned-config seams.
 
@@ -27,9 +27,9 @@ Primary roles: the **Operator** (starts / monitors / halts the daemon, reads tel
 **Objective:** As the reactive CFD trading system, I want every action gated in Survive ⊳ Preserve ⊳ Edge ⊳ Return order, so that no edge or return consideration can override survival.
 
 #### Acceptance Criteria
-1. When an order is contemplated, the Execution Daemon shall obtain a survival admit verdict before requesting any directional decision or placing any order.
-2. If the survival gate returns a reject verdict, then the Execution Daemon shall not place the order and shall record the binding constraint.
-3. When the survival gate admits an order, the Execution Daemon shall obtain the directional decision from the signal model and, only if the decision is actionable, size it using the advisory sizing hint capped by survival limits.
+1. While Survive does not permit new exposure — the kill switch is engaged, safe mode halts new entries, or the standing survival monitor flags a breach — the Execution Daemon shall not request a directional decision and shall not place any opening order.
+2. When Survive permits new exposure, the Execution Daemon shall obtain the directional decision from the signal model and, only if the decision is actionable, construct a survival-legal order from it (per Requirement 11) before any per-order survival check.
+3. Before routing any constructed order, the Execution Daemon shall obtain a per-order survival admit verdict; if the verdict is reject, it shall not place the order and shall record the binding constraint.
 4. The Execution Daemon shall not re-compute, override, or increase any survival, edge, or sizing value produced by a dependency.
 5. When the signal model returns HOLD or a sub-threshold decision, the Execution Daemon shall place no order and shall record a declined decision.
 
@@ -105,3 +105,23 @@ Primary roles: the **Operator** (starts / monitors / halts the daemon, reads tel
 1. The Execution Daemon shall not dispatch, spawn, or orchestrate any LLM agent or subagent.
 2. The Execution Daemon shall not compute any probability, margin-distance, sleeve-cap, or liquidation value of its own; it shall consume each from its owning dependency.
 3. The Execution Daemon shall obtain directional decisions, survival verdicts, sizing hints, and venue actions exclusively from their owning dependencies.
+
+### Requirement 11: Order construction from the directional decision
+**Objective:** As the reactive CFD trading system, I want the Edge layer's directional decision translated into a concrete, survival-legal order, so that a LONG/SHORT/HOLD verdict becomes an order the survival gate and broker can act on — closing the order path's missing translation step.
+
+#### Acceptance Criteria
+1. When the signal model returns an actionable decision and Survive permits new exposure, the Execution Daemon shall construct a single order whose intent (one of BUY, TRIM, or SELL) and direction together express the correct action — open or increase exposure on the decided side, or reduce/close an opposing position — derived from the decision direction and the current position in the symbol.
+2. The Execution Daemon shall set the order volume from the advisory sizing hint, capped by the survival per-order and exposure limits, and shall never exceed the survival advisory maximum.
+3. The Execution Daemon shall attach a protective stop-loss price level to every constructed opening order, computed from a current reference price and a configured stop-distance derived from the decision's volatility (ATR), so the constructed order satisfies the survival mandatory-stop check.
+4. When the constructed order reduces or closes an existing position, the Execution Daemon shall target that specific position by its identifier.
+5. The Execution Daemon shall obtain the position state used for construction from the broker readouts and shall not infer it.
+6. When the constructed order reduces or closes a position, the Execution Daemon shall not exceed the held volume in a single order; a same-symbol reversal (flatten, then open the other side) occurs only on a later evaluation after the position is flat.
+
+### Requirement 12: Candidate assembly — market data, features, and direction
+**Objective:** As the reactive CFD trading system, I want each evaluation's market data fetched, its feature set computed, and its directional side selected before the signal model runs, so that the model has the inputs it requires and the daemon owns the order path's upstream seam.
+
+#### Acceptance Criteria
+1. Each evaluation, the Execution Daemon shall fetch the fast-clock market data the feature computation requires (the ticker's recent bars, the market-benchmark series, and the risk-free yield).
+2. The Execution Daemon shall compute the feature set the signal model consumes from the fetched market data, and shall not pass raw market data to the signal model.
+3. The Execution Daemon shall select the candidate directional side (long or short) from the tactical relative-strength signal, and shall not take direction from fundamentals or the slow-layer thesis.
+4. The Execution Daemon shall hand the computed features and the selected direction to the signal model; if the market data is unavailable or insufficient for the feature computation, it shall request no decision and place no opening order (fail toward no new exposure).

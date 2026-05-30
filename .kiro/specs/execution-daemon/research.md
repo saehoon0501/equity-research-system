@@ -204,3 +204,30 @@ The command-transport gap + the two consumer-resolved forward contracts are now 
 - **Issue 1 — `run_id`/snapshot semantics mismatch → option (b), operator-chosen.** The daemon now owns a new `execution_daemon_epoch` table (`epoch_id` = `run_id`, pinned-hash, window, open/close; mig 052 co-located → still 051/052) **instead of reusing `run_parameters_snapshot`**. Keeps the LLM `/research-company` run lifecycle (`run_status` in_progress/failed) + the P6 orphan reconciler uncontaminated. `params` writes the epoch table, not the snapshot table.
 - **Issue 2 — Phase-2 readiness not encoded → resolved + narrowed.** git re-check 2026-05-30: **`reactive.decide` now LANDED** (`src/reactive/signal_model.py` + features/params/types + unit tests, Phase-1 inner-ring merged at `7ab701f`); **`survival.gate` still spec-only** (no `src/survival/`, `ready=False`). So Phase 2 (orchestrator + lifecycle + e2e) is blocked on **survival-gate only**, not two deps. Encoded as a §Build Phasing section; `/kiro-spec-tasks` must mark Phase-2 sub-tasks `_Depends:_` blocked-on-survival-gate.
 - **Issue 3 — command-intake write-auth → noted, no in-repo precedent.** grep found no `GRANT`/`CREATE ROLE` pattern in migrations/src. Mandate: a dedicated DB role/grant for the commander + an `issued_by` allowlist before any live cutover; v0.1 paper accepts a documented permissive default; the residual **halt-DoS via spurious `engage_kill_switch`** is accepted eyes-open (the toward-safer guard already prevents loosening).
+
+---
+
+# Design Follow-up — R2.2 (order-builder gap — operator catch, 2026-05-30)
+
+Operator escalated a gap that survived R2 **and** the `/kiro-validate-gap` pass: the order path had **no decision→order translation step**.
+
+- **Verified against current files:** the daemon design had no order-builder/translator (grep clean); the three shapes don't bridge — reactive `ReactiveDecision{LONG/SHORT/HOLD + sizing_hint + substrate.atr}` (no intent/volume/stop_loss) → survival `ProposedOrder{intent BUY/TRIM/SELL, volume, stop_loss}` → broker `submit_decision(Label, volume, position_id, stop_loss)`. The protective **stop-loss is unowned by all four specs** (survival *requires* it via the `missing_sl` reject, reactive emits none, broker places-not-computes).
+- **Adjacent bug found while verifying:** Req 2.1/2.3 + the R2 flow put `admit` **before** `decide` — impossible, since `admit` consumes the built order. The §13 Survive-first gate is served by `assess` (the standing monitor), not `admit` (the per-order veto). Corrected to `assess → decide → build → admit → submit`.
+- **Fix (R2.2):** new **pure `order_builder`** component (intent via decision×position; volume from `sizing_hint` capped by survival; ATR-based `stop_loss`; `position_id` for reduce/close); Req 2.1/2.3 rewritten + **new Requirement 11** (order construction); a daemon `stop_loss_atr_mult` config param.
+- **Stop-loss owner = daemon `order_builder`, ATR-based (operator-chosen 2026-05-30).** Rationale: survival + reactive both explicitly disclaim SL; the substrate already carries `atr`; zero cross-spec blast radius. The SL is an **order parameter, not a survival/edge value**, so computing it is not a P7 re-computation.
+- **Phasing:** `order_builder` is **Phase 1** (pure, inner-ring-testable against synthetic `ReactiveDecision` — reactive's types landed). The `orchestrator` that wires `assess`/`admit` stays Phase 2 (blocked on survival-gate).
+- **Requirements + design both reset to unapproved** → re-approval required (the gap was found post-approval; faithful state).
+
+---
+
+# Design Follow-up — R2.3 (advisor review → candidate component + order-builder fixes, 2026-05-30)
+
+An adversarial advisor (dispatched after R2.2, operator-requested) returned **NEW-GAP-FOUND**:
+
+- **B1 (phantom field):** `order_builder` read `substrate.atr`, but the landed `DecisionSubstrate` exposes `atr` only at `feature_values["atr"]` (`src/reactive/types.py` / `features.py`) — exactly the P12 / `feedback_spec_changes_need_smoke_test` shape-divergence. Fixed: read `feature_values["atr"]` + None-guard.
+- **B2 (bigger upstream gap):** nobody fetched market data, computed `FeatureSet`, or selected `direction` for `decide`. **Resolved by §12.3** (operator pointed me at the source of record): the directional side is the **`tactical-overlay` relative-strength** — the reactive stack is the decider (§12.4); the slow-layer veto is housed in `survival-gate` (§12.6). So direction is owned by the architecture, not open. Added a **`candidate`** component (fetch feed → `compute_features` → tactical-direction → `decide`) + new **Requirement 12**.
+- **§13 permit source:** `assess` returns directives/op-state, not a permit flag — the daemon derives "new exposure permitted" from the freshly-persisted op-state (kill-switch + safe-mode grade). Corrected.
+- **Operator-confirmed judgment calls (2026-05-30):** (D2) stop-loss is a **price level** = `reference_price ∓ atr×mult`, anchored on the latest bar (entry unknown pre-fill in paper sim) — `order_builder` takes a `reference_price`; (D3) **flatten-then-flip forbidden in v0.1** (clamp volume ≤ held); SHORT-open = `BUY` + `Direction.SHORT` (broker `mappers.py`).
+- **Tracked build-item:** the non-MCP daemon's concrete market-feed access — proposed massive-provider client direct (§14.10); the compute + direction logic is testable now against mocked arrays.
+- **Meta:** the gap recurred one layer up because per-component review never walked the whole order path end-to-end; the fix now names an owner for **every arrow** (data → features → direction → decision → order → admit → submit). Requirements + design reset to unapproved.
+- **Advisor-confirmed solid:** the §13 re-sequencing fix and the SL-ownership call were correct — only the ATR path + the SL unit (level vs distance) were wrong.
