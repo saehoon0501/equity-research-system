@@ -58,7 +58,7 @@
   - _Requirements: 4_
   - _Boundary: trace_assembler_
   - _Depends: 1.3_
-- [ ] 3.4 (P) Event-queue emit
+- [x] 3.4 (P) Event-queue emit
   - `event_queue.py`: emit decision/fill/lifecycle/command/safe_mode/kill_switch events to `execution_daemon_event_queue` (INSERT only); never set `drained_at`; document the single-external-drainer contract.
   - Observable: emitting an event INSERTs one row and never writes `drained_at`; the module exposes no drain path.
   - _Requirements: 9_
