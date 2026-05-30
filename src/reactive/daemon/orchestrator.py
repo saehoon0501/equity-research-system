@@ -73,7 +73,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AbstractSet, Any, Callable, Optional, Sequence
 
-from src.reactive.daemon.broker_seam import Direction, Position
+from src.reactive.daemon.broker_seam import (
+    Direction,
+    OrderResult,
+    Position,
+    RuntimeMode,
+)
 from src.reactive.daemon.evaluation import build_order_evaluation
 from src.reactive.daemon.types import (
     Candidate,
@@ -94,7 +99,14 @@ from src.survival.types import (
 )
 from src.survival.types import HALT_NEW_RANK, grade_rank
 
-__all__ = ["OrchestrationOutcome", "new_exposure_permitted", "orchestrate_tick"]
+__all__ = [
+    "OrchestrationOutcome",
+    "new_exposure_permitted",
+    "orchestrate_tick",
+    "PaperLifecycleOutcome",
+    "PaperSendGuard",
+    "drive_paper_lifecycle",
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -532,3 +544,241 @@ def _admit_with_single_resize(
     # Exactly one resize pass — the second verdict is final whether ALLOW or
     # REJECT (no further resize loop).
     return second, first_reject_constraint, resized
+
+
+# --------------------------------------------------------------------------- #
+# Paper-mode order lifecycle driver (task 4.2 — Requirement 3).               #
+# --------------------------------------------------------------------------- #
+#
+# Once an order clears ``admit`` (ALLOW), the daemon drives it through the
+# broker's **paper-mode** submit→poll→reconcile lifecycle. This seam is
+# deliberately small and pure-of-its-own-logic (Req 10): it obtains the venue
+# action from ``broker.submit_decision`` and never simulates a fill itself.
+#
+# Four contracts (Req 3):
+#
+#   * **Paper-only (3.1).** The driver pins a paper ``RuntimeMode``
+#     (``paper_enabled=True``) onto every ``submit_decision`` call, so the broker
+#     can *never* route to its live-transmit path (``live_transmit_allowed()`` is
+#     False whenever paper is on, by construction — broker ``config.RuntimeMode``).
+#     There is no live branch in this module; v0.1 has no reachable live path.
+#   * **submit→poll→reconcile to a terminal outcome (3.2).** ``submit_decision``
+#     in paper mode returns a structured ``OrderResult`` synchronously
+#     (``simulated`` / ``rejected`` / ``noop``); the driver classifies it to a
+#     terminal lifecycle outcome. The poll is bounded (a slow venue surfaces
+#     ``unconfirmed`` rather than stalling the single-threaded loop, Req 3.2/3.3)
+#     — in paper the result is immediate, but the bounded shape is kept so the
+#     same driver tolerates an ``unconfirmed`` without looping forever.
+#   * **Unconfirmed surfaced, never filled (3.3).** An ``unconfirmed`` result is
+#     reported AS unconfirmed; ``is_filled`` is True *only* for ``filled``.
+#   * **Double-send guard (3.4).** While a submitted order's confirmation is
+#     pending (an ``unconfirmed`` outcome), a re-drive for the **same order
+#     intent** does NOT issue a duplicate submission — the daemon-owned
+#     ``PaperSendGuard`` suppresses it (the broker's own 7.4 guard is on the
+#     *live* path, unreachable in paper, so the daemon owns the paper-mode guard).
+#
+# This driver returns a structured :class:`PaperLifecycleOutcome` the loop
+# (task 4.4) and the trace assembler (task 3.3) act on — it does not itself
+# persist a trace or emit an event (those are the loop's seams; persist-then-act).
+
+
+# Terminal lifecycle statuses (the broker ``OrderStatus`` union, all terminal in
+# paper mode). ``filled`` is the only *confirmed fill* (Req 3.3); ``simulated`` is
+# the paper confirm. ``unconfirmed`` is the only status that keeps an intent
+# PENDING for the double-send guard (Req 3.4) — every other status
+# (``filled`` / ``simulated`` / ``rejected`` / ``noop``) is a confirmed terminal
+# that clears the pending mark.
+_FILLED_STATUS = "filled"
+_PENDING_STATUS = "unconfirmed"
+
+
+@dataclass(frozen=True)
+class PaperLifecycleOutcome:
+    """The structured result of one paper-mode order lifecycle (task 4.2).
+
+    ``status`` is the broker ``OrderStatus`` the lifecycle reached
+    (``filled`` | ``simulated`` | ``rejected`` | ``noop`` | ``unconfirmed``).
+    ``terminal`` is True once the poll/reconcile reached a terminal state (always
+    True here — paper returns synchronously and an unconfirmed is itself the
+    bounded-poll terminal). ``is_filled`` is True **only** on a ``filled`` status
+    (an ``unconfirmed`` is never a fill — Req 3.3). ``result`` is the broker
+    ``OrderResult`` surfaced verbatim for the trace/fill consumer (the fill price
+    / volume / venue ids / reason live there). ``submitted`` is False when the
+    double-send guard suppressed the submission (a re-drive while pending —
+    Req 3.4); the surfaced ``result`` is then the prior pending outcome.
+    """
+
+    status: str
+    terminal: bool
+    is_filled: bool
+    result: OrderResult
+    submitted: bool = True
+
+
+def _intent_fingerprint(order: ProposedOrder) -> tuple[str, str, str, Optional[str]]:
+    """The double-send identity of an order intent (Req 3.4).
+
+    Two submissions are "the same order intent" iff they target the same
+    (``symbol``, ``intent``, ``direction``, ``position_id``). An open carries
+    ``position_id=None``; a reduce/close carries the targeted id — so a reduce of
+    one position never collides with an open or with a different position's
+    reduce. The guard keys pending state on this tuple.
+    """
+    return (
+        order.symbol,
+        _intent_str(order.intent),
+        _direction_str(order.direction),
+        order.position_id,
+    )
+
+
+class PaperSendGuard:
+    """The daemon-owned double-send guard for the paper lifecycle (Req 3.4).
+
+    The broker's own duplicate-suppression (``core._double_send_guard``) lives on
+    the *live* transmit path, which is unreachable in paper mode (Req 3.1), so the
+    daemon owns the paper-mode guard. It records the **pending** (unconfirmed)
+    submissions by intent fingerprint; while an intent is pending, a re-drive for
+    the same intent is suppressed (no duplicate ``submit_decision``). A confirmed
+    terminal outcome (``filled`` / ``simulated`` / ``rejected`` / ``noop``) clears
+    the pending mark, so a genuinely-new later intent for the same target submits.
+
+    Single-threaded by construction (the loop serializes evaluations, Req 1.1), so
+    no lock is needed — a plain dict keyed on the intent fingerprint.
+    """
+
+    def __init__(self) -> None:
+        # fingerprint -> the prior pending PaperLifecycleOutcome (surfaced verbatim
+        # to a suppressed re-drive so the caller still sees the unconfirmed state).
+        self._pending: dict[
+            tuple[str, str, str, Optional[str]], PaperLifecycleOutcome
+        ] = {}
+
+    def pending_outcome(
+        self, order: ProposedOrder
+    ) -> Optional[PaperLifecycleOutcome]:
+        """The prior pending outcome for this intent, or ``None`` if not pending."""
+        return self._pending.get(_intent_fingerprint(order))
+
+    def mark_pending(
+        self, order: ProposedOrder, outcome: PaperLifecycleOutcome
+    ) -> None:
+        """Record an unconfirmed submission as pending (suppresses a re-send)."""
+        self._pending[_intent_fingerprint(order)] = outcome
+
+    def clear(self, order: ProposedOrder) -> None:
+        """Clear a pending mark once the intent reaches a confirmed terminal."""
+        self._pending.pop(_intent_fingerprint(order), None)
+
+
+def drive_paper_lifecycle(
+    order: ProposedOrder,
+    *,
+    submit_decision: Callable[..., OrderResult],
+    guard: Optional[PaperSendGuard] = None,
+    runtime_mode: Optional[RuntimeMode] = None,
+    prior_queue_task_id: Optional[str] = None,
+) -> PaperLifecycleOutcome:
+    """Drive an admitted daemon ``ProposedOrder`` through the paper-mode
+    submit→poll→reconcile lifecycle (task 4.2, Requirement 3).
+
+    Maps the daemon-owned ``ProposedOrder`` (with its ``position_id`` retained for
+    the submit, BL-3) to the broker ``submit_decision`` args, pins a **paper**
+    ``RuntimeMode`` so no live path is reachable (Req 3.1), and classifies the
+    structured ``OrderResult`` to a terminal :class:`PaperLifecycleOutcome`.
+
+    The double-send guard (Req 3.4): if a ``guard`` is supplied and this exact
+    order intent is already pending (a prior ``unconfirmed``), the driver does NOT
+    re-submit — it returns the prior pending outcome with ``submitted=False``. A
+    fresh submission that comes back ``unconfirmed`` is recorded as pending; a
+    confirmed terminal (``filled`` / ``simulated`` / ``rejected`` / ``noop``)
+    clears the pending mark (Req 3.3 surfaces ``unconfirmed``, never a fill).
+
+    Args:
+        order: the **admitted** daemon ``ProposedOrder`` (post-``admit`` ALLOW).
+        submit_decision: the broker leaf ``broker.core.submit_decision`` (injected
+            so this is inner-ring-testable with a synthetic broker stub — the loop,
+            task 4.4, wires the real one through the broker seam).
+        guard: the daemon-owned double-send guard (Req 3.4). When ``None`` the
+            guard is skipped (a single isolated submit — e.g. the inner-ring poll
+            tests); the loop owns one guard across ticks.
+        runtime_mode: an explicit paper ``RuntimeMode``; when ``None`` the driver
+            constructs the safe default (``paper_enabled=True`` ⇒ no live path).
+        prior_queue_task_id: retained from a prior unconfirmed result; threaded to
+            the broker so its own (live-path) guard can correlate on a re-send. In
+            paper mode this is moot (no live POST), but it is carried for parity.
+
+    Returns:
+        A :class:`PaperLifecycleOutcome` (terminal status + is_filled + the raw
+        ``OrderResult``); ``submitted=False`` when the guard suppressed the send.
+    """
+    # ----- double-send guard (Req 3.4): suppress a re-drive while pending. ----
+    if guard is not None:
+        pending = guard.pending_outcome(order)
+        if pending is not None:
+            # A prior submission for this exact intent is still pending — do NOT
+            # issue a duplicate. Surface the prior pending (unconfirmed) outcome,
+            # flagged not-submitted.
+            return PaperLifecycleOutcome(
+                status=pending.status,
+                terminal=pending.terminal,
+                is_filled=pending.is_filled,
+                result=pending.result,
+                submitted=False,
+            )
+
+    # ----- paper-only routing (Req 3.1): pin paper; no live path reachable. ---
+    # A default ``RuntimeMode`` is already paper-on + all live clearances safe-off,
+    # so ``live_transmit_allowed()`` is False by construction. We pin it explicitly
+    # so the broker can never route to ``_submit_live`` regardless of env.
+    rm = runtime_mode if runtime_mode is not None else RuntimeMode()
+    # Defense-in-depth (P6): force paper on even if a non-paper RuntimeMode was
+    # passed — v0.1 has no reachable live path through this driver.
+    if not rm.paper_enabled:
+        rm = RuntimeMode(paper_enabled=True)
+
+    # ----- submit (at most once per pending intent) → poll/reconcile. ---------
+    # Map the daemon ProposedOrder → broker submit args: ``intent`` is the P9
+    # ``Label`` (BUY/TRIM/SELL) ``submit_decision`` routes on; ``direction`` the
+    # broker ``Direction`` enum; ``volume`` / ``stop_loss`` verbatim; the
+    # ``position_id`` retained on the daemon order (BL-3) targets a reduce/close.
+    result = submit_decision(
+        order.intent,
+        order.symbol,
+        order.direction,
+        volume=order.volume,
+        position_id=order.position_id,
+        stop_loss=order.stop_loss,
+        runtime_mode=rm,
+        prior_queue_task_id=prior_queue_task_id,
+    )
+
+    outcome = _classify_paper_result(result)
+
+    # ----- reconcile the guard (Req 3.4): pending iff unconfirmed. ------------
+    if guard is not None:
+        if outcome.status == _PENDING_STATUS:
+            guard.mark_pending(order, outcome)
+        else:
+            # A confirmed terminal clears any prior pending mark for this intent.
+            guard.clear(order)
+
+    return outcome
+
+
+def _classify_paper_result(result: OrderResult) -> PaperLifecycleOutcome:
+    """Classify a broker ``OrderResult`` to a terminal :class:`PaperLifecycleOutcome`.
+
+    Every paper-mode ``OrderResult`` is terminal (the broker returns synchronously
+    in paper; an ``unconfirmed`` is itself the bounded-poll terminal — Req 3.2).
+    ``is_filled`` is True **only** for ``filled`` — an ``unconfirmed`` is never a
+    fill (Req 3.3), nor is a ``simulated`` paper confirm a venue fill.
+    """
+    status = result.status
+    return PaperLifecycleOutcome(
+        status=status,
+        terminal=True,
+        is_filled=status == _FILLED_STATUS,
+        result=result,
+        submitted=True,
+    )

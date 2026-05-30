@@ -84,7 +84,7 @@
   - _Requirements: 2, 5, 7, 10_
   - _Boundary: orchestrator_
   - _Depends: 3.1, 3.2, 3.3, 3.5, 4.5_
-- [ ] 4.2 Paper-mode order lifecycle driver
+- [x] 4.2 Paper-mode order lifecycle driver
   - In `orchestrator.py`: drive the admitted order through the paper submit→poll→reconcile lifecycle over the broker's sync leaf funcs — `submit_decision` (paper/dry-run only, no live transmission path) → poll to a terminal outcome (filled / simulated / rejected / unconfirmed); the double-send guard (no duplicate submission while a confirmation is pending); surface `unconfirmed` as unconfirmed (never treated as filled).
   - Observable: an admitted order is submitted at most once while pending, reaches a terminal outcome, and an unconfirmed result is surfaced as unconfirmed rather than filled; no live-transmission path is reachable in paper mode.
   - _Requirements: 3_

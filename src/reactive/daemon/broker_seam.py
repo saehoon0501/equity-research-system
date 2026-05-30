@@ -100,8 +100,10 @@ def _import_broker_module(name: str) -> ModuleType:
 # --- resolve the broker leaf modules through the scoped seam ---------------- #
 # ``models`` first: it self-bootstraps the repo root for ``Label`` and defines
 # the value objects ``core`` re-imports. ``core`` then re-exports those same
-# objects, so importing ``models`` first keeps a single resolution.
+# objects, so importing ``models`` first keeps a single resolution. ``config``
+# carries the ``RuntimeMode`` the paper-lifecycle driver pins to paper (task 4.2).
 _models = _import_broker_module("models")
+_config = _import_broker_module("config")
 _core = _import_broker_module("core")
 
 # --- the four symbols the daemon binds to (plus the transitive Label) ------- #
@@ -113,9 +115,15 @@ get_positions = _core.get_positions
 Position = _models.Position
 Direction = _models.Direction  # broker str-Enum venue side (LONG / SHORT)
 OrderIntent = _models.OrderIntent
+OrderResult = _models.OrderResult  # the terminal-outcome carrier (Req 3 lifecycle)
 # P9 canonical decision vocabulary, transitively re-exported from
 # ``src.calibration.scorer`` by ``models.py`` (the seam resolves it).
 Label = _models.Label
+
+# The runtime-mode gate (Req 3.1 paper-only) — the paper-lifecycle driver pins
+# ``paper_enabled=True`` so ``submit_decision`` can never route to ``_submit_live``
+# (``live_transmit_allowed()`` is False while paper is on, by construction).
+RuntimeMode = _config.RuntimeMode
 
 __all__ = [
     "submit_decision",
@@ -123,5 +131,7 @@ __all__ = [
     "Position",
     "Direction",
     "OrderIntent",
+    "OrderResult",
     "Label",
+    "RuntimeMode",
 ]
