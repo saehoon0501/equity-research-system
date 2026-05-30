@@ -49,12 +49,25 @@ from src.reactive.features import FeatureSet
 from src.reactive.params import DEFAULTS
 from src.reactive.replay import simulator
 from src.reactive.replay.simulator import (
+    DEFAULT_STOP_LOSS_ATR_MULT,
     DailyDecision,
+    apply_admit_gating,
+    build_order,
     index_champion_decisions,
     run_daily_layer,
     select_direction,
 )
 from src.reactive.replay.types import Candidate, ReplayWindow
+from src.survival.params import DEFAULTS as SURVIVAL_DEFAULTS
+from src.survival.types import (
+    AccountState,
+    AdmitDecision,
+    ClockState,
+    OperationalState,
+    OrderEvaluation,
+    Position,
+    ProposedOrder,
+)
 
 from tests.unit.reactive.replay._fixtures import (
     make_correlation_keys,
@@ -621,3 +634,468 @@ def test_module_importable_and_pure() -> None:
     assert hasattr(simulator, "run_daily_layer")
     assert hasattr(simulator, "index_champion_decisions")
     assert hasattr(simulator, "DailyDecision")
+
+
+# ============================================================================ #
+# Task 2.4 — decision→order construction + survival admit gating.
+#
+# NON-BEHAVIORAL: MIRROR the execution-daemon `order_builder` rule (design line
+# 144/355) — DO NOT import the daemon (boundary-forbidden). Drive the LANDED
+# `src.survival.gate.admit` (real, not stub) for at least one test to prove the
+# integration.
+#
+# decision→order rule (design `simulator` "Core algorithms #2"; daemon
+# `order_builder` Req 11.1-11.6):
+#   - P9 intent BUY/TRIM/SELL; SHORT-open = intent="BUY" + direction="SHORT".
+#   - volume from `sizing_hint` capped by `per_order_size_max`.
+#   - protective stop-loss PRICE LEVEL = reference ∓ (atr × stop_loss_atr_mult)
+#     (− for LONG, + for SHORT); satisfies survival's mandatory-stop check.
+#   - reduce/close clamped ≤ held volume (no flatten-then-flip in v0.1);
+#     position_id targets the held position.
+#   - HOLD / None decision ⇒ no order.
+#
+# admit gating (R3.2 sequential account path; R3.3 drive the landed core):
+#   - admit=REJECT ⇒ no order (a flat day).
+#   - an advisory_max_volume ⇒ resize to it (re-build + re-admit once).
+# ============================================================================ #
+
+
+# --- decision→order fixtures --------------------------------------------------
+
+
+def _reactive_decision(
+    *, decision: str, direction_in: str, sizing_hint: float | None
+):
+    """A synthetic landed `ReactiveDecision` carrying a chosen `sizing_hint`.
+
+    Reuses the fixture `stub_decide` (the landed shape) but overrides the
+    sizing_hint by rebuilding from its substrate — keeping it a real
+    `ReactiveDecision`. `direction_in` is the SELECTED side (LONG/SHORT) and
+    `decision` the act-or-hold call; `sizing_hint` is the advisory volume scalar.
+    """
+    from dataclasses import replace
+
+    base = stub_decide(
+        _feature_set(tactical_bin="positive"),
+        direction_in if direction_in in ("LONG", "SHORT") else "LONG",
+        DEFAULTS,
+        decision=decision,
+    )
+    return replace(base, decision=decision, direction_in=direction_in, sizing_hint=sizing_hint)
+
+
+def _healthy_account(positions: list[Position] | None = None) -> AccountState:
+    """A healthy `AccountState` that clears admit's margin gate (high level)."""
+    return AccountState(
+        activated=True,
+        equity=100_000.0,
+        used_margin=1_000.0,
+        free_margin=99_000.0,
+        margin_level=10_000.0,  # equity/used_margin*100 — well above the buffer
+        balance=100_000.0,
+        stop_out_level=50.0,
+        positions=positions or [],
+    )
+
+
+def _clear_op_state() -> OperationalState:
+    """Op-state with no kill switch and grade NONE — admit's gates 1/2 pass."""
+    return OperationalState(
+        kill_switch_engaged=False,
+        safe_mode_grade="NONE",
+        entered_at=None,
+        triggered_by=None,
+    )
+
+
+def _allow_evaluation() -> OrderEvaluation:
+    """An `OrderEvaluation` whose fields all clear admit's screen gates (the
+    reject-leaning defaults must be explicitly overridden — in-universe,
+    not-excluded, a finite margin delta)."""
+    return OrderEvaluation(
+        additional_used_margin=10.0,  # finite + small ⇒ no buffer breach
+        in_universe=True,
+        is_excluded=False,
+    )
+
+
+def _clock() -> ClockState:
+    return ClockState(session_open=True, seconds_to_next_closure=None)
+
+
+# --- build_order: intent + direction (Req 11.1; SHORT-open = BUY+SHORT) -------
+
+
+def test_build_order_long_open_is_buy_long() -> None:
+    """A LONG decision with no held position ⇒ an OPEN: intent BUY, direction
+    LONG (Req 11.1)."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is not None
+    assert order.intent == "BUY"
+    assert order.direction == "LONG"
+
+
+def test_build_order_short_open_is_buy_plus_direction_short() -> None:
+    """A SHORT decision (open short exposure) ⇒ intent BUY + direction SHORT —
+    NOT a SELL (Req 11.1: SHORT-open = BUY + Direction.SHORT)."""
+    decision = _reactive_decision(decision="SHORT", direction_in="SHORT", sizing_hint=0.5)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is not None
+    assert order.intent == "BUY"
+    assert order.direction == "SHORT"
+
+
+def test_build_order_hold_returns_no_order() -> None:
+    """A HOLD decision ⇒ no order (a flat day) — the builder returns None."""
+    decision = _reactive_decision(decision="HOLD", direction_in="LONG", sizing_hint=None)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is None
+
+
+def test_build_order_none_decision_returns_no_order() -> None:
+    """A flat day (decision is None) ⇒ no order."""
+    order = build_order(
+        None,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is None
+
+
+# --- build_order: volume cap (Req 11.2) ---------------------------------------
+
+
+def test_build_order_volume_capped_by_per_order_size_max() -> None:
+    """Volume from `sizing_hint` is capped by `params.per_order_size_max` (Req
+    11.2) — a sizing_hint above the cap clamps to the cap (DEFAULTS cap = 1.0)."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=5.0)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,  # per_order_size_max = 1.0
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is not None
+    assert order.volume == SURVIVAL_DEFAULTS.per_order_size_max == 1.0
+
+
+# --- build_order: ATR protective stop-loss (Req 11.3) -------------------------
+
+
+def test_build_order_long_stop_loss_is_reference_minus_atr_mult() -> None:
+    """The protective stop-loss for a LONG is the PRICE LEVEL `reference − atr ×
+    mult` (Req 11.3) — below the reference for a long."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        stop_loss_atr_mult=3.0,
+    )
+    assert order is not None
+    assert order.stop_loss == 100.0 - 2.0 * 3.0  # 94.0
+
+
+def test_build_order_short_stop_loss_is_reference_plus_atr_mult() -> None:
+    """The protective stop-loss for a SHORT is `reference + atr × mult` (Req 11.3)
+    — ABOVE the reference for a short (the symmetric side)."""
+    decision = _reactive_decision(decision="SHORT", direction_in="SHORT", sizing_hint=0.5)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        stop_loss_atr_mult=3.0,
+    )
+    assert order is not None
+    assert order.stop_loss == 100.0 + 2.0 * 3.0  # 106.0
+
+
+def test_build_order_default_mult_constant_used_when_unset() -> None:
+    """The module default `DEFAULT_STOP_LOSS_ATR_MULT` is used when no mult is
+    passed (the mult's authoritative home is daemon config, NOT survival params —
+    a 2.5 revalidation seam)."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    order = build_order(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+    )
+    assert order is not None
+    assert order.stop_loss == 100.0 - 2.0 * DEFAULT_STOP_LOSS_ATR_MULT
+
+
+# --- build_order: reduce clamped ≤ held, no flip (Req 11.4/11.6) --------------
+
+
+def test_build_order_reduce_clamped_to_held_no_flip() -> None:
+    """An opposite-side decision against a held position is a REDUCE clamped ≤
+    the held volume — NO flatten-then-flip in v0.1 (Req 11.6). A LONG decision
+    sized 5.0 against a SHORT position of 0.4 ⇒ volume clamped to 0.4 (full
+    close); the reduce is on the DECIDED side (LONG — opposite the held SHORT) so
+    admit reads it as a true net-reducing exit (gate.py:457). Survival's
+    `ProposedOrder` carries no `position_id` (the daemon→survival adaptation
+    seam) — the reduce targets by SYMBOL."""
+    held = Position(
+        position_id="pos-1",
+        symbol="AAPL",
+        direction="SHORT",
+        volume=0.4,
+        avg_open_price=100.0,
+        used_margin=40.0,
+        unrealized_pnl=0.0,
+    )
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=5.0)
+    order = build_order(
+        decision,
+        position=held,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        symbol="AAPL",
+    )
+    assert order is not None
+    # Clamped to the held volume — never exceeds it (no flip past flat).
+    assert order.volume <= held.volume == 0.4
+    assert order.volume == 0.4
+    # Reduce is on the DECIDED side (opposite the held SHORT) → admit-legal exit.
+    assert order.direction == "LONG"
+    assert order.intent == "SELL"  # full close (clamped == held)
+    assert order.symbol == "AAPL"
+
+
+def test_build_order_reduce_under_kill_switch_still_admit_allows() -> None:
+    """A reduce against a held position is an admit TRUE-EXIT: even under an
+    engaged kill switch the REAL `admit` short-circuits to ALLOW (fail-toward-flat,
+    gate.py:549). This pins that the reduce direction is the DECIDED (opposite)
+    side — a held-side direction would read as an add and REJECT under the kill
+    switch."""
+    held = Position(
+        position_id="pos-1",
+        symbol="AAPL",
+        direction="SHORT",
+        volume=0.4,
+        avg_open_price=100.0,
+        used_margin=40.0,
+        unrealized_pnl=0.0,
+    )
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.3)
+    killed = OperationalState(
+        kill_switch_engaged=True,
+        safe_mode_grade="NONE",
+        entered_at=None,
+        triggered_by="test-kill",
+    )
+    order = apply_admit_gating(
+        decision,
+        position=held,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account([held]),
+        op_state=killed,
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        symbol="AAPL",
+        admit_fn=None,  # REAL admit
+    )
+    assert order is not None  # the true-exit short-circuit ALLOWed it
+    assert order.direction == "LONG"
+
+
+# --- apply_admit_gating: drive the REAL landed admit (the integration proof) --
+
+
+def test_actionable_long_drives_real_admit_to_allow_order() -> None:
+    """An actionable LONG ⇒ apply_admit_gating drives the REAL landed
+    `src.survival.gate.admit` and (account healthy, op-state clear, evaluation
+    clearing) ⇒ an ALLOWED BUY+LONG order at the admit-cleared volume (R3.2/R3.3).
+    Uses the REAL admit — the integration proof."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,  # None ⇒ the REAL landed admit
+    )
+    assert order is not None
+    assert order.intent == "BUY"
+    assert order.direction == "LONG"
+    assert order.volume == 0.5  # builder volume cleared admit (≤ per_order_size_max)
+    assert order.stop_loss is not None
+
+
+def test_actionable_short_drives_real_admit_to_allow_buy_short() -> None:
+    """A SHORT decision ⇒ the REAL admit ALLOWs a BUY + direction SHORT order
+    (SHORT-open = BUY+Direction.SHORT through the gate)."""
+    decision = _reactive_decision(decision="SHORT", direction_in="SHORT", sizing_hint=0.5)
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,
+    )
+    assert order is not None
+    assert order.intent == "BUY"
+    assert order.direction == "SHORT"
+
+
+def test_admit_reject_yields_flat_real_admit() -> None:
+    """admit=REJECT ⇒ no order (a flat day). Driven by the REAL admit: an engaged
+    kill switch rejects the open ⇒ apply_admit_gating returns None (R3.2)."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    killed = OperationalState(
+        kill_switch_engaged=True,
+        safe_mode_grade="NONE",
+        entered_at=None,
+        triggered_by="test-kill",
+    )
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=killed,
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,
+    )
+    assert order is None
+
+
+def test_hold_yields_no_order_through_gating() -> None:
+    """HOLD ⇒ no order even before admit runs (the builder returns None, so admit
+    is never consulted)."""
+    decision = _reactive_decision(decision="HOLD", direction_in="LONG", sizing_hint=None)
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,
+    )
+    assert order is None
+
+
+def test_none_decision_yields_no_order_through_gating() -> None:
+    """A flat day (decision None) ⇒ no order, admit never consulted."""
+    order = apply_admit_gating(
+        None,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,
+    )
+    assert order is None
+
+
+def test_admit_advisory_resizes_order(monkeypatch) -> None:
+    """An admit `advisory_max_volume` ⇒ the order is RESIZED to it (re-build +
+    re-admit once). Driven by an INJECTED stub admit (the 1.4-style isolation
+    stub) — the builder-capped volume never trips the REAL admit's strictly-above
+    size gate, so the advisory branch is exercised deterministically via a stub
+    that REJECTs once with an advisory, then ALLOWs the resized order."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=1.0)
+
+    calls: list[float] = []
+
+    def _stub_admit(order, state, op_state, params, clock, evaluation):  # noqa: ANN001
+        calls.append(order.volume)
+        if order.volume > 0.3:
+            return AdmitDecision(
+                decision="REJECT",
+                binding_constraint="size_limit",
+                advisory_max_volume=0.3,
+                reason="over advisory cap",
+            )
+        return AdmitDecision(
+            decision="ALLOW", binding_constraint=None, advisory_max_volume=None, reason=None
+        )
+
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=_stub_admit,
+    )
+    assert order is not None
+    assert order.volume == 0.3  # resized to the advisory cap
+    # Re-built + re-admitted once: the first call saw the capped volume (1.0), the
+    # second the resized (0.3).
+    assert calls == [1.0, 0.3]
+
+
+def test_admit_gating_returns_proposed_order_type() -> None:
+    """The gating step returns a survival `ProposedOrder` (the type `admit`
+    consumes) on ALLOW — not a daemon-owned shape (boundary)."""
+    decision = _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5)
+    order = apply_admit_gating(
+        decision,
+        position=None,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        account=_healthy_account(),
+        op_state=_clear_op_state(),
+        evaluation=_allow_evaluation(),
+        clock=_clock(),
+        admit_fn=None,
+    )
+    assert isinstance(order, ProposedOrder)

@@ -87,16 +87,27 @@ Two seams this task could not pin from the worktree (CONCERNS / revalidation):
 
 Pure leaf (P1 / design §Dependency direction
 ``types → data_client → features_adapter → simulator``): imports the owned
-``types``, the sibling ``features_adapter``, and the landed ``signal_model``
-core only — no httpx, no MCP, no DB, no consumer-spec import. It does NOT import
-``telemetry.reader`` (``query_trace`` is INJECTED — the real reader in prod, a
-fake/pre-indexed dict in tests — preserving R9.2 isolation).
+``types``, the sibling ``features_adapter``, the landed ``signal_model`` core,
+and — added at task 2.4 — the landed ``src.survival`` (``gate.admit`` + its
+contract types + ``params``), a SANCTIONED read-only boundary import (the
+decision→order + admit-gating step DRIVES the real survival core, R3.1/R3.3).
+``src.survival`` is itself a pure stdlib leaf (no MCP / DB / I/O), so the
+no-httpx / no-MCP / no-DB / no-consumer-spec purity claim still holds. It does
+NOT import ``telemetry.reader`` (``query_trace`` is INJECTED — the real reader
+in prod, a fake/pre-indexed dict in tests — preserving R9.2 isolation).
 
-Source of truth: requirements.md R2 AC 2.1/2.2, R3 AC 3.1/3.3, R9 AC 9.1;
-design.md `simulator` "Core algorithms #1" + the System Flow daily leg + the
-Components table (row 171) / Traceability (rows 154-155).
+Source of truth: requirements.md R2 AC 2.1/2.2/**2.3**, R3 AC 3.1/**3.2**/3.3,
+R9 AC 9.1; design.md `simulator` "Core algorithms #1" (daily layer) + "Core
+algorithms #2 (decision→order construction)" (task 2.4) + the execution-daemon
+`order_builder` component (the authoritative decision→order rule MIRRORED here,
+NOT imported — boundary-forbidden).
 
-Requirements: 2.1, 2.2, 3.1, 3.3.
+Task 2.4 (decision→order + admit gating) addresses R2.3 only PARTIALLY: the
+order-dependent decision→order step + the per-day survival admit response land
+here; the cross-day sequential account-evolution driver, fills, the §16.1
+flatten, and total-return P&L are the 2.5-2.7 seam (see the 2.4 section below).
+
+Requirements: 2.1, 2.2, 2.3 (partial), 3.1, 3.2, 3.3.
 """
 
 from __future__ import annotations
@@ -111,6 +122,17 @@ from src.reactive.replay.features_adapter import compute_daily_features
 from src.reactive.replay.types import Candidate, DataPort, ReplayWindow
 from src.reactive.signal_model import decide as _landed_decide
 from src.reactive.types import Decision, Direction, ReactiveDecision
+from src.survival.gate import admit as _landed_admit
+from src.survival.params import SurvivalParameters
+from src.survival.types import (
+    AccountState,
+    AdmitDecision,
+    ClockState,
+    OperationalState,
+    OrderEvaluation,
+    Position,
+    ProposedOrder,
+)
 
 # The freeform decision-row trace-payload key the champion symbol is read from.
 # Daemon-undetermined (the emitter is not landed; the telemetry payload is
@@ -532,9 +554,298 @@ def _resolve_champion_index(
     return {}
 
 
+# ============================================================================ #
+# Task 2.4 — decision→order construction + survival admit gating.
+#
+# The NEXT simulator layer above the daily layer: turn a directional candidate
+# `ReactiveDecision` (from `run_daily_layer`) into a survival-legal
+# `ProposedOrder`, then drive the LANDED `src.survival.gate.admit` veto with the
+# candidate's `SurvivalParameters`. NON-BEHAVIORAL: this MIRRORS the
+# execution-daemon `order_builder` rule (its design line 144/355 — Req 11.1-11.6)
+# and DRIVES the real landed `admit`; it never imports the daemon (boundary-
+# forbidden) and never reimplements the survival logic (R3.3).
+#
+# Source of truth: requirements.md R2 AC 2.3, R3 AC 3.2/3.3; design.md
+# `simulator` "Core algorithms #2 (decision→order construction)" + the
+# execution-daemon `order_builder` component (the authoritative rule).
+# ============================================================================ #
+
+# The protective-stop distance multiplier (stop = reference ∓ atr × mult). The
+# AUTHORITATIVE home of this knob is the daemon's `DaemonConfig.stop_loss_atr_mult`
+# (execution-daemon design line 135) — which is boundary-forbidden to import here,
+# and `SurvivalParameters` carries NO stop-loss mult field. So the replay layer
+# defines its OWN module default; tests pass an explicit mult to assert the exact
+# `reference ∓ atr × mult` formula. Re-sourcing this from a shared config when the
+# daemon config lands is a revalidation trigger (the 2.5 seam / R10.3).
+DEFAULT_STOP_LOSS_ATR_MULT: float = 3.0
+
+# The recognized directional sides (mirrors the survival gate's
+# `_RECOGNIZED_DIRECTIONS`; the broker `Direction` enum values). A SHORT-open is
+# expressed as `intent="BUY"` + `direction="SHORT"` (NOT a SELL) — Req 11.1.
+_OPEN_INTENT: str = "BUY"
+
+
+def build_order(
+    decision: ReactiveDecision | None,
+    *,
+    position: Position | None,
+    params: SurvivalParameters,
+    reference_price: float,
+    atr: float | None,
+    symbol: str = "",
+    stop_loss_atr_mult: float = DEFAULT_STOP_LOSS_ATR_MULT,
+) -> ProposedOrder | None:
+    """Pure decision→order translator — MIRRORS the daemon `order_builder` rule.
+
+    Turns a directional candidate `ReactiveDecision` + the current held position
+    (if any) + the candidate `SurvivalParameters` + the reference price (last
+    close) + ATR into a single survival-legal `ProposedOrder`. Pure / no I/O /
+    deterministic — inner-ring testable with no `admit`, no DataPort (P14).
+
+    The rule (execution-daemon design line 144/355, Req 11.1-11.6):
+
+      - **Intent + direction (Req 11.1).** An OPEN on the decided side is
+        `intent="BUY"` carrying the decided `direction` — *including a short
+        open*: opening short exposure is **`BUY` + `Direction.SHORT`**, never a
+        `SELL` (the venue side-inversion is the broker mapper's concern, not this
+        layer's). A decision opposite to a held position is a **reduce** (`TRIM`
+        partial / `SELL` full close).
+      - **Volume (Req 11.2).** From `decision.sizing_hint` (the advisory above-
+        threshold scalar), capped by `params.per_order_size_max`. A missing
+        sizing_hint degrades to the cap (the size limit is the binding bound).
+      - **Protective stop-loss (Req 11.3).** A PRICE LEVEL =
+        `reference ∓ (atr × stop_loss_atr_mult)` — **minus** for a LONG (stop
+        below), **plus** for a SHORT (stop above). This satisfies survival's
+        mandatory-stop check by construction. A degenerate/absent `atr` is a
+        reactive-contract violation (an actionable decision should always carry
+        one) → defense-in-depth no-order (returns None) rather than a stop-less
+        order that admit would reject for `missing_sl`.
+      - **Reduce clamp (Req 11.4/11.6).** A reduce is **clamped ≤ the held
+        volume** — NO flatten-then-flip in a single order in v0.1 (a reversal
+        waits for a later post-flat tick). The reduce order is **opposite-side to
+        the held position** (the decided side), so survival's `admit` true-exit
+        short-circuit classifies it as a net-reducing exit (gate.py:457: a
+        same-side order reads as an *add*). The daemon's `position_id` targeting
+        has **no home on survival's `ProposedOrder`** (which carries only
+        `{symbol, intent, direction, volume, stop_loss}`) — that mapping is the
+        named daemon→survival adaptation seam (daemon design line 137/168); under
+        the one-position-per-symbol invariant the reduce targets by SYMBOL here.
+
+    HOLD or a `None` decision (a flat/no-trade day) ⇒ **no order** (returns None).
+
+    Args:
+        decision: the candidate's `ReactiveDecision`, or `None` for a flat day.
+        position: the currently held `Position` in this symbol (None if flat).
+        params: the candidate `SurvivalParameters` (its `per_order_size_max`
+            caps volume).
+        reference_price: the last close (the candidate's surfaced reference;
+            daemon design CN-4) the stop level is anchored on.
+        atr: the ATR feature (`features.raw["atr"]`) the stop distance scales by.
+        symbol: the traded name (the daily layer supplies it — the
+            `ReactiveDecision` substrate carries no symbol). Falls back to the
+            held position's symbol on a reduce.
+        stop_loss_atr_mult: the stop-distance multiplier (module default; the
+            daemon's authoritative home is `DaemonConfig`).
+
+    Returns:
+        a survival-legal `ProposedOrder`, or `None` on HOLD / a flat day / an
+        absent ATR (defense-in-depth).
+    """
+    if decision is None or decision.decision == "HOLD":
+        return None  # a flat/no-trade day — no order.
+    if atr is None:
+        # Defense-in-depth (daemon CN-3): an actionable decision should always
+        # carry an ATR; an absent one is a reactive-contract violation → no order
+        # (a stop-less order would be rejected `missing_sl` by admit anyway).
+        return None
+
+    side: str = decision.decision  # "LONG" / "SHORT" (the decided side, Req 11.1)
+    volume = _capped_volume(decision.sizing_hint, params.per_order_size_max)
+    order_symbol = symbol or (position.symbol if position is not None else "")
+
+    # Reduce vs open classification by EFFECT on the held position (P7-aligned):
+    # an opposite-side decision against the held position (same symbol — the
+    # caller passes the day's held position in this symbol) is a reduce/close.
+    if position is not None and position.direction != side:
+        return _reduce_order(
+            order_symbol, side, position, volume, reference_price, atr, stop_loss_atr_mult
+        )
+
+    # Open / add on the decided side: BUY + the decided direction (SHORT-open =
+    # BUY + Direction.SHORT — Req 11.1).
+    stop = _stop_loss(side, reference_price, atr, stop_loss_atr_mult)
+    return ProposedOrder(
+        symbol=order_symbol,
+        intent=_OPEN_INTENT,
+        direction=side,
+        volume=volume,
+        stop_loss=stop,
+    )
+
+
+def _capped_volume(sizing_hint: float | None, per_order_size_max: float) -> float:
+    """Volume from the advisory `sizing_hint`, capped by `per_order_size_max`
+    (Req 11.2). A missing sizing_hint degrades to the cap (the size limit binds).
+    """
+    if sizing_hint is None:
+        return per_order_size_max
+    return min(sizing_hint, per_order_size_max)
+
+
+def _stop_loss(side: str, reference_price: float, atr: float, mult: float) -> float:
+    """The protective stop-loss PRICE LEVEL (Req 11.3): `reference − atr×mult` for
+    a LONG (stop below), `reference + atr×mult` for a SHORT (stop above)."""
+    distance = atr * mult
+    return reference_price - distance if side == "LONG" else reference_price + distance
+
+
+def _reduce_order(
+    symbol: str,
+    side: str,
+    position: Position,
+    volume: float,
+    reference_price: float,
+    atr: float,
+    mult: float,
+) -> ProposedOrder:
+    """A reduce/close of the held `position` (an opposite-side decision).
+
+    Volume is **clamped ≤ the held volume** — no flatten-then-flip in v0.1 (Req
+    11.6); a full-clamp (`== held`) is a SELL (full close), a partial is a TRIM
+    (Req 11.1). The order's `direction` is the **decided side** (`side`), which is
+    OPPOSITE the held position — so survival's `admit` classifies it as a true
+    net-reducing exit (gate.py:457 treats a same-side order as an *add*). The
+    stop level anchors on that decided side. Survival's `ProposedOrder` carries
+    no `position_id`; under the one-position-per-symbol invariant the reduce
+    targets by SYMBOL (the daemon's id targeting is the daemon→survival
+    adaptation seam — design line 137/168)."""
+    clamped = min(volume, position.volume)
+    full = clamped >= position.volume
+    intent = "SELL" if full else "TRIM"
+    stop = _stop_loss(side, reference_price, atr, mult)
+    return ProposedOrder(
+        symbol=symbol or position.symbol,
+        intent=intent,
+        direction=side,
+        volume=clamped,
+        stop_loss=stop,
+    )
+
+
+# Admit-core injection alias (default the landed `admit`; tests inject a stub).
+AdmitFn = Callable[..., AdmitDecision]
+
+
+def apply_admit_gating(
+    decision: ReactiveDecision | None,
+    *,
+    position: Position | None,
+    params: SurvivalParameters,
+    reference_price: float,
+    atr: float | None,
+    account: AccountState,
+    op_state: OperationalState,
+    evaluation: OrderEvaluation,
+    clock: ClockState,
+    symbol: str = "",
+    stop_loss_atr_mult: float = DEFAULT_STOP_LOSS_ATR_MULT,
+    admit_fn: AdmitFn | None = None,
+) -> ProposedOrder | None:
+    """Build the order, then drive the LANDED survival `admit` veto (R3.2/R3.3).
+
+    The 2.4 step proper: `build_order` → `admit`. `admit_fn` defaults to the
+    REAL landed `src.survival.gate.admit` (None ⇒ real) so the integration is
+    exercised; a test may inject the 1.4-style stub for isolation. The candidate's
+    `SurvivalParameters` drive the veto (R3.1).
+
+    Gating outcomes (design `simulator` "Core algorithms #2"):
+      - the builder returns no order (HOLD / flat day / absent ATR) ⇒ flat (None).
+      - `admit=REJECT` ⇒ **no order** (a flat day — R3.2).
+      - `admit=ALLOW` ⇒ the order as built.
+      - an `advisory_max_volume` (a size-limit REJECT) ⇒ **resize to it** and
+        re-build + re-admit ONCE. The ATR stop-loss is volume-independent, so the
+        re-build reaches a fixpoint in one pass (daemon design line 216).
+
+    Returns the admitted `ProposedOrder`, or `None` (a flat day) on a non-advisory
+    REJECT / no buildable order.
+
+    SEAM (2.5): a bare `None` currently collapses FOUR distinct flat outcomes —
+    HOLD, a non-directional flat day, an absent-ATR contract violation, and an
+    admit REJECT. `OutcomeRecord.survival_events` wants the `"admit_reject"` tag
+    (types.py:128), so the `outcomes` layer (task 2.5) must distinguish the
+    admit-REJECT case from a no-decision flat (e.g. this step surfacing the
+    `AdmitDecision`/binding-constraint alongside the order) rather than reading a
+    bare `None`. Not built here (the simulator emits no `OutcomeRecord`).
+    """
+    admit = admit_fn if admit_fn is not None else _landed_admit
+
+    order = build_order(
+        decision,
+        position=position,
+        params=params,
+        reference_price=reference_price,
+        atr=atr,
+        stop_loss_atr_mult=stop_loss_atr_mult,
+    )
+    if order is None:
+        return None  # HOLD / flat day / absent ATR — no order to admit.
+    if symbol and not order.symbol:
+        order = _with_symbol(order, symbol)
+
+    verdict = admit(order, account, op_state, params, clock, evaluation)
+    if verdict.decision == "ALLOW":
+        return order
+
+    # A size-limit REJECT carries an advisory cap → resize + re-admit ONCE.
+    if verdict.advisory_max_volume is not None:
+        resized = _resize(order, verdict.advisory_max_volume)
+        re_verdict = admit(resized, account, op_state, params, clock, evaluation)
+        return resized if re_verdict.decision == "ALLOW" else None
+
+    return None  # a non-advisory REJECT ⇒ a flat day (R3.2).
+
+
+def _with_symbol(order: ProposedOrder, symbol: str) -> ProposedOrder:
+    """Thread the day's symbol onto an order the builder left blank (the decision
+    substrate carries no symbol; the daily layer supplies it)."""
+    from dataclasses import replace
+
+    return replace(order, symbol=symbol)
+
+
+def _resize(order: ProposedOrder, advisory_max_volume: float) -> ProposedOrder:
+    """Resize an order to the admit advisory cap (re-build is a pure volume swap —
+    the ATR stop-loss is volume-independent, so one pass reaches a fixpoint)."""
+    from dataclasses import replace
+
+    return replace(order, volume=advisory_max_volume)
+
+
+# --- Code-track candidate (DEFERRABLE for v0.1 — a guarded branch) ------------
+
+
+def run_code_track_candidate(*args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+    """The code-track candidate path — DEFERRED for v0.1 (a guarded branch, not
+    built).
+
+    `walkforward-tuning-loop` may vary a `code_version` candidate (R3.2 "where the
+    code track is exercised"); v0.1 does NOT build it (per the spec the code track
+    is deferrable). This is the named seam — a guard, not an implementation — so
+    the deferral is explicit and a later task has an anchor.
+    """
+    raise NotImplementedError(
+        "code-track candidate replay is deferred for v0.1 (a guarded branch, not "
+        "built) — see requirements R3.2 (code track exercise is deferrable)."
+    )
+
+
 __all__ = [
+    "DEFAULT_STOP_LOSS_ATR_MULT",
     "DailyDecision",
+    "apply_admit_gating",
+    "build_order",
     "index_champion_decisions",
+    "run_code_track_candidate",
     "run_daily_layer",
     "select_direction",
 ]

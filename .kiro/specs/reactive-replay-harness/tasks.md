@@ -57,7 +57,7 @@
   - _Boundary: simulator_
   - _Depends: 2.1_
 
-- [ ] 2.4 Simulator — decision→order + survival gating
+- [x] 2.4 Simulator — decision→order + survival gating
   - Construct the order from a decision (volume from `sizing_hint` + `per_order_size_max`; venue side via `map_decision_to_action`); drive the landed/stub survival `admit` (candidate `SurvivalParameters`) and step the sequential account path; a HOLD or `admit=REJECT` yields a flat day. Code-track candidates (run candidate code end-to-end) are **deferrable for v0.1** (param-track first) — left as a guarded branch, not built now
   - Observable: unit test (stub survival) — an actionable decision produces an order at `advisory_max_volume` when admit caps it; a rejected/HOLD day stays flat
   - _Requirements: 2.3, 3.2, 3.3_
