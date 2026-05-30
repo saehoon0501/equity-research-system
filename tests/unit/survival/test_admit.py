@@ -255,6 +255,28 @@ def test_true_exit_allowed_under_safe_mode_flatten():
     assert d.decision == "ALLOW"
 
 
+def test_true_exit_allowed_under_kill_switch_and_safe_mode_simultaneously():
+    """5.2 catastrophe guard — a TRUE net-reducing exit is ADMITTED even with the
+    kill switch engaged AND safe-mode at FLATTEN at the SAME time, with no
+    stop-loss and all-reject OrderEvaluation defaults. This is strictly stronger
+    than the kill-only and safe-mode-only exit cases above: it proves the exit
+    short-circuit runs ahead of EVERY walk step simultaneously (fail-toward-flat —
+    getting flat must always be possible). A regression that moved the
+    short-circuit after any walk step would reject this order."""
+    held = _position(symbol="AAPL", direction="LONG", volume=10.0)
+    d = _admit(
+        order=_order(symbol="AAPL", intent="SELL", direction="SHORT",
+                     volume=10.0, stop_loss=None),
+        state=_account(positions=[held]),
+        op_state=_op(kill_switch=True, grade="FLATTEN"),
+        params=_params(),
+        clock=None,
+        evaluation=_order_evaluation(),  # all-reject defaults — exit still ALLOWs
+    )
+    assert d.decision == "ALLOW"
+    assert d.binding_constraint is None
+
+
 # --------------------------------------------------------------------------- #
 # 4. Safe-mode — rank ≥ HALT_NEW halts opens; TIGHTEN does not.                 #
 # --------------------------------------------------------------------------- #
@@ -554,7 +576,20 @@ def test_kill_switch_beats_universe_beats_margin_beats_size_beats_sl():
     )
     assert d2.binding_constraint == "safe_mode"
 
-    # Drop safe_mode → universe is next (account active, margin/size/SL still bad).
+    # Drop safe_mode but deactivate the account → not_activated is next (it must
+    # win over the still-bad universe/margin/size/SL downstream of it). This locks
+    # the ordering position of step 3, not merely that not_activated can fire.
+    d3a = _admit(
+        order=_order(volume=99.0, stop_loss=None),
+        state=_account(activated=False),
+        op_state=_op(kill_switch=False, grade="NONE"),
+        params=_params(per_order_size_max=1.0),
+        clock=None,
+        evaluation=bad_eval,  # off-universe + margin/exclusion still bad
+    )
+    assert d3a.binding_constraint == "not_activated"
+
+    # Re-activate → universe is next (account active, margin/size/SL still bad).
     d3 = _admit(
         order=_order(volume=99.0, stop_loss=None),
         state=_account(),
@@ -564,6 +599,21 @@ def test_kill_switch_beats_universe_beats_margin_beats_size_beats_sl():
         evaluation=bad_eval,
     )
     assert d3.binding_constraint == "universe"
+
+    # Fix universe but flag exclusion (enabled) → entry_exclusion is next: it must
+    # win over the still-bad margin/size/SL downstream of it. This locks the
+    # ordering position of step 5 (exclusion binds before margin_distance), not
+    # merely that exclusion can fire.
+    d3b = _admit(
+        order=_order(volume=99.0, stop_loss=None),
+        state=_account(),
+        op_state=_op(kill_switch=False, grade="NONE"),
+        params=_params(per_order_size_max=1.0, exclusion_enabled=True),
+        clock=None,
+        evaluation=_order_evaluation(additional_used_margin=None,  # margin still bad
+                                     in_universe=True, is_excluded=True),
+    )
+    assert d3b.binding_constraint == "entry_exclusion"
 
     # Fix universe + exclusion → margin is next.
     d4 = _admit(

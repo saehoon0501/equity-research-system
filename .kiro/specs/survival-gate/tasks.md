@@ -69,7 +69,7 @@
   - _Requirements: 10, 11_
   - _Boundary: tests_
   - _Depends: 1.2_
-- [ ] 5.2 (P) Admission-veto tests
+- [x] 5.2 (P) Admission-veto tests
   - Lexicographic order and first-binding short-circuit; the opens-reject-versus-exits-allow catastrophe guard (a true net-reducing exit is admitted even under kill-switch and safe-mode); the classification-by-effect guard — a SELL on an unheld name (opens a short) and a SELL whose volume exceeds the held long (flatten-then-flip) are REJECTED under an engaged kill-switch, proving a TRIM/SELL label alone does not short-circuit; kill-switch freshness (toggling operational state between calls flips the result); size breach yields advisory-maximum with no order mutation; missing stop-loss, off-universe, and exclusion-toggle cases; the capitalization precondition.
   - Observable: the suite passes; the true-exit-admitted, the label-only-SELL-rejected-under-kill-switch, and the kill-switch-freshness cases are explicitly asserted.
   - _Requirements: 2, 3, 4, 5, 9, 11_
