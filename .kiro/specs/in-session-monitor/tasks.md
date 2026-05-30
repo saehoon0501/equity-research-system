@@ -17,7 +17,7 @@
   - _Boundary: monitor types_
 
 - [ ] 2. Core: Phase-1 pure leaves (sense → judge → decide-intent → audit)
-- [ ] 2.1 (P) Implement the calibration diagnostic
+- [x] 2.1 (P) Implement the calibration diagnostic
   - Read recent trace via the landed reader filtered to a single code-version/param-version cohort; extract softmax probability + the derived survival-proximity fields; pair each decision's probability with its realized directional label obtained from an injected `RealizedLabelSource` seam (a Protocol defined in diagnostic.py); compute reliability/Brier/ECE with the block-bootstrap CI; compare against that version's pinned baseline derived from the SAME seam
   - A window that would cross a version hot-swap uses only the current version's rows; below the sufficiency floor (including the post-hot-swap refill period) it returns an explicit insufficient result
   - Calibration-substrate correction (2026-05-30, surfaced at impl): the reactive per-decision realized directional label is NOT on decision_process_trace and is owned by walkforward-tuning-loop (unlanded); counterfactual_ledger is the wrong-grain slow-layer eval ledger, NOT the substrate. For v0.1 the orchestrator injects a source that yields no reactive labels, so the diagnostic returns INSUFFICIENT (correctly blind) — wire the real source when it lands (revalidation trigger)
