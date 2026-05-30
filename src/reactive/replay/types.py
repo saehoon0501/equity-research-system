@@ -217,8 +217,11 @@ class DataPort(Protocol):
 
     def fetch_corporate_actions(
         self, symbol: str, start: str, end: str
-    ) -> list[dict]:
-        """Splits + cash dividends over [start, end] for total-return P&L (R5.1)."""
+    ) -> dict:
+        """`{"splits": [...], "dividends": [...]}` over [start, end] (R5.1): splits
+        kept distinct from dividends so the as-of split rule (sim Core-algo #4) and
+        dividend crediting (R5.1) consume separate lists. (Reconciled to the 1.3
+        implementation; the prior `list[dict]` annotation was too narrow.)"""
         ...
 
     def fetch_rf_yield(self, day: str) -> float:

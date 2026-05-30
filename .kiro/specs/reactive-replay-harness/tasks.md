@@ -17,7 +17,7 @@
   - _Requirements: 4.1_
   - _Boundary: data_client_
 
-- [ ] 1.3 Implement the point-in-time fetch methods (implements `DataPort`)
+- [x] 1.3 Implement the point-in-time fetch methods (implements `DataPort`)
   - Fetch daily + intraday aggregate bars with `adjusted=false`, tick trades, NBBO quotes, grouped-daily (universe), splits + dividends reference, and the FRED risk-free yield
   - Point-in-time bounded (no rows after the requested instant for decision inputs); paginate past the per-request row cap; retrieve delisted names over their trading window; **fail explicitly** when a window predates available depth (no silent truncation / partial window)
   - Observable: fixture-transport unit tests — `adjusted=false` is sent; a `>cap` fixture paginates to completion; a window beyond fixture depth raises an explicit error (not a partial result); a delisted-name fixture returns its trading-window bars
@@ -126,3 +126,4 @@
 
 ## Implementation Notes
 - 1.2: worktree has no root dep manifest; `httpx` was installed into `.venv-replay` (uv). Reuse that venv for all tasks; if rebuilt, `uv pip install httpx pytest python-dotenv` first.
+- 1.3: `fetch_quotes`/`fetch_trades` bound at DAY granularity; if the simulator (2.3+) passes a sub-day instant for instant-precision fills, tighten the bound there to avoid same-day-later leakage (R4.1). And `DataPort.fetch_corporate_actions` reconciled types.py to `-> dict {splits,dividends}`.
