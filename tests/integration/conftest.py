@@ -62,6 +62,7 @@ _MIGRATION_CHAIN = (
     "030_counterfactual_ledger_high4_redesign.sql",
     "048_decision_trace_telemetry.sql",
     "049_survival_gate_state_and_events.sql",
+    "050_survival_params_seed.sql",
 )
 
 
