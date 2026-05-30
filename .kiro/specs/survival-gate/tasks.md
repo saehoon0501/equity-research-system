@@ -29,7 +29,7 @@
   - _Boundary: db schema (params seed migration — migration 050)_
   - _Depends: 1.2_
 
-- [ ] 3. Core: per-order admission veto
+- [x] 3. Core: per-order admission veto
 - [x] 3.1 Build the shared account-level margin-distance check
   - Compute account margin level (equity versus aggregate used margin) and the projected margin level after a proposed add, comparing against the stop-out threshold and the safe-mode buffer; treat the funded balance — not any stop-loss distance — as the hard account-level loss bound; pure, no I/O.
   - Observable: given a synthetic account state, the check returns the correct buffer/threshold comparison and never reads external state.
