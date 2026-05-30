@@ -50,7 +50,7 @@
   - _Boundary: fidelity_
   - _Depends: 1.1_
 
-- [ ] 2.3 Simulator — daily decision layer + divergence detection
+- [x] 2.3 Simulator — daily decision layer + divergence detection
   - Prefetch the champion decisions for the window once (indexed by day, symbol); per trading day drive the landed `decide` with the candidate `ParamSnapshot`; flag divergence vs the champion's indexed decision (incl. champion-HOLD vs candidate-actionable) to trigger an intraday re-fetch; reconstruct the candidate's OWN decision path, never the champion's outcomes
   - Observable: unit test (stub `decide`) — a divergent-decision day is flagged for re-fetch; a non-divergent day reuses recorded inputs; identical inputs ⇒ identical decisions
   - _Requirements: 2.1, 2.2, 3.1, 3.3_
@@ -129,3 +129,4 @@
 - 1.3: `fetch_quotes`/`fetch_trades` bound at DAY granularity; if the simulator (2.3+) passes a sub-day instant for instant-precision fills, tighten the bound there to avoid same-day-later leakage (R4.1). And `DataPort.fetch_corporate_actions` reconciled types.py to `-> dict {splits,dividends}`.
 - 1.4: survival stubs mirror the in-progress survival-gate-impl: `admit(order,state,op_state,params,clock,evaluation)` carries a 6th `OrderEvaluation` arg (design omitted it) — task 2.4 must construct it. Stub INPUTS are `Any` (name/order match only). On survival landing: delete local mirrors, import from src.survival, re-run signature tests.
 - 2.2: fidelity.compare takes HARNESS-SYNTHESIZED recorded-fill dicts {day,symbol,direction,side,actual_fill_price,fill_volume} (schema fill rows lack symbol/side — they live in the decision JSONB; the harness/3.1 must do the parent_trace_id->decision join). DIVIDEND-BASIS asymmetry: recorded side price-only vs simulated total-return -> a dividend day can false-fail (conservative, P7). 3.1/4.3 + calibration: set tolerance to absorb it OR strip dividends from the simulated side before compare.
+- 2.3: DIRECTION GAP (linchpin) — reactive `decide` takes direction as INPUT (returns it or HOLD); replay hard-defaults LONG, so SHORT is unreconstructable and champion-SHORT days fail fidelity (R7). Direction is chosen upstream by the daemon (not landed). Also: champion symbol key `trace["symbol"]` is a guess (daemon-minted, schema-free) — fails loud if absent; retarget on daemon landing.
