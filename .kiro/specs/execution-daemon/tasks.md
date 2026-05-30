@@ -46,7 +46,7 @@
   - _Requirements: 12_
   - _Boundary: candidate_
   - _Depends: 1.3_
-- [ ] 3.2 (P) Order construction
+- [x] 3.2 (P) Order construction
   - `order_builder.py`: pure `build_order(decision, positions, reference_price, params) -> ProposedOrder | None`; intent+direction express open/reduce on the decided side (SHORT-open = `BUY` + `Direction.SHORT`); volume from `sizing_hint` capped by survival advisory and clamped ≤ held on a reduce (no flatten-then-flip in v0.1); `stop_loss` PRICE LEVEL = `reference_price ∓ atr×stop_loss_atr_mult` reading `atr` from `decision.substrate.feature_values["atr"]` (None-guard = defense-in-depth); `position_id` for reduce/close; position state from broker readouts, never inferred; HOLD/sub-threshold → `None`.
   - Observable: a synthetic LONG decision + flat book yields a BUY `ProposedOrder` with a price-level `stop_loss`; a SHORT-open yields `BUY`+`Direction.SHORT`; a reduce clamps volume ≤ held and targets the `position_id`; HOLD yields `None`.
   - _Requirements: 11, 2_
