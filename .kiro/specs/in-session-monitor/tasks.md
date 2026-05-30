@@ -60,7 +60,7 @@
   - _Depends: 1.2, 2.4_
 
 - [ ] 4. Integration: Phase-1 cadence orchestration
-- [ ] 4.1 Wire the scheduled supervisory loop (Phase 1, advisory)
+- [x] 4.1 Wire the scheduled supervisory loop (Phase 1, advisory)
   - Author the markdown orchestration: mint the monitor's own run-id, pin the monitor namespace from the active-parameters view by value (single repeatable-read resolve; no run-snapshot row written — anti-contamination), run diagnostic → judge → intervene → audit each cadence tick in advisory mode, then validate the audit envelope via the manual validate seam with patch-on-retry under the attempt cap; honor autonomy, the per-run cost ceiling, paper-only, and never participating in the order-fire decision
   - The monitor's own run-id names the audit envelope file; the audit's correlation keys are the daemon epoch keys read from the analyzed trace (distinct identifiers — do not conflate)
   - Observable: a dry-run cadence tick reads the trace, produces a verdict, emits the run-id-named audit envelope, and the validate seam returns pass — entirely in advisory mode with no command issued
