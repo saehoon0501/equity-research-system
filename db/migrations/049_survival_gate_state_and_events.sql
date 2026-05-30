@@ -52,12 +52,22 @@
 --   `<` on rank, no kill TRUE→FALSE) PASSES. `entered_at` /
 --   `triggered_by_event_id` ride along freely (not monitored dimensions).
 --
---   The BYPASS SEAM (minimal, in-boundary): an otherwise-blocked loosen is
---   allowed ONLY when the session GUC `survival.allow_loosen` is 'on'
+--   The BYPASS SEAM (minimal, in-boundary): an otherwise-blocked UPDATE-path
+--   loosen is allowed ONLY when the session GUC `survival.allow_loosen` is 'on'
 --   (`current_setting(..., true)` → missing_ok, so an unset GUC is NULL, not an
 --   error). The operator/after-market path will `SET LOCAL
 --   survival.allow_loosen='on'` before its UPDATE — that decision is OUT of
 --   scope; this migration only builds the seam. No roles, no audit, no policy.
+--
+--   SCOPE (the guard is BEFORE UPDATE FOR EACH ROW only): the GUC is the only
+--   escape hatch *for an UPDATE-path loosen*. A DELETE+reINSERT (or TRUNCATE)
+--   reset of the singleton is OUTSIDE this guard's scope — deliberately: unlike
+--   the append-only events log, `survival_gate_state` is MUTABLE current-state
+--   (a decommissioned scope must remain deletable), and the daemon is the
+--   single-threaded SOLE writer (the op-state-freshness assumption). Hard-
+--   guarding DELETE/TRUNCATE here is therefore NOT done now; closing that path
+--   under daemon concurrency is a named concurrency-revalidation trigger owned
+--   by the `execution-daemon` spec (design.md "Revalidation Triggers").
 --
 -- event_type vocabulary — design.md is authoritative (R7-reconciled).
 --   tasks.md says "halt"; design.md "Data Models" reconciles to 6 values:
