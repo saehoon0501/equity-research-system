@@ -364,12 +364,27 @@ def test_injected_port_short_circuits_prod_data_client_construction(monkeypatch)
 
 
 def test_full_engine_imports_no_llm_sdk() -> None:
-    """R9.2: the inner ring drives deterministic cores only — no LLM SDK is pulled
-    in by importing or running the engine (P14: no LLM in the inner ring)."""
+    """R9.2: the inner ring drives deterministic cores only — running the engine
+    pulls in no LLM SDK (P14: no LLM in the inner ring).
+
+    A DELTA check (not an absolute `sdk not in sys.modules`): assert that running
+    the engine adds NO new `anthropic`/`openai` module beyond what test infra may
+    already have loaded. `anthropic` is imported function-locally elsewhere in the
+    repo (e.g. mode-classifier stage-3, articulation faithfulness), so under the
+    full `pytest tests/` suite a sibling test can legitimately put it in
+    `sys.modules` first — the absolute check would then give a false failure. Same
+    isolation-test lesson as the psycopg DB seam above.
+    """
+    llm_sdks = {"anthropic", "openai"}
+    modules_before = set(sys.modules)
+
     _run_full_engine(make_fixture_dataport())
 
-    for sdk in ("anthropic", "openai"):
-        assert sdk not in sys.modules, f"an LLM SDK ({sdk}) leaked into the inner ring (R9.2)"
+    newly_imported_llm = llm_sdks & (set(sys.modules) - modules_before)
+    assert not newly_imported_llm, (
+        f"an LLM SDK {newly_imported_llm} leaked into the inner ring by running the "
+        "engine (R9.2 / P14: no LLM in the inner ring)."
+    )
 
 
 # ============================================================================ #
