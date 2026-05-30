@@ -1,0 +1,166 @@
+# Implementation Plan
+
+> **Scope:** Builds the Execution Daemon at `src/reactive/daemon/` — the persistent non-LLM fast-clock process that runs the §13 chain (Survive ⊳ Preserve ⊳ Edge ⊳ Return) over four landed leaf modules. Phase 1 (majors 1–3) is buildable now; Phase 2 sub-tasks (orchestrator, paper lifecycle driver, version lifecycle, loop, and their tests) are BLOCKED on `survival-gate` impl (`src/survival/gate.py`) and tagged `_Depends:_ BLOCKED: survival-gate`. Reused landed leaves — `reactive.signal_model.decide`, `reactive.features.compute_features`, `overlays.tactical.bin_classifier.classify`, `reactive.telemetry.{trace_writer,schema}`, `broker.core.{submit_decision,get_positions}` — get NO build task. Migrations 051/052 assume survival-gate's 049/050 land first; if survival renumbers, daemon migrations rev (research.md CN-5). `src/reactive/daemon/` rides the existing namespace package (no pyproject/uv); `tests/unit/reactive/daemon/` needs no `__init__`/conftest (inherits the root `tests/conftest.py`). Gap-analysis additions (research.md, 2026-05-30): task **1.5** (runtime dependency manifest, gap G2) and task **3.6** (concrete 3-leg market-feed client un-mocking 3.1's live fetch, gap G1) are now explicit Phase-1 tasks; the survival-gate Phase-2 contract (G3) remains the only hard external blocker.
+
+- [ ] 1. Foundation: migrations, config, types, import seams
+- [ ] 1.1 Migrations 051/052 + append-only guards
+  - Migration 051: `execution_daemon_event_queue` (emit-only) with the strict append-only guard (reject UPDATE/DELETE/TRUNCATE) EXCEPT a set-once whitelist allowing `drained_at` to move NULL→value once (reject value→value), per the mig-048 whitelist pattern.
+  - Migration 052 (three daemon-state tables co-located to keep the daemon at 051/052): `execution_daemon_position_version` (open/close + version pin; immutable after close); `execution_daemon_command_intake` (inbound transport; set-once whitelist on `applied_at`/`status`/`reject_reason`); `execution_daemon_epoch` (`epoch_id`=run_id, `pinned_param_hash`, code/param version, `walk_forward_window`, `opened_at`, set-once whitelist on `closed_at`/`status`) + guards.
+  - Forward-only, idempotent (`CREATE … IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER`), single `BEGIN; … COMMIT;` + trailing read-only `VERIFY:` selects, per `db/migrations/048_decision_trace_telemetry.sql`.
+  - Observable: both migrations apply cleanly on a fresh DB; a direct UPDATE/DELETE on each table raises the append-only exception, while moving `drained_at` (051) / `applied_at` (intake) / `closed_at` (epoch) from NULL succeeds once and a second write to the same column is rejected.
+  - _Requirements: 4, 5, 8, 9_
+  - _Boundary: db schema (migrations 051/052)_
+- [ ] 1.2 (P) Config + DB connection lifecycle + package scaffold
+  - `src/reactive/daemon/{__init__,__main__}.py` scaffold (namespace package, no pyproject); `config.py` = `_dsn()` (env DSN, mirroring `telemetry.trace_writer._dsn`) + `DaemonConfig` (paper flag, `assess_max_latency_seconds`, poll timeout, eval cadence, intake-poll cadence, `stop_loss_atr_mult`, market-feed provider keys); `db.py` = owned psycopg3 connection lifecycle + per-cycle `conn.transaction()` helper. Add the daemon config keys to `.env.example` as a new commented section.
+  - Observable: `python -m src.reactive.daemon` imports and constructs a `DaemonConfig` from env without opening a connection; `.env.example` carries the new keys.
+  - _Requirements: 1, 3_
+  - _Boundary: config, db_
+- [ ] 1.3 (P) Daemon types
+  - `types.py`: `EvalTick`; `EpochContext` (run_id, code/param version, `walk_forward_window`, pinned snapshots); `PinnedParams` exposing `.reactive_snapshot` (the reactive `ParamSnapshot` `decide` consumes); `Candidate{features, direction, reference_price}`; `ProposedOrder{symbol, intent, direction, volume, stop_loss, position_id?}` (daemon-owned pre-admit order); `CommandRow`.
+  - Observable: the module imports with no survival dependency; a `ProposedOrder` and a `Candidate` construct from synthetic fields; `PinnedParams.reactive_snapshot` is typed as the reactive `ParamSnapshot`.
+  - _Requirements: 2, 11, 12_
+  - _Boundary: types_
+- [ ] 1.4 (P) Broker-import seam
+  - Define the in-process seam that makes `broker.core.{submit_decision, get_positions}` + `broker.models.{Position, Direction, OrderIntent, Label}` importable from the daemon, given `src/mcp/broker/` is a self-contained uv package with flat imports and no `__init__.py` (cannot be plain namespace-imported). Provide a small adapter / `sys.path` shim isolating this in one seam; note `broker.models.Label` is itself re-exported from `src.calibration.scorer`, so the seam must also resolve that transitive import.
+  - Observable: a daemon module imports `submit_decision` / `get_positions` / `Position` / `Label` through the seam without `ImportError`; a smoke test asserts the seam resolves all named symbols (including `Label`).
+  - _Requirements: 3, 10, 11_
+  - _Boundary: broker_import_seam_
+- [ ] 1.5 (P) Daemon runtime dependency manifest
+  - Author a runtime dependency manifest for the persistent daemon process pinning `psycopg[binary]>=3.2`, `httpx>=0.27`, `numpy`, `python-dotenv` (the deps `db.py` / the feed client / the loop import), matching the per-MCP-package pin style (`src/shared/regime_sidecar/pyproject.toml:11`). The repo has no root manifest today (gap G2); this makes the daemon's runtime reproducible on a fresh machine / CI / container instead of relying on the operator's global system python.
+  - Observable: a fresh venv created from the manifest imports `psycopg`, `httpx`, `numpy`, `dotenv` and runs `python -m src.reactive.daemon` without `ImportError`.
+  - _Requirements: 1, 3_
+  - _Boundary: packaging_
+
+- [ ] 2. Foundation: parameter epoch pin
+- [ ] 2.1 Per-epoch parameter pin + walk_forward_window re-source
+  - `params.py`: REPEATABLE-READ resolve of `parameters_active` (reactive + survival namespaces) into a daemon-owned `execution_daemon_epoch` row (`epoch_id`=run_id, `pinned_param_hash`, window); expose `PinnedParams` by value incl. `.reactive_snapshot`; re-source `walk_forward_window` from the P2 param-version registry at hot-swap (v0.1 bootstrap label until the tuner publishes). Never re-resolve mid-cycle (P2). Writes the epoch table, NOT `run_parameters_snapshot`.
+  - Observable: against synthetic param rows, a fresh epoch mints a `run_id`, pins a param hash + window, and exposes `PinnedParams.reactive_snapshot`; the pinned value is returned unchanged within a cycle (no mid-cycle re-resolution).
+  - _Requirements: 1, 4, 8_
+  - _Boundary: params_
+  - _Depends: 1.1, 1.3_
+
+- [ ] 3. Core: candidate, order construction, telemetry, events, commands (Phase 1)
+- [ ] 3.1 (P) Candidate assembly
+  - `candidate.py`: fetch fast-clock data (ticker bars + SPY + rf_yield) from the market feed (live fetch mocked in v0.1); `compute_features` over the fetched arrays; **read the tactical bin from `FeatureSet.raw["tactical_bin"]`** (NOT `trend_vote`, which folds `unavailable` into `neutral`) and map `positive→LONG`, `negative→SHORT`, `neutral`/`unavailable`→`None`; surface `reference_price = last close`; return `Candidate{features, direction, reference_price}` or `None` on a non-directional bin (Req 12.5) or insufficient data (Req 12.4), recording which case for telemetry attribution.
+  - Observable: synthetic arrays with a positive bin return a LONG Candidate carrying `reference_price`; a neutral and an unavailable bin each return `None` and are distinguishable in what the candidate records; too-short history returns `None`.
+  - _Requirements: 12_
+  - _Boundary: candidate_
+  - _Depends: 1.3_
+- [ ] 3.2 (P) Order construction
+  - `order_builder.py`: pure `build_order(decision, positions, reference_price, params) -> ProposedOrder | None`; intent+direction express open/reduce on the decided side (SHORT-open = `BUY` + `Direction.SHORT`); volume from `sizing_hint` capped by survival advisory and clamped ≤ held on a reduce (no flatten-then-flip in v0.1); `stop_loss` PRICE LEVEL = `reference_price ∓ atr×stop_loss_atr_mult` reading `atr` from `decision.substrate.feature_values["atr"]` (None-guard = defense-in-depth); `position_id` for reduce/close; position state from broker readouts, never inferred; HOLD/sub-threshold → `None`.
+  - Observable: a synthetic LONG decision + flat book yields a BUY `ProposedOrder` with a price-level `stop_loss`; a SHORT-open yields `BUY`+`Direction.SHORT`; a reduce clamps volume ≤ held and targets the `position_id`; HOLD yields `None`.
+  - _Requirements: 11, 2_
+  - _Boundary: order_builder_
+  - _Depends: 1.3, 1.4_
+- [ ] 3.3 (P) Trace assembly
+  - `trace_assembler.py`: ReactiveDecision + survival fields + broker fill → `DecisionTraceRow` / `FillOutcomeRow`; mint `trace_id`, stamp `event_ts` at decision, inject `run_id` + `walk_forward_window`, map substrate→`signal_values`, `binding_constraint`→`gate_link`, derive `liq_proximity`/`stop_out`/`declined`, link decision↔fill by `parent_trace_id`. Tested against `write_decision_trace(conn=None)` dry-run.
+  - Observable: a synthetic decision yields a `DecisionTraceRow` with all four correlation keys + a minted `trace_id` + decision-time `event_ts`; re-assembly of the same decision is idempotent on `trace_id`; a confirmed fill links to its parent.
+  - _Requirements: 4_
+  - _Boundary: trace_assembler_
+  - _Depends: 1.3_
+- [ ] 3.4 (P) Event-queue emit
+  - `event_queue.py`: emit decision/fill/lifecycle/command/safe_mode/kill_switch events to `execution_daemon_event_queue` (INSERT only); never set `drained_at`; document the single-external-drainer contract.
+  - Observable: emitting an event INSERTs one row and never writes `drained_at`; the module exposes no drain path.
+  - _Requirements: 9_
+  - _Boundary: event_queue_
+  - _Depends: 1.1_
+- [ ] 3.5 (P) Command intake + gated apply
+  - `commands.py`: poll `execution_daemon_command_intake` each cycle; validate gated seams only (engage-kill-switch / set-safe-mode-grade / select-validated-config); reject direct-mutation rows; enforce the toward-safer guard (safe-mode tighten-only; config must be a registry member, not looser); apply via op-state write (gate path the loop reads fresh) / hot-swap select; mark `applied_at`/`status`/`reject_reason`; emit a command event. Tested against synthetic op-state; the real op-state write integrates with `survival_gate_state` when survival lands (wired in 4.1).
+  - Observable: a gated kill-switch row is applied and marked; a direct-mutation row is rejected with a reason; a safe-mode-loosen row is rejected; an un-gated row never mutates state.
+  - _Requirements: 5, 7, 9_
+  - _Boundary: commands_
+  - _Depends: 1.1, 1.3_
+- [ ] 3.6 Concrete 3-leg market-feed client (un-mock 3.1)
+  - Build the daemon's concrete `MarketFeed` (the design's "one impure edge", §14.10) as three legs, NOT the MCP wrappers (gap G1): (a) ticker bars via a thin standalone Massive REST client (httpx GET aggregates, `dict`→daily `Bar` adapter — Massive defaults to intraday-minute, so request/aggregate to ≥252 daily closes); (b) SPY daily adj-close via the same REST shape (reusing `market_data/polygon_provider.py`'s provider body, not its MCP tool); (c) risk-free DGS1 via `fred_client.latest_value` with a per-epoch/day TTL cache (avoid a fresh GET each fast-clock tick). Wire `candidate`'s live fetch (3.1) to this feed behind the `MarketFeed` type; keep the boundary "no MCP/FastMCP imported into the loop".
+  - Observable: against mocked httpx, the client returns ≥252 daily `Bar`s for ticker + SPY and a cached DGS1 value; `candidate.assemble` with the real feed (mocked transport) produces a `Candidate` end-to-end; no FastMCP/websocket import is pulled into the daemon interpreter.
+  - _Requirements: 12, 1_
+  - _Boundary: feed_
+  - _Depends: 1.2, 1.3, 3.1_
+
+- [ ] 4. Core: §13 orchestration, paper lifecycle, version lifecycle, loop (Phase 2 — blocked on survival-gate)
+- [ ] 4.1 §13 gate orchestration + order_builder→survival.admit adaptation
+  - `orchestrator.py`: the §13 walk — `assess` (Survive gate) → derive "new exposure permitted" from freshly-persisted op-state → `candidate` → `decide(features, direction, params.reactive_snapshot)` → `order_builder` → per-order `admit` (veto); persist-then-act; resize-on-advisory (re-build + re-admit, fixpoint in one pass); declined-trace on HOLD/reject; never-upsize; obtain decisions/verdicts/sizing/venue-actions exclusively from deps. Includes the `order_builder`→`survival.admit` field adaptation and wiring `commands`' op-state write against the real `survival_gate_state`.
+  - Observable: with synthetic deps, a permitted+actionable path builds→admits in order; a kill-switch op-state blocks opens but allows exits; a REJECT+advisory triggers exactly one resize-rebuild-readmit; `admit` never runs before `decide`.
+  - _Requirements: 2, 5, 7, 10_
+  - _Boundary: orchestrator_
+  - _Depends: 3.1, 3.2, 3.3, 3.5; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 4.2 Paper-mode order lifecycle driver
+  - In `orchestrator.py`: drive the admitted order through the paper submit→poll→reconcile lifecycle over the broker's sync leaf funcs — `submit_decision` (paper/dry-run only, no live transmission path) → poll to a terminal outcome (filled / simulated / rejected / unconfirmed); the double-send guard (no duplicate submission while a confirmation is pending); surface `unconfirmed` as unconfirmed (never treated as filled).
+  - Observable: an admitted order is submitted at most once while pending, reaches a terminal outcome, and an unconfirmed result is surfaced as unconfirmed rather than filled; no live-transmission path is reachable in paper mode.
+  - _Requirements: 3_
+  - _Boundary: orchestrator_
+  - _Depends: 4.1; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 4.3 (P) Version-pinned lifecycle + flat-before-close
+  - `lifecycle.py`: flat-before-close action + verify-flat handshake (execute the gate's flatten directives, re-check the flat post-condition, escalate + record a verify-flat failure); version-pin at open/close into `execution_daemon_position_version`; whole-object atomic hot-swap; manage open positions under their opening version; global-tightest survive across versions; adopt the version `commands` selected.
+  - Observable: with synthetic survival directives, an in-window closure executes flatten then verifies flat (escalating on failure); a hot-swap flips the whole param object atomically and leaves open positions on their opening version.
+  - _Requirements: 6, 8_
+  - _Boundary: lifecycle_
+  - _Depends: 2.1, 3.5; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 4.4 Evaluation loop + entrypoint + service
+  - `loop.py` + `__main__.py`: single-eval-at-a-time loop; poll intake first, then `assess` within cadence + on margin-material events; fail-toward-minimum-exposure on dependency error (reject opens, never block exits/reduces); build conn+config and run, restart-safe. Add a daemon service (paper mode, `restart: unless-stopped`, `depends_on: postgres` healthy) to `docker-compose.yml`.
+  - Observable: the loop performs at most one evaluation at a time, polls intake before `assess` each cycle, and on a dependency error rejects opens while allowing exits; the compose service starts the daemon against a healthy postgres.
+  - _Requirements: 1, 5, 7, 9_
+  - _Boundary: loop_
+  - _Depends: 4.1, 4.2, 4.3; BLOCKED: survival-gate (src/survival/gate.py)_
+
+- [ ] 5. Validation: inner-ring unit tests + persistence integration
+- [ ] 5.1 (P) Migration + persistence integration tests
+  - `tests/integration/test_daemon_persistence.py`: migs 051/052 apply; append-only guards reject UPDATE/DELETE except the set-once whitelists (`drained_at`; `applied_at`/`status`/`reject_reason`; `closed_at`/`status`); event_queue emit round-trip; decision+fill + intake round-trips via a real conn.
+  - Observable: the integration suite passes under `-m integration_live` against a live DB and asserts each guard rejection + each set-once column.
+  - _Requirements: 4, 5, 8, 9_
+  - _Boundary: tests_
+  - _Depends: 1.1, 3.4_
+- [ ] 5.2 (P) Params tests
+  - Epoch pin mints `run_id`; param hash + window pinned by value; `walk_forward_window` re-source at hot-swap + bootstrap; no mid-cycle re-resolution.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 1, 4, 8_
+  - _Boundary: tests_
+  - _Depends: 2.1_
+- [ ] 5.3 (P) Candidate tests
+  - Bin read from `raw["tactical_bin"]` not `trend_vote`; `positive→LONG` / `negative→SHORT`; `neutral`→None and `unavailable`→None, distinguishable (12.5 vs 12.4); `reference_price` = last close surfaced; insufficient data → None.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 12_
+  - _Boundary: tests_
+  - _Depends: 3.1_
+- [ ] 5.4 (P) Order-builder tests
+  - intent+direction incl. SHORT-open = `BUY`+`SHORT`; volume capped by survival advisory + clamped ≤ held (no flip); `stop_loss` price level = `reference ∓ atr×mult` (satisfies mandatory-stop); `atr` from `feature_values` + None-guard; `position_id` targeting; HOLD → no order.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 11, 2_
+  - _Boundary: tests_
+  - _Depends: 3.2_
+- [ ] 5.5 (P) Trace-assembler tests
+  - Full 4-key correlation; `run_id`/window inject; `trace_id` mint; `event_ts` at decision; decision↔fill link; idempotency; substrate mapping — against `write_decision_trace(conn=None)` dry-run.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 4_
+  - _Boundary: tests_
+  - _Depends: 3.3_
+- [ ] 5.6 (P) Commands tests
+  - Intake poll+apply; gated-path-only; reject direct mutation; toward-safer guard (reject safe-mode loosen + non-registry/looser config); kill-switch blocks opens / allows exits.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 5, 7, 9_
+  - _Boundary: tests_
+  - _Depends: 3.5_
+- [ ] 5.7 (P) Orchestrator + paper-lifecycle tests
+  - §13 ordering (admit never before decide); reject-kills-order; resize-on-advisory single pass; declined-trace; never-upsize; permit derived from op-state; plus the paper lifecycle — submit→poll→reconcile to a terminal outcome, double-send guard, unconfirmed-not-filled, paper-only routing — on synthetic dep fixtures.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 2, 3, 10_
+  - _Boundary: tests_
+  - _Depends: 4.1, 4.2; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 5.8 (P) Lifecycle tests
+  - Flatten-in-window; verify-flat-failure escalation; version-pin; atomic hot-swap; global-tightest survive.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 6, 8_
+  - _Boundary: tests_
+  - _Depends: 4.3; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 5.9 (P) Loop tests
+  - Single-eval-at-a-time; assess cadence; intake-poll-first cadence; fail-toward-minimum-exposure on dep error.
+  - Observable: the suite passes with no LLM, MCP, or live-database access.
+  - _Requirements: 1, 5_
+  - _Boundary: tests_
+  - _Depends: 4.4; BLOCKED: survival-gate (src/survival/gate.py)_
+- [ ] 5.10 (P) Market-feed client tests
+  - Massive `dict`→daily `Bar` adapter (intraday→daily aggregation, ≥252 closes, `ts`/`vwap` stripped); SPY leg returns daily adj-close; DGS1 TTL cache hits once per epoch/day (no per-tick GET); 401/403/non-200 surfaced; no FastMCP/websocket import pulled in. Transport mocked (httpx) — inner-ring; a double-guarded opt-in live round-trip skips cleanly with no keys.
+  - Observable: the suite passes with no live network (transport mocked); the opt-in live leg skips when feed keys are absent.
+  - _Requirements: 12, 1_
+  - _Boundary: tests_
+  - _Depends: 3.6_
