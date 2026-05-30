@@ -123,5 +123,6 @@ Primary roles: the **Operator** (starts / monitors / halts the daemon, reads tel
 #### Acceptance Criteria
 1. Each evaluation, the Execution Daemon shall fetch the fast-clock market data the feature computation requires (the ticker's recent bars, the market-benchmark series, and the risk-free yield).
 2. The Execution Daemon shall compute the feature set the signal model consumes from the fetched market data, and shall not pass raw market data to the signal model.
-3. The Execution Daemon shall select the candidate directional side (long or short) from the tactical relative-strength signal, and shall not take direction from fundamentals or the slow-layer thesis.
+3. When the tactical relative-strength signal resolves to a directional side, the Execution Daemon shall select the candidate directional side (long or short) from that signal, and shall not take direction from fundamentals or the slow-layer thesis.
 4. The Execution Daemon shall hand the computed features and the selected direction to the signal model; if the market data is unavailable or insufficient for the feature computation, it shall request no decision and place no opening order (fail toward no new exposure).
+5. When the tactical relative-strength signal yields no directional side — it is neutral (mixed momentum) or unavailable — the Execution Daemon shall treat the evaluation as having no candidate, request no decision, and place no opening order; a non-directional signal is the absence of an edge, not a data error.
