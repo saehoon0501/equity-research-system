@@ -1,17 +1,17 @@
 {
   "feature_name": "in-session-monitor",
   "created_at": "2026-05-30T16:54:33Z",
-  "updated_at": "2026-05-30T16:54:33Z",
+  "updated_at": "2026-05-30T17:45:00Z",
   "language": "en",
-  "phase": "initialized",
+  "phase": "design-generated",
   "notes": "Initialized 2026-05-30 from brief.md (discovery confirmed Path C own-spec; §15 source). Placement confirmed as a distinct orchestration spec, sibling to walkforward-tuning-loop. 'Fix' scope operator-locked to §15 reading #2 (operational + apply-pre-validated-config; never live-fit). SEAMS RECONCILED 2026-05-30 after execution-daemon (req+design approved) + walkforward-tuning-loop (req) landed: command surface PINNED to the daemon's 3 gated seams (engage-kill-switch / set-safe-mode-grade / select-validated-config) + Req 7.3/7.4/9.3/9.4 contracts; selection-vs-deployment split corrected (monitor selects, daemon hot-swaps); anomaly queue (execution_daemon_event_queue, mig 051) is the TUNER's after-market drain target, not the monitor's. Audit-table migration must take >=054 (048/049-050/051-052/053+ taken). roadmap.md intentionally NOT edited (parallel session owns it).",
   "approvals": {
     "requirements": {
-      "generated": false,
-      "approved": false
+      "generated": true,
+      "approved": true
     },
     "design": {
-      "generated": false,
+      "generated": true,
       "approved": false
     },
     "tasks": {
