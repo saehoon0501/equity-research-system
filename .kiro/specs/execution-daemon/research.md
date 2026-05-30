@@ -144,3 +144,53 @@ The daemon is **last in build order** and imports four leaf modules in-process. 
 
 ## Recommendation for the tasks phase
 Sequence `/kiro-spec-tasks` as **Option C**: a **Phase-1 task cluster** (dep-independent, buildable now, inner-ring-first) and a **Phase-2 cluster** (orchestrator + lifecycle + e2e) explicitly marked **blocked-on-deps** (reactive-signal-model + survival-gate implementation) so it is not started prematurely. The design itself needs no change — it already encodes the reuse decisions; this pass only adds the build-readiness sequencing.
+
+---
+
+# Gap Analysis — Refresh 2 (downstream consumers landed — 2026-05-30)
+
+> Re-run because the picture shifted *after* Refresh 1: the daemon's two **downstream consumers** — `walkforward-tuning-loop` (requirements R1–R10) and `in-session-monitor` (brief + init) — now exist and have **reconciled their seams against the daemon's approved design**. This converts two of the daemon's previously-floating forward contracts into cross-checked seams **and surfaces one real gap in the approved design** (Refresh 1 predated these consumer specs).
+
+## What changed since Refresh 1
+- **broker-cfd-adapter** advanced materially: 4.2 decision routing + live-send gate, 4.3 async submit→poll→reconcile + double-send guard, 5.1 FastMCP server (6 tools). The daemon's broker import surface is now firmer (confirm exact sync signatures + keyword-only `clients=` at task time).
+- **reactive-signal-model + survival-gate STILL spec-only** (no `src/reactive/signal_model.py`, no `src/survival/`). **Phase-2 blocker UNCHANGED.**
+
+## Forward contracts now RESOLVED from the consumer side
+- **`walk_forward_window` advance** (was Research-Needed / forward contract) → **aligned, bootstrap-until-tuner.** `walkforward-tuning-loop` Req 7.3 publishes the advanced window *alongside the promoted version* in the P2 registry, "such that the execution-daemon re-sources it at its next hot-swap." Daemon `params` reads it from the registry at hot-swap; the v0.1 bootstrap bridges only until the tuner first runs. Shape now pinned both sides.
+- **Event-queue drain** → **confirmed, single-drainer.** `walkforward-tuning-loop` Req 10.2 ("consume/drain… not own the emit side") + the in-session-monitor brief pin the tuner as the **sole `drained_at` setter** (SELECT + watermark) of mig-051 `execution_daemon_event_queue`. Confirms the daemon's emit-side design; **adds a hard constraint: exactly one drainer** — the in-session-monitor must NOT become a second drainer (needs a read-only, non-draining view if it reads events in-session).
+
+## NEW GAP — command **transport** (a hole in the *approved* daemon design)
+- The approved design exposes the command surface as **in-process `commands.py` seams** ("when a supervisory command is received", Req 9.2/9.3). But the `in-session-monitor` is an **out-of-process markdown Claude Code orchestration**, and the daemon is a **persistent Python process that is NOT an MCP server** (§14.10) → **there is no defined channel for how a command actually reaches the daemon.** The monitor brief calls this "the biggest unresolved seam."
+  - **kill-switch / safe-mode**: plausibly via shared state the daemon reads fresh each loop (reuse the Operator's halt channel — itself not yet defined).
+  - **`select-validated-config`**: the real hole — the daemon adopts the *latest* published version at hot-swap (Req 8/9.4); there is **no inbound channel to force a specific non-latest, safer version.**
+- **Tag**: Research-Needed → **`execution-daemon` design follow-up.** The rest of the design is sound; this one cluster (`commands` intake) is under-specified.
+- **Options**: (a) **daemon-owned inbound command table** polled each loop — symmetric with the outbound mig-051 queue, P1-clean (daemon reads its own table; the monitor INSERTs a gated command row); (b) shared op-state for kill-switch/safe-mode + a separate config-selection table for the version pin; (c) v0.1-minimal — ship only the Operator kill-switch channel now and defer config-transport (the monitor is terminal/last in build order). Recommend (a) — one auditable intake mirroring the one auditable outbound queue.
+
+## NEW ambiguity — `select-validated-config` toward-safer (P7) guard
+- Shared-ownership question the monitor brief leaves open: does the **daemon** enforce that a selected config is *toward-safer* (P7), or does the **monitor** carry that obligation alone? The approved daemon design did not assign it. Recommend the daemon enforce toward-safer **at intake** (downstream-conservative, P7) so a buggy/compromised monitor cannot loosen — resolve in the same design follow-up.
+
+## Requirement → Asset delta (vs Refresh 1)
+| Req area | Status change |
+|---|---|
+| 4.2 `walk_forward_window` inject | Unknown → **aligned** (tuner publishes; daemon re-sources at hot-swap) |
+| 9.1 event queue | Missing → **build, single-drainer** semantics now mandatory |
+| 9.2/9.3 command surface | **Constraint → GAP**: in-process seams defined, **inbound transport undefined** for the out-of-process commander |
+| 2.x/3.x orchestration; 6.x flatten | **Blocked** on reactive + survival — unchanged |
+
+## Recommendation
+1. **Before** `/kiro-spec-tasks` locks the `commands` cluster, run a scoped **`/kiro-spec-design execution-daemon` follow-up** (or a design addendum) to pin the command-transport intake + the toward-safer guard. Everything else in the design stands.
+2. Then `/kiro-spec-tasks` with the same Option-C phasing; the `event_queue` task must encode **single-drainer** (`drained_at` = tuner only) and the `commands` task must include the chosen inbound-transport mechanism.
+3. Effort/Risk delta: inbound command-transport = new **S/M**, **Medium** (cross-process seam, P1 placement). All other items unchanged from Refresh 1.
+
+---
+
+# Design Follow-up — R2 resolution (design.md Revision 2, 2026-05-30)
+
+The command-transport gap + the two consumer-resolved forward contracts are now folded into `design.md` Revision 2 (re-approval required; `design.approved` reset to false).
+
+- **Decision — command transport = a daemon-owned inbound `execution_daemon_command_intake` table** (Refresh-2 option (a)). The out-of-process commander (`in-session-monitor` / Operator) INSERTs a gated command row; the daemon **polls it first each cycle**, validates (gated seam only; reject direct mutation; **toward-safer guard**), applies via an op-state write / version-select, and marks `applied`/`rejected`. Symmetric with the outbound mig-051 event queue — one auditable intake, one auditable emit. The daemon is the sole reader/applier; the commander is the sole inserter (state-guard whitelist on `applied_at`/`status`/`reject_reason`).
+- **Decision — co-locate `command_intake` in mig 052** (with `position_version`), keeping the daemon at **051/052** and avoiding a 053+ renumber cascade through `walkforward-tuning-loop` (053+) and `in-session-monitor` (≥054). Roadmap ledger unchanged.
+- **Decision — toward-safer (P7) enforced at the daemon intake**: `set-safe-mode-grade` tighten-only; `select-validated-config` must name a P2-registry member and must not loosen survival. A buggy/compromised monitor cannot loosen — downstream-conservative.
+- **Resolved — `walk_forward_window`**: re-sourced from the P2 registry at hot-swap (the tuner publishes it alongside the promoted version per its Req 7.3); v0.1 bootstrap label until the tuner first publishes.
+- **Resolved — event queue is emit-only, single external drainer**: the tuner is the sole `drained_at` setter; the daemon never drains; `in-session-monitor` (if it reads events in-session) must use a non-draining SELECT.
+- **Synthesis**: generalized `commands` into one intake+gated-apply surface (poll → validate → apply → mark) covering all three command types; adopted the existing append-only-guard + state-guard-whitelist patterns for the intake table (build-vs-adopt); no new file vs R1 (the intake-poll lives in `commands.py`).
