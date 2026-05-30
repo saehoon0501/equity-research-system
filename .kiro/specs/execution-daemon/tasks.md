@@ -52,7 +52,7 @@
   - _Requirements: 11, 2_
   - _Boundary: order_builder_
   - _Depends: 1.3, 1.4_
-- [ ] 3.3 (P) Trace assembly
+- [x] 3.3 (P) Trace assembly
   - `trace_assembler.py`: ReactiveDecision + survival fields + broker fill → `DecisionTraceRow` / `FillOutcomeRow`; mint `trace_id`, stamp `event_ts` at decision, inject `run_id` + `walk_forward_window`, map substrate→`signal_values`, `binding_constraint`→`gate_link`, derive `liq_proximity`/`stop_out`/`declined`, link decision↔fill by `parent_trace_id`. Tested against `write_decision_trace(conn=None)` dry-run.
   - Observable: a synthetic decision yields a `DecisionTraceRow` with all four correlation keys + a minted `trace_id` + decision-time `event_ts`; re-assembly of the same decision is idempotent on `trace_id`; a confirmed fill links to its parent.
   - _Requirements: 4_
