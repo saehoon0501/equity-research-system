@@ -18,10 +18,10 @@
 
 - [ ] 2. Core: Phase-1 pure leaves (sense → judge → decide-intent → audit)
 - [ ] 2.1 (P) Implement the calibration diagnostic
-  - Read recent trace via the landed reader filtered to a single code-version/param-version cohort; extract softmax probability + realized outcome + the derived survival-proximity fields; compute reliability/Brier/ECE with the block-bootstrap CI; compare against that version's pinned baseline
+  - Read recent trace via the landed reader filtered to a single code-version/param-version cohort; extract softmax probability + the derived survival-proximity fields; pair each decision's probability with its realized directional label obtained from an injected `RealizedLabelSource` seam (a Protocol defined in diagnostic.py); compute reliability/Brier/ECE with the block-bootstrap CI; compare against that version's pinned baseline derived from the SAME seam
   - A window that would cross a version hot-swap uses only the current version's rows; below the sufficiency floor (including the post-hot-swap refill period) it returns an explicit insufficient result
-  - For v0.1, derive the per-version baseline from that version's own in-sample outcome rows (revalidation trigger: switch to a tuner-published baseline if one lands)
-  - Observable: a unit test feeds synthetic single-version and mixed-version rows and asserts the diagnostic uses only the current version and reports insufficiency below the floor
+  - Calibration-substrate correction (2026-05-30, surfaced at impl): the reactive per-decision realized directional label is NOT on decision_process_trace and is owned by walkforward-tuning-loop (unlanded); counterfactual_ledger is the wrong-grain slow-layer eval ledger, NOT the substrate. For v0.1 the orchestrator injects a source that yields no reactive labels, so the diagnostic returns INSUFFICIENT (correctly blind) — wire the real source when it lands (revalidation trigger)
+  - Observable: a unit test feeds synthetic single-version and mixed-version rows and asserts the diagnostic uses only the current version and reports insufficiency below the floor; an injected synthetic RealizedLabelSource drives the calibration-compute path, and a v0.1 (empty) source yields sufficient=False / INSUFFICIENT
   - _Requirements: 1.2, 2.1, 2.4, 9.1, 9.5_
   - _Boundary: diagnostic_
   - _Depends: 1.2_
