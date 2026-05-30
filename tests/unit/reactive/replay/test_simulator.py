@@ -53,11 +53,13 @@ from src.reactive.replay.simulator import (
     DailyDecision,
     apply_admit_gating,
     build_order,
+    detect_stop_hit,
     index_champion_decisions,
     run_daily_layer,
     select_direction,
+    simulate_fill,
 )
-from src.reactive.replay.types import Candidate, ReplayWindow
+from src.reactive.replay.types import Candidate, Fill, ReplayWindow
 from src.survival.params import DEFAULTS as SURVIVAL_DEFAULTS
 from src.survival.types import (
     AccountState,
@@ -1099,3 +1101,222 @@ def test_admit_gating_returns_proposed_order_type() -> None:
         admit_fn=None,
     )
     assert isinstance(order, ProposedOrder)
+
+
+# ============================================================================ #
+# Task 2.5 — fill realism (counterparty bid/ask, never mid) + intraday stop-hit.
+#
+# NON-BEHAVIORAL: MIRRORS the broker `paper.py` side-aware fill-pricing rule
+# (its `_fill_price_from_action` block) rather than calling the real
+# `paper.simulate` — the broker package uses bare `from models import ...`
+# imports that ImportError under `src.mcp.broker.paper` from repo root (the 1.4
+# agent + `_fixtures.stub_paper_simulate` documented this). The rule MIRRORED:
+#
+#   - paper.py prices the MARKETABLE side conservatively: a buy lifts the ASK, a
+#     sell hits the BID. For an OPEN, the marketable side is the position
+#     direction (open LONG → ask, open SHORT → bid). For a CLOSE, the marketable
+#     side is the OPPOSITE of the held direction (close a LONG = sell → bid;
+#     close a SHORT = buy → ask).
+#   - In the REPLAY's `ProposedOrder` representation the `direction` field
+#     ALREADY encodes the marketable side for both opens AND reduces (a reduce's
+#     `direction` is the DECIDED side, opposite the held position — see
+#     `_reduce_order`). So the mirror collapses to ONE uniform rule:
+#       direction == "LONG"  → ASK ;  direction == "SHORT" → BID.
+#     (Copying paper.py's two-branch close logic LITERALLY onto a `ProposedOrder`
+#     would INVERT closes — paper.py keys its close branch on the *position*
+#     direction, the replay order's `direction` is already the opposite. The
+#     direction-convention difference is the broker-packaging revalidation seam
+#     for 2.6.)
+#   - Counterparty price comes from `fetch_quotes` `bp`/`ap` (the NBBO), NEVER
+#     the mid (and never the `fetch_trades` price, which in the fixture == mid).
+#
+# Intraday stop-hit (6.2): a protective stop level (from 2.4's `ProposedOrder`)
+# registers a hit iff it lies INSIDE the day's intraday low/high range —
+# LONG stop hit if intraday low ≤ stop; SHORT stop hit if intraday high ≥ stop;
+# a stop OUTSIDE the range does not. A stopped exit fills AT the stop level.
+#
+# Source of truth: requirements.md R6 AC 6.1/6.2; design.md `simulator`
+# "Intraday layer" + test-plan line 268 ("fills price at the historical bid/ask
+# side"; "a stop level inside the intraday range registers a stop-hit").
+# ============================================================================ #
+
+
+# --- fill-realism fixtures ----------------------------------------------------
+# A quote whose bid/ask straddle a DISTINCT mid so "not mid" is discriminating:
+# bid=101.50, ask=101.54 → mid=101.52 (the fixture `fetch_trades` price). An
+# assertion on ask (101.54) or bid (101.50) is then provably ≠ mid.
+_QUOTE_BID = 101.50
+_QUOTE_ASK = 101.54
+_QUOTE_MID = (_QUOTE_BID + _QUOTE_ASK) / 2.0  # 101.52 — what a mid-fill WOULD be
+
+
+def _open_order(*, direction: str, volume: float = 0.5, stop_loss: float | None = None):
+    """A directional OPEN `ProposedOrder` (intent BUY) on the decided side."""
+    return ProposedOrder(
+        symbol="AAPL",
+        intent="BUY",
+        direction=direction,
+        volume=volume,
+        stop_loss=stop_loss,
+    )
+
+
+def _quote_port():
+    """A `FixtureDataPort` whose `fetch_quotes` returns the straddling NBBO."""
+    return make_fixture_dataport()
+
+
+# --- 6.1: fill at counterparty price, never mid -------------------------------
+
+
+def test_buy_open_fills_at_ask_not_mid() -> None:
+    """A BUY-open of a LONG fills at the historical ASK (the marketable buy side
+    lifts the offer), NOT the mid (R6.1)."""
+    order = _open_order(direction="LONG")
+    fill = simulate_fill(order, port=_quote_port(), symbol="AAPL", ts="2024-01-31")
+    assert isinstance(fill, Fill)
+    assert fill.price == _QUOTE_ASK
+    assert fill.price != _QUOTE_MID  # never the mid (R6.1)
+
+
+def test_open_short_fills_at_bid() -> None:
+    """An open-SHORT (sell-to-open) fills at the historical BID (the marketable
+    sell side hits the bid), NOT the mid (R6.1)."""
+    order = _open_order(direction="SHORT")
+    fill = simulate_fill(order, port=_quote_port(), symbol="AAPL", ts="2024-01-31")
+    assert fill.price == _QUOTE_BID
+    assert fill.price != _QUOTE_MID
+
+
+def test_close_long_fills_at_opposite_side_bid() -> None:
+    """A CLOSE of a held LONG fills at the OPPOSITE side to the open — the close
+    sells, so it hits the BID (R6.1). The reduce order's `direction` is the
+    DECIDED side (SHORT, opposite the held LONG), so the uniform rule
+    (SHORT→BID) correctly prices the close at bid — closing a long that OPENED at
+    ask now fills at bid. A literal copy of paper.py's close branch (keyed on the
+    *position* direction) would invert this to ask."""
+    held = Position(
+        position_id="p1",
+        symbol="AAPL",
+        direction="LONG",
+        volume=0.5,
+        avg_open_price=101.54,
+        used_margin=10.0,
+        unrealized_pnl=0.0,
+    )
+    close = build_order(
+        _reactive_decision(decision="SHORT", direction_in="SHORT", sizing_hint=0.5),
+        position=held,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        symbol="AAPL",
+    )
+    assert close is not None
+    assert close.direction == "SHORT"  # decided side, opposite the held LONG
+    fill = simulate_fill(close, port=_quote_port(), symbol="AAPL", ts="2024-01-31")
+    assert fill.price == _QUOTE_BID  # sell-to-close hits the bid (opposite the ask open)
+
+
+def test_close_short_fills_at_opposite_side_ask() -> None:
+    """A CLOSE of a held SHORT fills at the OPPOSITE side — the close buys, so it
+    lifts the ASK (R6.1). The reduce order's `direction` is LONG (opposite the
+    held SHORT) → ASK."""
+    held = Position(
+        position_id="p2",
+        symbol="AAPL",
+        direction="SHORT",
+        volume=0.5,
+        avg_open_price=101.50,
+        used_margin=10.0,
+        unrealized_pnl=0.0,
+    )
+    close = build_order(
+        _reactive_decision(decision="LONG", direction_in="LONG", sizing_hint=0.5),
+        position=held,
+        params=SURVIVAL_DEFAULTS,
+        reference_price=100.0,
+        atr=2.0,
+        symbol="AAPL",
+    )
+    assert close is not None
+    assert close.direction == "LONG"  # decided side, opposite the held SHORT
+    fill = simulate_fill(close, port=_quote_port(), symbol="AAPL", ts="2024-01-31")
+    assert fill.price == _QUOTE_ASK  # buy-to-close lifts the ask
+
+
+def test_fill_carries_side_volume_and_iso_ts() -> None:
+    """The `Fill` carries the order side, the requested volume, and an ISO ts —
+    the quote `sip_timestamp` (nanoseconds) is normalized to ISO, never passed
+    raw (the `OutcomeRecord.fills` contract, types.py)."""
+    order = _open_order(direction="LONG", volume=0.7)
+    fill = simulate_fill(order, port=_quote_port(), symbol="AAPL", ts="2024-01-31")
+    assert fill.volume == 0.7
+    assert fill.side == "LONG"
+    # ISO, not a bare nanosecond integer.
+    assert isinstance(fill.ts, str)
+    assert "T" in fill.ts or fill.ts.count("-") >= 2
+    assert "1706" not in fill.ts[:4]  # not the raw ns epoch leading digits
+
+
+# --- 6.2: intraday stop-hit determination -------------------------------------
+# The canned intraday path (fixtures `_CANNED_INTRADAY_BARS`) spans
+# low=100.8 (bar 3 `l`) … high=102.1 (bar 2 `h`).
+_INTRADAY_LOW = 100.8
+_INTRADAY_HIGH = 102.1
+
+
+def test_long_stop_inside_range_registers_hit() -> None:
+    """A LONG protective stop INSIDE the day's intraday low/high range registers
+    a hit (intraday low ≤ stop), and the exit fills AT the stop level (R6.2)."""
+    stop = 101.0  # between low 100.8 and high 102.1 → hit (low 100.8 ≤ 101.0)
+    order = _open_order(direction="LONG", stop_loss=stop)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is not None
+    assert hit.price == stop  # fills at/through the stop level
+
+
+def test_long_stop_outside_range_no_hit() -> None:
+    """A LONG stop BELOW the day's intraday low (outside the range) does NOT
+    register a hit (R6.2)."""
+    stop = 100.0  # below intraday low 100.8 → never touched
+    order = _open_order(direction="LONG", stop_loss=stop)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is None
+
+
+def test_short_stop_inside_range_registers_hit() -> None:
+    """A SHORT protective stop INSIDE the range registers a hit (intraday high ≥
+    stop), exit fills at the stop level (R6.2)."""
+    stop = 101.5  # between low 100.8 and high 102.1 → hit (high 102.1 ≥ 101.5)
+    order = _open_order(direction="SHORT", stop_loss=stop)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is not None
+    assert hit.price == stop
+
+
+def test_short_stop_outside_range_no_hit() -> None:
+    """A SHORT stop ABOVE the day's intraday high (outside the range) does NOT
+    register a hit (R6.2)."""
+    stop = 103.0  # above intraday high 102.1 → never touched
+    order = _open_order(direction="SHORT", stop_loss=stop)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is None
+
+
+def test_stop_hit_fill_side_is_exit_side() -> None:
+    """A stopped LONG exits by SELLING — the stop-hit `Fill` carries the exit
+    (opposite-to-position) side and the order's volume (R6.2)."""
+    order = _open_order(direction="LONG", volume=0.4, stop_loss=101.0)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is not None
+    assert hit.volume == 0.4
+    # The exit of a LONG is a sell — recorded as the SHORT (opposite) side.
+    assert hit.side == "SHORT"
+
+
+def test_no_stop_level_never_hits() -> None:
+    """An order carrying no `stop_loss` (None) can never register a stop-hit."""
+    order = _open_order(direction="LONG", stop_loss=None)
+    hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
+    assert hit is None

@@ -64,7 +64,7 @@
   - _Boundary: simulator_
   - _Depends: 2.3_
 
-- [ ] 2.5 Simulator — fill realism + intraday stop-hit
+- [x] 2.5 Simulator — fill realism + intraday stop-hit
   - Drive the landed `paper.simulate` at counterparty (bid/ask) prices, not mid; determine whether a protective stop level was reached from the intraday price path
   - Observable: unit test (stub paper / fixture intraday) — a fill prices at the correct historical bid/ask side; a stop level inside the intraday range registers a hit; one outside does not
   - _Requirements: 6.1, 6.2_
@@ -136,3 +136,4 @@
 - **4.2 — BLOCKED on a live Massive Advanced/Business API key** (operator-gated; the unit suite uses fixtures).
 - **DONE + green (1.1–2.3):** types, transport, fetch-methods, scaffolding, feature-adapter, fidelity, simulator-daily — 81 unit tests pass in `.venv-replay`.
 - RESUME 2026-05-30: direction-selection rule SPECIFIED (execution-daemon R2.3/R2.4 + Req 12.5, §12.3): tactical bin->direction (positive=LONG, negative=SHORT, neutral|unavailable=no-trade), read FeatureSet.raw["tactical_bin"]. survival-gate LANDED (merged a45f072). 2.3 amended to the rule (SHORT reconstructable, R7 unblocked). 2.4+ proceeding with real src/survival imports + the daemon order_builder pattern (SHORT-open=BUY+SHORT, ATR stop-loss, reference_price). 4.2 still blocked on a live Massive key.
+- 2.5: real `paper.simulate` is un-importable from repo root (bare `from models import` resolves only under the broker MCP launch posture) — MIRRORED its side-aware pricing (LONG->ASK, SHORT->BID uniform, since ProposedOrder.direction encodes the marketable side for opens+reduces). Revalidation seam: if broker is made importable, a CLOSE OrderIntent must carry the HELD-position direction (paper.py keys close on position dir).

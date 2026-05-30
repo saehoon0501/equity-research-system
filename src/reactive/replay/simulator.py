@@ -119,7 +119,7 @@ from typing import Any
 
 from src.reactive.params import ParamSnapshot
 from src.reactive.replay.features_adapter import compute_daily_features
-from src.reactive.replay.types import Candidate, DataPort, ReplayWindow
+from src.reactive.replay.types import Candidate, DataPort, Fill, ReplayWindow
 from src.reactive.signal_model import decide as _landed_decide
 from src.reactive.types import Decision, Direction, ReactiveDecision
 from src.survival.gate import admit as _landed_admit
@@ -821,6 +821,239 @@ def _resize(order: ProposedOrder, advisory_max_volume: float) -> ProposedOrder:
     return replace(order, volume=advisory_max_volume)
 
 
+# ============================================================================ #
+# Task 2.5 — fill realism (counterparty bid/ask, never mid) + intraday stop-hit.
+#
+# NON-BEHAVIORAL. The side-aware fill-pricing rule is MIRRORED from the broker
+# `paper.py` (`_fill_price_from_action`), NOT driven via the real
+# `paper.simulate`: `paper.py` uses bare `from models import ...` / `from mappers
+# import ...` imports that resolve only under the broker MCP launch posture (cwd
+# `src/mcp/broker`), so `from src.mcp.broker.paper import simulate` from the repo
+# root raises `ModuleNotFoundError: No module named 'models'` (the 1.4 agent +
+# `_fixtures.stub_paper_simulate` documented this). The pricing rule is small and
+# its authoritative source is `paper.py`'s pricing block, so it is mirrored here.
+#
+# The mirrored rule + the direction-convention RECONCILIATION (the correctness
+# pivot of this task):
+#
+#   paper.py prices the MARKETABLE side conservatively — a buy lifts the ASK, a
+#   sell hits the BID. paper.py keys its CLOSE branch on the *held position's*
+#   direction (`bid if intent.direction is Direction.LONG else ask`). The replay,
+#   though, drives a survival `ProposedOrder` whose `direction` field ALREADY
+#   encodes the MARKETABLE/decided side for BOTH opens and reduces — a reduce's
+#   `direction` is the decided side, which `build_order._reduce_order` sets
+#   OPPOSITE the held position. So in the replay's representation the rule
+#   collapses to ONE uniform mapping:
+#
+#       direction == "LONG"  → ASK   (a buy lifts the offer)
+#       direction == "SHORT" → BID   (a sell hits the bid)
+#
+#   This is correct for every construction `build_order` emits:
+#     - open LONG   (direction=LONG)  → ASK
+#     - open SHORT  (direction=SHORT) → BID
+#     - close held LONG  (reduce direction=SHORT) → BID  (sell-to-close)
+#     - close held SHORT (reduce direction=LONG)  → ASK  (buy-to-close)
+#
+#   ⚠ Copying paper.py's two-branch close logic LITERALLY onto a `ProposedOrder`
+#   would INVERT closes (it keys on the *position* direction; the replay order's
+#   `direction` is already the opposite). This direction-convention difference is
+#   the broker-packaging revalidation seam for 2.6: if the broker package is ever
+#   made importable and `paper.simulate` driven directly, the replay must
+#   construct a broker `OrderIntent` carrying the HELD-position direction (not the
+#   `ProposedOrder.direction`) for a close, or the fill side inverts.
+#
+# Source of truth: requirements.md R6 AC 6.1/6.2; design.md `simulator`
+# "Intraday layer" (fills via the historical bid/ask side) + the test-plan line
+# 268. Requirements: 6.1, 6.2.
+# ============================================================================ #
+
+# NBBO quote wire keys (Polygon/Massive): `bp` = bid price, `ap` = ask price,
+# `sip_timestamp` = SIP epoch NANOseconds. Mirrors the fixture `fetch_quotes`
+# shape; the real `data_client` finalizes the same keys. Read `bp`/`ap` for a
+# counterparty fill — NEVER the mid (R6.1).
+_QUOTE_BID_KEY = "bp"
+_QUOTE_ASK_KEY = "ap"
+_QUOTE_TS_KEY = "sip_timestamp"
+_NS_PER_S = 1_000_000_000
+
+# The single uniform fill-side → quote-key map (the reconciled rule above). The
+# `ProposedOrder.direction` already encodes the marketable side for opens AND
+# reduces, so a LONG-side order lifts the ASK and a SHORT-side order hits the BID.
+_SIDE_QUOTE_KEY: dict[str, str] = {"LONG": _QUOTE_ASK_KEY, "SHORT": _QUOTE_BID_KEY}
+
+# The exit (opposite-to-position) side recorded on a stop-hit `Fill`. A stopped
+# LONG exits by SELLING (recorded SHORT); a stopped SHORT exits by BUYING
+# (recorded LONG). Used only for the stop-hit fill's `side` tag.
+_EXIT_SIDE: dict[str, str] = {"LONG": "SHORT", "SHORT": "LONG"}
+
+
+def _quote_iso_ts(quote_row: Mapping[str, Any], fallback: str) -> str:
+    """Normalize a quote row's `sip_timestamp` (epoch NANOseconds) to an ISO ts.
+
+    The fixture / `data_client` quote rows carry a `sip_timestamp` in nanoseconds;
+    the `Fill.ts` contract is an ISO string (types.py), so it is converted here —
+    never passed raw. Falls back to the requested `ts` when the row carries no
+    timestamp (the fill still happened at the requested instant).
+    """
+    ns = quote_row.get(_QUOTE_TS_KEY)
+    if ns is None:
+        return fallback
+    return datetime.fromtimestamp(int(ns) / _NS_PER_S, tz=timezone.utc).isoformat()
+
+
+def simulate_fill(
+    order: ProposedOrder,
+    *,
+    port: DataPort,
+    symbol: str,
+    ts: str,
+) -> Fill:
+    """Simulate an order fill at the counterparty (bid/ask) price, NEVER mid (R6.1).
+
+    MIRRORS the broker `paper.py` side-aware fill-pricing rule against the day's
+    NBBO quote (`port.fetch_quotes`): the marketable side crosses the spread the
+    conservative way. The order's `direction` already encodes the marketable side
+    for both opens and reduces (`build_order`), so:
+
+        direction == "LONG"  → fill at the ASK (`ap`)
+        direction == "SHORT" → fill at the BID (`bp`)
+
+    The price comes from the NBBO `bp`/`ap`, never the mid (and never a trade
+    print, which can sit at the mid). The returned `Fill` carries the order side,
+    the requested volume (verbatim — never upsized, mirroring `paper._fill_volume`),
+    the counterparty price, and an ISO timestamp (the quote ns → ISO).
+
+    Args:
+        order: the survival-legal `ProposedOrder` to fill (its `direction` is the
+            marketable side; its `volume` the requested quantity).
+        port: the injected point-in-time `DataPort` (the R9.2 isolation seam) —
+            its `fetch_quotes(symbol, ts)` supplies the NBBO.
+        symbol: the traded name (the `ProposedOrder` carries one, but the caller
+            passes the day's symbol explicitly for the fetch).
+        ts: the ISO instant the quote is fetched as-of (and the `Fill.ts`
+            fallback when the quote row carries no `sip_timestamp`).
+
+    Returns:
+        a `Fill` at the side-correct counterparty price (never mid).
+
+    Raises:
+        ValueError: the quote response carries no NBBO row, or the row lacks the
+            side's price key — surfaced (do not fabricate a fill; design Error
+            Handling "mark the day unfillable and surface it").
+    """
+    quote_key = _SIDE_QUOTE_KEY.get(order.direction)
+    if quote_key is None:
+        raise ValueError(
+            f"simulate_fill: unrecognized order direction {order.direction!r} "
+            f"(expected LONG/SHORT)."
+        )
+
+    row = _nbbo_row(port.fetch_quotes(symbol, ts))
+    price = row.get(quote_key)
+    if price is None:
+        raise ValueError(
+            f"simulate_fill: quote row for {symbol!r} as-of {ts!r} carries no "
+            f"{quote_key!r} ({order.direction} marketable side) — unfillable; "
+            f"surfaced rather than fabricated (R6.1)."
+        )
+
+    return Fill(
+        side=order.direction,
+        price=float(price),
+        volume=order.volume,
+        ts=_quote_iso_ts(row, ts),
+    )
+
+
+def _nbbo_row(quote: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The single NBBO row out of a `fetch_quotes` response.
+
+    The wire shape is `{"results": [ {bp, ap, sip_timestamp}, ... ]}`; the first
+    row is the as-of NBBO (the fetch is point-in-time bounded). A response with no
+    `results` is a no-quote → unfillable, surfaced by the caller's price check.
+    """
+    results = quote.get("results") if isinstance(quote, Mapping) else None
+    if not results:
+        return {}
+    return results[0]
+
+
+def detect_stop_hit(
+    order: ProposedOrder,
+    *,
+    port: DataPort,
+    symbol: str,
+    day: str,
+) -> Fill | None:
+    """Determine whether the order's protective stop was reached intraday (R6.2).
+
+    Reads the day's intraday price PATH (`port.fetch_intraday` low/high across the
+    bars) and decides whether the stop level lay INSIDE the traversed range:
+
+        LONG  stop hit  iff  intraday low  ≤ stop  (price fell to/through it)
+        SHORT stop hit  iff  intraday high ≥ stop  (price rose to/through it)
+
+    A stop INSIDE the range registers a hit; a stop OUTSIDE the range does not. A
+    hit exits AT the stop level (a stop fills at/through its trigger in this
+    deterministic model — the conservative replay assumption; intraday slippage is
+    not modeled at the bar granularity). The exit `Fill` carries the OPPOSITE
+    (exit) side to the position (`_EXIT_SIDE`): a stopped LONG sells (recorded
+    SHORT), a stopped SHORT buys (recorded LONG).
+
+    An order with no `stop_loss` (None) can never register a hit (returns None).
+
+    Args:
+        order: the entry/open `ProposedOrder` whose `direction` IS the position
+            side and whose `stop_loss` is the protective level (from `build_order`).
+        port: the injected `DataPort` — its `fetch_intraday(symbol, day)` supplies
+            the intraday bar path.
+        symbol: the traded name (for the fetch).
+        day: the trading day (ISO) whose intraday path is examined.
+
+    Returns:
+        a `Fill` at the stop level (exit side, order volume, day ts) on a hit;
+        `None` when the stop was not reached or the order carries no stop.
+    """
+    stop = order.stop_loss
+    if stop is None:
+        return None
+
+    bars = port.fetch_intraday(symbol, day)
+    low, high = _intraday_low_high(bars)
+    if low is None or high is None:
+        return None  # no intraday path → cannot determine a hit (not a fabricated one).
+
+    if order.direction == "LONG":
+        hit = low <= stop
+    elif order.direction == "SHORT":
+        hit = high >= stop
+    else:
+        return None  # unrecognized direction → no determinable stop.
+
+    if not hit:
+        return None
+
+    return Fill(
+        side=_EXIT_SIDE[order.direction],
+        price=float(stop),  # the stopped exit fills AT the stop level.
+        volume=order.volume,
+        ts=day,
+    )
+
+
+def _intraday_low_high(bars: list[dict]) -> tuple[float | None, float | None]:
+    """The min `l` / max `h` across the intraday bars — the traversed price range.
+
+    Polygon/Massive aggregate keys: `l` = bar low, `h` = bar high. A bar missing
+    either is skipped; an empty path yields `(None, None)` (no determinable range).
+    """
+    lows = [b["l"] for b in bars if "l" in b and b["l"] is not None]
+    highs = [b["h"] for b in bars if "h" in b and b["h"] is not None]
+    if not lows or not highs:
+        return None, None
+    return min(lows), max(highs)
+
+
 # --- Code-track candidate (DEFERRABLE for v0.1 — a guarded branch) ------------
 
 
@@ -844,8 +1077,10 @@ __all__ = [
     "DailyDecision",
     "apply_admit_gating",
     "build_order",
+    "detect_stop_hit",
     "index_champion_decisions",
     "run_code_track_candidate",
     "run_daily_layer",
     "select_direction",
+    "simulate_fill",
 ]
