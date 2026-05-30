@@ -57,7 +57,7 @@
   - _Boundary: simulator_
   - _Depends: 2.1_
 
-- [ ] 2.4 Simulator — decision→order _Blocked: direction-selection rule not landed (upstream) — see BLOCKED note_ + survival gating
+- [ ] 2.4 Simulator — decision→order + survival gating
   - Construct the order from a decision (volume from `sizing_hint` + `per_order_size_max`; venue side via `map_decision_to_action`); drive the landed/stub survival `admit` (candidate `SurvivalParameters`) and step the sequential account path; a HOLD or `admit=REJECT` yields a flat day. Code-track candidates (run candidate code end-to-end) are **deferrable for v0.1** (param-track first) — left as a guarded branch, not built now
   - Observable: unit test (stub survival) — an actionable decision produces an order at `advisory_max_volume` when admit caps it; a rejected/HOLD day stays flat
   - _Requirements: 2.3, 3.2, 3.3_
@@ -135,3 +135,4 @@
 - **2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 4.1, 4.3 — BLOCKED on the direction-selection rule.** `decide` takes direction as an INPUT; the daemon's long/short selection rule is not landed/specified. Hard-defaulting LONG breaks champion-SHORT fidelity (R7), so the simulator chain + harness + their validation are paused until the rule lands. **Routing: owned upstream — execution-daemon (§12.3 "direction comes from the reactive layer") and/or reactive-signal-model.** When that contract lands, resume at 2.4 (read champion's recorded direction for fidelity; apply the landed rule for candidate direction) and clear these blocks.
 - **4.2 — BLOCKED on a live Massive Advanced/Business API key** (operator-gated; the unit suite uses fixtures).
 - **DONE + green (1.1–2.3):** types, transport, fetch-methods, scaffolding, feature-adapter, fidelity, simulator-daily — 81 unit tests pass in `.venv-replay`.
+- RESUME 2026-05-30: direction-selection rule SPECIFIED (execution-daemon R2.3/R2.4 + Req 12.5, §12.3): tactical bin->direction (positive=LONG, negative=SHORT, neutral|unavailable=no-trade), read FeatureSet.raw["tactical_bin"]. survival-gate LANDED (merged a45f072). 2.3 amended to the rule (SHORT reconstructable, R7 unblocked). 2.4+ proceeding with real src/survival imports + the daemon order_builder pattern (SHORT-open=BUY+SHORT, ATR stop-loss, reference_price). 4.2 still blocked on a live Massive key.

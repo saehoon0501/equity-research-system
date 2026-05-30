@@ -45,12 +45,14 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import Mock
 
+from src.reactive.features import FeatureSet
 from src.reactive.params import DEFAULTS
 from src.reactive.replay import simulator
 from src.reactive.replay.simulator import (
     DailyDecision,
     index_champion_decisions,
     run_daily_layer,
+    select_direction,
 )
 from src.reactive.replay.types import Candidate, ReplayWindow
 
@@ -59,6 +61,44 @@ from tests.unit.reactive.replay._fixtures import (
     make_fixture_dataport,
     stub_decide,
 )
+
+
+# --- local FeatureSet builder (carries the verbatim tactical bin) -------------
+# The real `compute_daily_features` over the 3 canned fixture bars degrades to a
+# `FeatureFailure(insufficient_history)` — so the daily layer would (correctly)
+# go flat on every fixture day. To exercise the DIRECTIONAL paths (the candidate
+# DRIVING `decide`), tests inject a local `features_fn` returning a real
+# `FeatureSet` carrying a chosen `raw["tactical_bin"]`. Defined HERE (not in
+# `_fixtures.py`, which is out of this task's boundary and whose
+# `stub_compute_features` does not surface `tactical_bin`).
+
+
+def _feature_set(*, tactical_bin: str, trend_vote: float | None = None) -> FeatureSet:
+    """A `FeatureSet` carrying a chosen verbatim `raw["tactical_bin"]`.
+
+    `trend_vote` defaults to the landed `_TACTICAL_VOTE` mapping of the bin, but
+    is overridable so a test can make `tactical_bin` and `trend_vote` DISAGREE —
+    the NB-1 read-source guard (`select_direction` must read the verbatim bin,
+    never the vote that folds `unavailable`→`0.0`==`neutral`).
+    """
+    _bin_to_vote = {"positive": 1.0, "negative": -1.0, "neutral": 0.0, "unavailable": 0.0}
+    tv = trend_vote if trend_vote is not None else _bin_to_vote.get(tactical_bin, 0.0)
+    return FeatureSet(
+        trend_vote=tv,
+        flow_vote=0.5,
+        meanrev_vote=0.0,
+        trend_strength=0.5,
+        raw={"rsi_14": 55.0, "tactical_bin": tactical_bin, "atr": 1.2},
+    )
+
+
+def _features_fn(*, tactical_bin: str, trend_vote: float | None = None):
+    """An injectable `features_fn` returning the chosen `FeatureSet` for any day."""
+
+    def _fn(symbol: str, day: str, data_port) -> FeatureSet:  # noqa: ANN001
+        return _feature_set(tactical_bin=tactical_bin, trend_vote=trend_vote)
+
+    return _fn
 
 # --- canned champion-decision trace rows (raw query_trace dicts) --------------
 # `query_trace` returns RAW dicts keyed by `_COLUMNS` (NOT DecisionTraceRow
@@ -153,6 +193,7 @@ def test_champion_prefetch_calls_query_trace_exactly_once() -> None:
         champion_keys=champion_keys,
         is_boundary="2024-01-03",
         decide_fn=stub_decide,
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     assert fake_query.call_count == 1
@@ -226,6 +267,7 @@ def test_candidate_decision_drives_decide_not_reimplemented() -> None:
         make_fixture_dataport(),
         champion_decisions=pre_indexed,
         decide_fn=spy_decide,
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     assert spy_decide.call_count >= 1
@@ -235,8 +277,175 @@ def test_candidate_decision_drives_decide_not_reimplemented() -> None:
     assert passed_snapshot is DEFAULTS
     assert all(isinstance(r, DailyDecision) for r in results)
     # Every per-day record carries the candidate's OWN ReactiveDecision + the day.
+    assert results[0].decision is not None
     assert results[0].decision.decision in ("LONG", "SHORT", "HOLD")
     assert results[0].as_of_day == "2024-01-01"
+
+
+# ============================================================================ #
+# Direction selection from the tactical-overlay bin (Req 12.5, §12.3 / amend 2.3)
+#
+# Direction = the tactical relative-strength bin via the explicit map
+#   positive→LONG, negative→SHORT, neutral/unavailable→None (no new exposure).
+# Read from `FeatureSet.raw["tactical_bin"]`, NEVER `trend_vote` (NB-1: the vote
+# folds `unavailable`→0.0==`neutral`, so the bin alone is authoritative).
+# ============================================================================ #
+
+
+def test_select_direction_positive_bin_is_long() -> None:
+    """A `positive` tactical bin maps to `Direction.LONG`."""
+    assert select_direction(_feature_set(tactical_bin="positive")) == "LONG"
+
+
+def test_select_direction_negative_bin_is_short() -> None:
+    """A `negative` tactical bin maps to `Direction.SHORT` — SHORT is now
+    reconstructable (the defect this amendment fixes)."""
+    assert select_direction(_feature_set(tactical_bin="negative")) == "SHORT"
+
+
+def test_select_direction_neutral_bin_is_none() -> None:
+    """A `neutral` tactical bin is non-directional → `None` (no new exposure)."""
+    assert select_direction(_feature_set(tactical_bin="neutral")) is None
+
+
+def test_select_direction_unavailable_bin_is_none() -> None:
+    """An `unavailable` tactical bin is non-directional → `None` (no new
+    exposure) — distinct *cause* from `neutral` but the same no-trade outcome."""
+    assert select_direction(_feature_set(tactical_bin="unavailable")) is None
+
+
+def test_select_direction_reads_bin_not_trend_vote() -> None:
+    """The decisive NB-1 guard: when the bin and `trend_vote` DISAGREE, the
+    direction follows the VERBATIM `raw["tactical_bin"]`, not the vote. A
+    `negative` bin carrying a (contradictory) `trend_vote=+1.0` ⇒ SHORT, not
+    LONG — proves the read-source is `raw["tactical_bin"]`."""
+    fs = _feature_set(tactical_bin="negative", trend_vote=1.0)
+    assert fs.trend_vote == 1.0  # the vote would (wrongly) say LONG
+    assert select_direction(fs) == "SHORT"  # the bin says SHORT — bin wins
+
+
+def test_select_direction_feature_failure_is_none() -> None:
+    """A degraded feature object with no `raw` (e.g. a `FeatureFailure`) →
+    `None` — fail toward no-new-exposure (Req 12.4)."""
+
+    class _NoRaw:  # a FeatureFailure-like object: no `.raw`
+        reason = "insufficient_history"
+
+    assert select_direction(_NoRaw()) is None
+
+
+def test_positive_bin_drives_decide_with_long() -> None:
+    """A `positive` bin ⇒ the SELECTED direction LONG is passed to `decide`."""
+    spy_decide = Mock(side_effect=stub_decide)
+    window = ReplayWindow(start="2024-01-02", end="2024-01-02", tickers=["AAPL"])
+
+    run_daily_layer(
+        _candidate(),
+        window,
+        make_fixture_dataport(),
+        champion_decisions={},
+        decide_fn=spy_decide,
+        features_fn=_features_fn(tactical_bin="positive"),
+    )
+
+    call = spy_decide.call_args_list[0]
+    passed_direction = call.args[1] if len(call.args) > 1 else call.kwargs["direction"]
+    assert passed_direction == "LONG"
+
+
+def test_negative_bin_drives_decide_with_short() -> None:
+    """A `negative` bin ⇒ the SELECTED direction SHORT is passed to `decide`
+    (SHORT is now reconstructable — the amendment's core fix)."""
+    spy_decide = Mock(side_effect=lambda *a, **k: stub_decide(*a, decision="SHORT", **k))
+    window = ReplayWindow(start="2024-01-02", end="2024-01-02", tickers=["AAPL"])
+
+    results = run_daily_layer(
+        _candidate(),
+        window,
+        make_fixture_dataport(),
+        champion_decisions={},
+        decide_fn=spy_decide,
+        features_fn=_features_fn(tactical_bin="negative"),
+    )
+
+    call = spy_decide.call_args_list[0]
+    passed_direction = call.args[1] if len(call.args) > 1 else call.kwargs["direction"]
+    assert passed_direction == "SHORT"
+    (rec,) = results
+    assert rec.decision is not None
+    assert rec.decision.decision == "SHORT"
+
+
+def test_neutral_bin_is_flat_no_decide_call() -> None:
+    """A `neutral` bin ⇒ a flat/no-trade day: `decide` is NEVER called, the
+    record carries no `ReactiveDecision` (`decision is None`), and it does NOT
+    count as divergent+actionable (a flat day needs no intraday re-fetch)."""
+    spy_decide = Mock(side_effect=stub_decide)
+    window = ReplayWindow(start="2024-01-02", end="2024-01-02", tickers=["AAPL"])
+    pre_indexed = {("2024-01-02", "AAPL"): "LONG"}  # champion traded
+
+    results = run_daily_layer(
+        _candidate(),
+        window,
+        make_fixture_dataport(),
+        champion_decisions=pre_indexed,
+        decide_fn=spy_decide,
+        features_fn=_features_fn(tactical_bin="neutral"),
+    )
+
+    spy_decide.assert_not_called()
+    (rec,) = results
+    assert rec.decision is None  # no decide call ⇒ no ReactiveDecision
+    assert rec.tactical_bin == "neutral"  # the skip is attributable (12.5)
+    assert rec.needs_intraday_refetch is False  # flat ⇒ no intraday path
+
+
+def test_unavailable_bin_is_flat_distinguishable_from_neutral() -> None:
+    """An `unavailable` bin is ALSO a flat day (no `decide`), but the record
+    records WHICH bin it saw — so `unavailable` (12.4 bad data) is distinguishable
+    from `neutral` (12.5 no edge), even though both halt new exposure. This is
+    the literal `unavailable ≠ neutral` observability the bin read enables."""
+    spy_decide = Mock(side_effect=stub_decide)
+    window = ReplayWindow(start="2024-01-02", end="2024-01-02", tickers=["AAPL"])
+
+    results = run_daily_layer(
+        _candidate(),
+        window,
+        make_fixture_dataport(),
+        champion_decisions={},
+        decide_fn=spy_decide,
+        features_fn=_features_fn(tactical_bin="unavailable"),
+    )
+
+    spy_decide.assert_not_called()
+    (rec,) = results
+    assert rec.decision is None
+    assert rec.tactical_bin == "unavailable"
+    assert rec.needs_intraday_refetch is False
+
+
+def test_flat_day_distinguishable_from_hold_from_decide() -> None:
+    """A flat day (`decision is None`) is distinguishable from a HOLD that the
+    model RETURNED from `decide` (`decision is not None and
+    decision.decision == "HOLD"`): a `positive` bin reaches `decide`, which
+    returns HOLD — so the record carries a real `ReactiveDecision`, unlike the
+    non-directional flat day."""
+    candidate_hold = lambda *a, **k: stub_decide(*a, decision="HOLD", **k)  # noqa: E731
+    window = ReplayWindow(start="2024-01-02", end="2024-01-02", tickers=["AAPL"])
+
+    results = run_daily_layer(
+        _candidate(),
+        window,
+        make_fixture_dataport(),
+        champion_decisions={},
+        decide_fn=candidate_hold,
+        features_fn=_features_fn(tactical_bin="positive"),
+    )
+
+    (rec,) = results
+    assert rec.decision is not None  # decide WAS called
+    assert rec.decision.decision == "HOLD"  # ...and returned a HOLD
+    assert rec.tactical_bin == "positive"  # a directional bin reached decide
 
 
 # ============================================================================ #
@@ -259,9 +468,11 @@ def test_divergent_day_champion_hold_candidate_long_is_flagged() -> None:
         make_fixture_dataport(),
         champion_decisions=pre_indexed,
         decide_fn=champion_long,
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     (rec,) = results
+    assert rec.decision is not None
     assert rec.decision.decision == "LONG"
     assert rec.diverged is True
     assert rec.needs_intraday_refetch is True
@@ -282,9 +493,11 @@ def test_non_divergent_day_is_not_flagged() -> None:
         make_fixture_dataport(),
         champion_decisions=pre_indexed,
         decide_fn=candidate_long,
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     (rec,) = results
+    assert rec.decision is not None
     assert rec.decision.decision == "LONG"
     assert rec.diverged is False
     assert rec.needs_intraday_refetch is False
@@ -305,6 +518,7 @@ def test_champion_absent_treated_as_hold() -> None:
         make_fixture_dataport(),
         champion_decisions=pre_indexed,
         decide_fn=candidate_long,
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     (rec,) = results
@@ -327,9 +541,13 @@ def test_divergent_but_hold_candidate_not_flagged_for_refetch() -> None:
         make_fixture_dataport(),
         champion_decisions=pre_indexed,
         decide_fn=candidate_hold,
+        # A DIRECTIONAL bin so decide IS called and RETURNS a HOLD — a genuine
+        # HOLD-from-decide (distinct from a non-directional flat day).
+        features_fn=_features_fn(tactical_bin="positive"),
     )
 
     (rec,) = results
+    assert rec.decision is not None
     assert rec.decision.decision == "HOLD"
     assert rec.diverged is True
     assert rec.needs_intraday_refetch is False
@@ -354,6 +572,7 @@ def test_identical_inputs_yield_identical_decisions() -> None:
             make_fixture_dataport(),
             champion_decisions=pre_indexed,
             decide_fn=stub_decide,
+            features_fn=_features_fn(tactical_bin="positive"),
         )
 
     first = _run()
@@ -363,8 +582,11 @@ def test_identical_inputs_yield_identical_decisions() -> None:
     for a, b in zip(first, second):
         assert a.as_of_day == b.as_of_day
         assert a.symbol == b.symbol
-        assert a.decision.decision == b.decision.decision
-        assert a.decision.probability == b.decision.probability
+        assert (a.decision is None) == (b.decision is None)
+        if a.decision is not None and b.decision is not None:
+            assert a.decision.decision == b.decision.decision
+            assert a.decision.probability == b.decision.probability
+        assert a.tactical_bin == b.tactical_bin
         assert a.diverged == b.diverged
         assert a.needs_intraday_refetch == b.needs_intraday_refetch
 

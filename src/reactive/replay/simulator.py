@@ -60,18 +60,30 @@ Two seams this task could not pin from the worktree (CONCERNS / revalidation):
   champion-absent divergence case requires evaluating days the champion never
   decided.
 
-- **Direction is hard-defaulted LONG (``_DEFAULT_DIRECTION``).** The reactive
-  model NEVER selects/flips the side — it confirms the caller-supplied direction
-  or HOLDs — so the daily layer must SUPPLY a side, and v0.1 drives a LONG probe.
-  Consequence the later tasks MUST account for: the candidate's decision space is
-  ``{LONG, HOLD}`` — it can never reconstruct a champion **SHORT**. Any
-  champion-SHORT day therefore always reads as divergent, and (more seriously)
-  champion-reproduction fidelity (R7, a later task) will FAIL on any SHORT day
-  because re-simulating the champion's own config still cannot emit SHORT. Before
-  fidelity or any SHORT-capable replay works, direction must be threaded through
-  the candidate (or read from the champion's recorded direction-*input*, never
-  its output decision). Threading direction is OUT OF SCOPE for 2.3 — this is the
-  documented seam for 2.4+.
+- **Direction is selected from the tactical-overlay bin (RESOLVED — amend 2.3).**
+  The reactive model NEVER selects/flips the side — it confirms the caller-
+  supplied direction or HOLDs — so the daily layer must SUPPLY a side. The
+  authoritative rule (execution-daemon design Rev 2.3/2.4, the ``candidate``
+  component + Req 12.5, grounded §12.3): **direction = the tactical relative-
+  strength bin**, via the explicit map ``positive → LONG``, ``negative → SHORT``,
+  ``neutral`` / ``unavailable`` → ``None`` (no new exposure). ``select_direction``
+  reads the verbatim 4-valued bin from ``FeatureSet.raw["tactical_bin"]`` — NOT
+  ``trend_vote`` (which folds ``unavailable``→``0.0``==``neutral``; the daemon's
+  NB-1) — and degrades to ``None`` on any feature object that carries no ``raw``
+  (a ``FeatureFailure``: fail-toward-no-exposure, Req 12.4). A ``None`` direction
+  is a flat/no-trade day: ``decide`` is NOT called, the ``DailyDecision`` carries
+  no ``ReactiveDecision`` (``decision is None``), and the day NEVER counts as
+  divergent+actionable (a flat day needs no intraday re-fetch). For a directional
+  bin the SELECTED side (LONG **or SHORT**) is driven into ``decide`` — so SHORT
+  is now reconstructable.
+
+  This deterministic rule ALSO reconstructs the **champion's** direction: the
+  champion ran the same tactical overlay, so identical point-in-time features →
+  identical bin → identical direction. That is what fixes champion-reproduction
+  fidelity (R7) for SHORT days — re-simulating the champion's own config now
+  re-derives its SHORT side rather than forcing a LONG probe. (The earlier 2.3
+  hard-default-LONG could never emit SHORT, so any champion-SHORT day spuriously
+  diverged AND R7 fidelity failed on it.)
 
 Pure leaf (P1 / design §Dependency direction
 ``types → data_client → features_adapter → simulator``): imports the owned
@@ -119,12 +131,19 @@ _MS_PER_S = 1_000
 # then diverges. This is the canonical reactive HOLD vocabulary (P9).
 _CHAMPION_ABSENT: Decision = "HOLD"
 
-# The candidate's caller-supplied side for the daily decision. The reactive
-# model NEVER selects/flips the side (it confirms the caller direction or
-# HOLDs); the daily layer drives a LONG probe per the v0.1 long-bias reactive
-# convention. (A later task may thread a per-name direction through the
-# candidate config; this is the documented default seam.)
-_DEFAULT_DIRECTION: Direction = "LONG"
+# The verbatim 4-valued tactical bin lives in `FeatureSet.raw[_TACTICAL_BIN_KEY]`
+# (src/reactive/features.py:190). Read THIS, never `trend_vote` — the vote folds
+# `unavailable`→0.0==`neutral` (the `_TACTICAL_VOTE` map omits `unavailable`,
+# features.py:83), which would silently merge the two non-directional bins (NB-1).
+_TACTICAL_BIN_KEY = "tactical_bin"
+
+# The authoritative tactical-bin → candidate-direction map (execution-daemon
+# design Rev 2.3/2.4, the `candidate` component + Req 12.5, grounded §12.3): the
+# directional side IS the tactical relative-strength bin. `positive → LONG`,
+# `negative → SHORT`; the two non-directional bins (`neutral` = no edge / 12.5,
+# `unavailable` = insufficient data / 12.4) map to None = NO new exposure (a flat
+# day). A bin absent from this map is non-directional by default (→ None).
+_BIN_DIRECTION: dict[str, Direction] = {"positive": "LONG", "negative": "SHORT"}
 
 
 # --- Per-day record (the 2.4 decision→order seam) -----------------------------
@@ -144,20 +163,33 @@ class DailyDecision:
       - `as_of_day`: the trading day D (ISO date) the decision was made as-of.
       - `symbol`: the traded name.
       - `decision`: the candidate's OWN `ReactiveDecision` (driven via `decide`,
-        never the champion's recorded outcome — R2.1/R3.3).
+        never the champion's recorded outcome — R2.1/R3.3), OR **`None` on a
+        non-directional flat day** — when the tactical bin is `neutral`/
+        `unavailable` (or the features degraded), `select_direction` returns
+        `None`, `decide` is NOT called, and there is no candidate decision (a
+        flat/no-trade day, analogous to Req 12.5). `None` is distinguishable from
+        a HOLD the model RETURNED (`decision is not None and
+        decision.decision == "HOLD"`).
+      - `tactical_bin`: the verbatim `raw["tactical_bin"]` the direction was
+        selected from (or `None` if the features carried none). Recorded so a
+        flat day stays attributable — `neutral` (no edge, 12.5) vs `unavailable`
+        (bad data, 12.4) — even though both halt new exposure.
       - `champion_decision`: the champion's indexed decision for `(day, symbol)`,
         or the `_CHAMPION_ABSENT` HOLD sentinel when the champion has no record.
       - `diverged`: candidate decision != champion decision (R2.2 — INCLUDING
-        champion-HOLD/absent vs candidate-actionable).
+        champion-HOLD/absent vs candidate-actionable). A flat day's effective
+        decision is HOLD, so it diverges iff the champion traded.
       - `needs_intraday_refetch`: `diverged AND candidate actionable` — the flag
         the (later) intraday layer reads to re-fetch this name's point-in-time
-        path. A divergent-but-candidate-HOLD day needs no intraday path, so this
-        is False there even though `diverged` is True.
+        path. A divergent-but-candidate-HOLD day (and any flat/no-trade day)
+        needs no intraday path, so this is False there even though `diverged`
+        may be True.
     """
 
     as_of_day: str
     symbol: str
-    decision: ReactiveDecision
+    decision: ReactiveDecision | None
+    tactical_bin: str | None
     champion_decision: Decision
     diverged: bool
     needs_intraday_refetch: bool
@@ -284,6 +316,41 @@ def _trading_days(
     return sorted(days)
 
 
+# --- Direction selection from the tactical bin (Req 12.5, §12.3) --------------
+
+
+def select_direction(features: Any) -> Direction | None:
+    """Map the candidate's tactical relative-strength bin to a trade `Direction`.
+
+    The authoritative rule (execution-daemon design Rev 2.3/2.4, the `candidate`
+    component + Req 12.5, grounded §12.3): the directional side IS the tactical-
+    overlay relative-strength bin, via the explicit `_BIN_DIRECTION` map —
+    ``positive → LONG``, ``negative → SHORT``, and the two non-directional bins
+    (``neutral`` = no edge / 12.5, ``unavailable`` = insufficient data / 12.4) →
+    ``None`` (no new exposure / a flat day).
+
+    The bin is read VERBATIM from ``features.raw[_TACTICAL_BIN_KEY]`` — NEVER
+    ``trend_vote``, which folds ``unavailable``→``0.0``==``neutral`` and would
+    silently merge the two non-directional bins (NB-1). A feature object that
+    carries no ``raw`` (a ``FeatureFailure``) or no bin yields ``None`` —
+    fail-toward-no-exposure (Req 12.4). This same deterministic map re-derives
+    the CHAMPION's direction from identical point-in-time features (the R7 SHORT-
+    fidelity fix), and never selects/flips a side the model didn't compute.
+
+    Args:
+        features: the per-day `FeatureSet` (or a `FeatureFailure`-like object).
+
+    Returns:
+        `"LONG"` / `"SHORT"` for a directional bin; `None` for a non-directional
+        bin, an absent bin, or a degraded feature object (no `raw`).
+    """
+    raw = getattr(features, "raw", None)
+    if not isinstance(raw, Mapping):
+        return None
+    tactical_bin = raw.get(_TACTICAL_BIN_KEY)
+    return _BIN_DIRECTION.get(tactical_bin) if tactical_bin is not None else None
+
+
 # --- Pure divergence predicate ------------------------------------------------
 
 
@@ -310,7 +377,6 @@ def run_daily_layer(
     is_boundary: str | None = None,
     decide_fn: DecideFn = _landed_decide,
     features_fn: FeaturesFn = compute_daily_features,
-    direction: Direction = _DEFAULT_DIRECTION,
 ) -> list[DailyDecision]:
     """Run the per-day candidate-decision + divergence-detection layer.
 
@@ -342,8 +408,12 @@ def run_daily_layer(
             inject `stub_decide`). NEVER reimplemented here (R3.3).
         features_fn: the daily feature adapter (default the landed
             `compute_daily_features`; tests inject a stub).
-        direction: the caller-supplied side driven into `decide` (default LONG —
-            the model confirms it or HOLDs; it never selects/flips the side).
+
+    Direction is NOT a caller argument: it is SELECTED per day from the tactical
+    bin via `select_direction` (Req 12.5, §12.3). A non-directional bin
+    (`neutral`/`unavailable`/degraded features) yields no candidate decision — a
+    flat day (no `decide` call). A directional bin drives `decide` with the
+    selected LONG/SHORT side, so SHORT is reconstructable.
 
     Returns:
         `list[DailyDecision]` — one per (trading day, ticker), the 2.4 seam.
@@ -365,23 +435,73 @@ def run_daily_layer(
     results: list[DailyDecision] = []
     for symbol in window.tickers:
         for day in _trading_days(symbol, window, data_port):
-            decision = _decide_for_day(
-                symbol, day, snapshot, data_port, decide_fn, features_fn, direction
-            )
-            champion = index.get((day, symbol), _CHAMPION_ABSENT)
-            diverged = _diverges(decision.decision, champion)
-            actionable = decision.decision != "HOLD"
             results.append(
-                DailyDecision(
-                    as_of_day=day,
-                    symbol=symbol,
-                    decision=decision,
-                    champion_decision=champion,
-                    diverged=diverged,
-                    needs_intraday_refetch=diverged and actionable,
+                _daily_decision_for(
+                    symbol, day, snapshot, data_port, decide_fn, features_fn, index
                 )
             )
     return results
+
+
+def _daily_decision_for(
+    symbol: str,
+    day: str,
+    snapshot: ParamSnapshot,
+    data_port: DataPort,
+    decide_fn: DecideFn,
+    features_fn: FeaturesFn,
+    index: Mapping[tuple[str, str], Decision],
+) -> DailyDecision:
+    """Build the one `DailyDecision` for `(day, symbol)`: select direction from
+    the tactical bin, then either DRIVE `decide` (directional bin) or emit a
+    flat/no-trade record (non-directional bin — no `decide` call).
+
+    The champion lookup (`.get(..., _CHAMPION_ABSENT)`) is the only place the
+    champion-absent → HOLD substitution happens. A flat day's effective decision
+    is HOLD (not actionable), so it diverges iff the champion traded but NEVER
+    needs an intraday re-fetch.
+    """
+    champion = index.get((day, symbol), _CHAMPION_ABSENT)
+
+    features = features_fn(symbol, day, data_port)
+    tactical_bin = _read_tactical_bin(features)
+    direction = select_direction(features)
+
+    if direction is None:
+        # Non-directional bin (neutral/unavailable) or degraded features → a
+        # flat/no-trade day: no `decide` call, no candidate decision (Req 12.5).
+        # Effective decision is HOLD for divergence; never needs an intraday path.
+        return DailyDecision(
+            as_of_day=day,
+            symbol=symbol,
+            decision=None,
+            tactical_bin=tactical_bin,
+            champion_decision=champion,
+            diverged=_diverges("HOLD", champion),
+            needs_intraday_refetch=False,
+        )
+
+    decision = decide_fn(features, direction, snapshot)
+    actionable = decision.decision != "HOLD"
+    diverged = _diverges(decision.decision, champion)
+    return DailyDecision(
+        as_of_day=day,
+        symbol=symbol,
+        decision=decision,
+        tactical_bin=tactical_bin,
+        champion_decision=champion,
+        diverged=diverged,
+        needs_intraday_refetch=diverged and actionable,
+    )
+
+
+def _read_tactical_bin(features: Any) -> str | None:
+    """The verbatim `raw["tactical_bin"]` for the attributable-skip record, or
+    `None` if the feature object carries no `raw` (a `FeatureFailure`)."""
+    raw = getattr(features, "raw", None)
+    if not isinstance(raw, Mapping):
+        return None
+    return raw.get(_TACTICAL_BIN_KEY)
 
 
 def _resolve_champion_index(
@@ -412,29 +532,9 @@ def _resolve_champion_index(
     return {}
 
 
-def _decide_for_day(
-    symbol: str,
-    day: str,
-    snapshot: ParamSnapshot,
-    data_port: DataPort,
-    decide_fn: DecideFn,
-    features_fn: FeaturesFn,
-    direction: Direction,
-) -> ReactiveDecision:
-    """Build features as-of D and DRIVE `decide` → the candidate's `ReactiveDecision`.
-
-    The candidate reconstructs its OWN decision (R2.1): features are computed
-    point-in-time via `features_fn`, then `decide_fn` is driven with the
-    candidate's `snapshot` (R3.1). `decide` is DRIVEN, never reimplemented
-    (R3.3). A `FeatureFailure` flows through `decide` verbatim (it degrades to a
-    HOLD carrying the failure reason — the landed core owns that).
-    """
-    features = features_fn(symbol, day, data_port)
-    return decide_fn(features, direction, snapshot)
-
-
 __all__ = [
     "DailyDecision",
     "index_champion_decisions",
     "run_daily_layer",
+    "select_direction",
 ]
