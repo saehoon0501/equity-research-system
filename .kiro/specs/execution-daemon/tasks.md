@@ -70,7 +70,7 @@
   - _Requirements: 5, 7, 9_
   - _Boundary: commands_
   - _Depends: 1.1, 1.3_
-- [ ] 3.6 Concrete 3-leg market-feed client (un-mock 3.1)
+- [x] 3.6 Concrete 3-leg market-feed client (un-mock 3.1)
   - Build the daemon's concrete `MarketFeed` (the design's "one impure edge", §14.10) as three legs, NOT the MCP wrappers (gap G1): (a) ticker bars via a thin standalone Massive REST client (httpx GET aggregates, `dict`→daily `Bar` adapter — Massive defaults to intraday-minute, so request/aggregate to ≥252 daily closes); (b) SPY daily adj-close via the same REST shape (reusing `market_data/polygon_provider.py`'s provider body, not its MCP tool); (c) risk-free DGS1 via `fred_client.latest_value` with a per-epoch/day TTL cache (avoid a fresh GET each fast-clock tick). Wire `candidate`'s live fetch (3.1) to this feed behind the `MarketFeed` type; keep the boundary "no MCP/FastMCP imported into the loop".
   - Observable: against mocked httpx, the client returns ≥252 daily `Bar`s for ticker + SPY and a cached DGS1 value; `candidate.assemble` with the real feed (mocked transport) produces a `Candidate` end-to-end; no FastMCP/websocket import is pulled into the daemon interpreter.
   - _Requirements: 12, 1_
