@@ -1320,3 +1320,206 @@ def test_no_stop_level_never_hits() -> None:
     order = _open_order(direction="LONG", stop_loss=None)
     hit = detect_stop_hit(order, port=_quote_port(), symbol="AAPL", day="2024-01-31")
     assert hit is None
+
+
+# ============================================================================ #
+# Task 2.6 — §16.1 force-flatten before close + verify-flat post-condition.
+#
+# NON-BEHAVIORAL. The simulator plays BOTH the survival-gate's role (owns the
+# flat-before-closure invariant + verify-flat + escalate — survival-gate R6) AND
+# the daemon's role (executes the timed flatten) over historical data. At the
+# day's close, any open position from the day MUST be flattened — emit the
+# opposite-side close, fill it via `simulate_fill` (2.5) at the closing intraday
+# quote — and then VERIFY the account is actually flat (net signed position ==
+# 0), NOT merely that a close order was emitted (survival-gate R6.2). A verify-
+# flat failure (no closing quote ⇒ `simulate_fill` raises) surfaces a distinct
+# `flat_verify_failed` signal (survival-gate R6.3 escalate), never a silent
+# carry-over.
+#
+# The four-scenario collapse (the correctness tell): the day's flatten target is
+# whatever NET residual remains after the intraday path. A stop-hit already
+# closed the position ⇒ net 0 ⇒ flatten is a no-op, still flat. A no-trade day ⇒
+# net 0 ⇒ trivially flat. An open residual ⇒ emit the opposite-side close for
+# |net|, fill, re-verify net 0.
+#
+# This produces the day's CLOSED round-trip (entry fill from 2.4/2.5 + exit fill
+# from stop-hit OR flatten) the 2.7 P&L step consumes. 2.6 computes NO P&L (the
+# §16.1 `(exit−entry)×vol×dir` formula is 2.7's).
+#
+# Source of truth: requirements.md R2 AC 2.3 (sequential account path honoring
+# the §16.1 intraday-flat invariant); design.md `simulator` "Intraday layer"
+# (force-flatten before close + verifiable flat post-condition) + Core-algorithms
+# #3 (§16.1 flatten); survival-gate R6 (the gate owns the invariant + verify-flat
+# + escalate; the daemon executes — the simulator plays both in replay).
+# Requirements: 2.3.
+# ============================================================================ #
+
+
+from src.reactive.replay.simulator import (  # noqa: E402
+    DayRoundTrip,
+    flatten_before_close,
+)
+from tests.unit.reactive.replay._fixtures import FixtureDataPort  # noqa: E402
+
+
+# --- 2.6 fixtures: a port whose closing quote is present / absent -------------
+
+
+class _NoQuoteDataPort(FixtureDataPort):
+    """A `FixtureDataPort` whose `fetch_quotes` carries NO NBBO row — so a close
+    cannot be filled (`simulate_fill` raises `ValueError`). Defined LOCALLY in
+    the test (the `_fixtures.py` provider is out of this task's boundary)."""
+
+    def fetch_quotes(self, symbol: str, ts: str) -> dict:  # noqa: ANN001
+        return {"results": []}
+
+
+def _entry_fill(*, side: str, volume: float, price: float = 101.54) -> Fill:
+    """The day's entry `Fill` (from 2.4/2.5) — `side` is the position direction."""
+    return Fill(side=side, price=price, volume=volume, ts="2024-01-31")
+
+
+# --- 2.3 / §16.1: an open position force-flattens before close ----------------
+
+
+def test_open_long_force_flattens_before_close_and_verifies_flat() -> None:
+    """A day with an open LONG position (no stop-hit) force-flattens before close:
+    the opposite-side close is emitted + filled, and verify-flat confirms net 0
+    (§16.1, survival-gate R6.1/R6.2)."""
+    # A LONG entry whose stop (95.0) is BELOW the intraday low (100.8) → no
+    # stop-hit during the day, so a residual remains to flatten at close.
+    entry = _open_order(direction="LONG", volume=0.5, stop_loss=95.0)
+    entry_fill = _entry_fill(side="LONG", volume=0.5)
+    rt = flatten_before_close(
+        entry,
+        entry_fill=entry_fill,
+        port=_quote_port(),
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert isinstance(rt, DayRoundTrip)
+    assert rt.flat_verified is True
+    # The exit is a flatten (not a stop-hit), recorded SHORT (opposite the LONG).
+    assert rt.exit_reason == "flatten"
+    assert rt.exit_fill is not None
+    assert rt.exit_fill.side == "SHORT"
+    assert rt.exit_fill.volume == 0.5
+    # The close sells → hits the BID (the marketable sell side), never mid.
+    assert rt.exit_fill.price == _QUOTE_BID
+    assert "flatten" in rt.survival_events
+    assert "flat_verify_failed" not in rt.survival_events
+
+
+def test_open_short_force_flattens_before_close() -> None:
+    """A day with an open SHORT position force-flattens before close — the close
+    BUYS (recorded LONG), lifts the ASK, and verify-flat confirms net 0."""
+    # A SHORT entry whose stop (110.0) is ABOVE the intraday high (102.1) → no hit.
+    entry = _open_order(direction="SHORT", volume=0.3, stop_loss=110.0)
+    entry_fill = _entry_fill(side="SHORT", volume=0.3, price=101.50)
+    rt = flatten_before_close(
+        entry,
+        entry_fill=entry_fill,
+        port=_quote_port(),
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert rt.flat_verified is True
+    assert rt.exit_reason == "flatten"
+    assert rt.exit_fill is not None
+    assert rt.exit_fill.side == "LONG"  # buy-to-close, opposite the held SHORT
+    assert rt.exit_fill.price == _QUOTE_ASK  # buy lifts the ask
+    assert "flatten" in rt.survival_events
+
+
+# --- 2.3 / §16.1: a stop-hit already exited → flatten is a no-op, still flat ---
+
+
+def test_stop_hit_day_flatten_is_noop_still_flat() -> None:
+    """A day already exited by a stop-hit (2.5): the close is a no-op — net is
+    already 0 — and verify-flat still asserts flat. The exit is the STOP-HIT, not
+    a flatten (survival-gate R6.2 — verify the post-condition, not the order)."""
+    # A LONG stop (101.0) INSIDE the intraday range (low 100.8 ≤ 101.0) → the
+    # position exits intraday; the close at day's end finds net 0.
+    entry = _open_order(direction="LONG", volume=0.5, stop_loss=101.0)
+    entry_fill = _entry_fill(side="LONG", volume=0.5)
+    rt = flatten_before_close(
+        entry,
+        entry_fill=entry_fill,
+        port=_quote_port(),
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert rt.flat_verified is True
+    assert rt.exit_reason == "stop_hit"
+    assert rt.exit_fill is not None
+    assert rt.exit_fill.side == "SHORT"  # stopped LONG exits by selling
+    assert rt.exit_fill.price == 101.0  # fills AT the stop level
+    assert "stop_hit" in rt.survival_events
+    # No flatten order was needed (the stop already flattened it).
+    assert "flatten" not in rt.survival_events
+    assert "flat_verify_failed" not in rt.survival_events
+
+
+# --- 2.3 / §16.1: the closing fill can't be obtained → flatten-failure signal --
+
+
+def test_unfillable_close_raises_flatten_failure_not_silent_carry() -> None:
+    """A day where the closing fill CANNOT be obtained (no closing quote): the
+    verify-flat post-condition FAILS — surfaced as a distinct `flat_verify_failed`
+    signal (survival-gate R6.3 escalate), NOT a silent carry-over. The replay
+    must not crash (no `ValueError` propagates) and must not pretend flat."""
+    entry = _open_order(direction="LONG", volume=0.5, stop_loss=95.0)  # no stop-hit
+    entry_fill = _entry_fill(side="LONG", volume=0.5)
+    rt = flatten_before_close(
+        entry,
+        entry_fill=entry_fill,
+        port=_NoQuoteDataPort(),  # closing quote absent → unfillable close
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert rt.flat_verified is False  # NOT flat — the close could not fill
+    assert "flat_verify_failed" in rt.survival_events
+    assert rt.exit_fill is None  # no exit fill obtained (not a fabricated one)
+
+
+# --- 2.3 / §16.1: a flat (no-trade) day is trivially flat ----------------------
+
+
+def test_no_trade_day_is_trivially_flat() -> None:
+    """A flat (no-trade) day — no entry order/fill — is trivially flat: no exit,
+    no flatten, no escalation (§16.1 holds vacuously)."""
+    rt = flatten_before_close(
+        None,
+        entry_fill=None,
+        port=_quote_port(),
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert rt.flat_verified is True
+    assert rt.entry_fill is None
+    assert rt.exit_fill is None
+    assert rt.exit_reason is None
+    assert rt.survival_events == []
+
+
+# --- 2.6: the closed round-trip shape the 2.7 P&L step consumes ----------------
+
+
+def test_round_trip_carries_entry_and_exit_for_pnl_seam() -> None:
+    """The `DayRoundTrip` carries the entry fill + the exit fill (stop-hit OR
+    flatten) — entry price, exit price, volume, and direction — everything the
+    2.7 §16.1 `(exit−entry)×vol×dir` P&L step needs. 2.6 computes NO P&L."""
+    entry = _open_order(direction="LONG", volume=0.5, stop_loss=95.0)
+    entry_fill = _entry_fill(side="LONG", volume=0.5, price=101.54)
+    rt = flatten_before_close(
+        entry,
+        entry_fill=entry_fill,
+        port=_quote_port(),
+        symbol="AAPL",
+        day="2024-01-31",
+    )
+    assert rt.symbol == "AAPL"
+    assert rt.entry_fill is entry_fill  # entry price + volume + direction
+    assert rt.exit_fill is not None  # exit price (the flatten leg)
+    # The shape carries no P&L field (2.7's concern) — only the legs.
+    assert not hasattr(rt, "total_return_pnl")

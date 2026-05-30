@@ -71,7 +71,7 @@
   - _Boundary: simulator_
   - _Depends: 2.4_
 
-- [ ] 2.6 Simulator — §16.1 flatten + verify-flat post-condition
+- [x] 2.6 Simulator — §16.1 flatten + verify-flat post-condition
   - Force-flatten before close; verify a flat post-condition (am-I-actually-flat, not just "fired the order") and escalate / re-fire if not
   - Observable: unit test — a day with open exposure force-flattens before close and the verify-flat post-condition asserts flat; a non-flattened path is detected and escalated
   - _Requirements: 2.3_
@@ -137,3 +137,4 @@
 - **DONE + green (1.1–2.3):** types, transport, fetch-methods, scaffolding, feature-adapter, fidelity, simulator-daily — 81 unit tests pass in `.venv-replay`.
 - RESUME 2026-05-30: direction-selection rule SPECIFIED (execution-daemon R2.3/R2.4 + Req 12.5, §12.3): tactical bin->direction (positive=LONG, negative=SHORT, neutral|unavailable=no-trade), read FeatureSet.raw["tactical_bin"]. survival-gate LANDED (merged a45f072). 2.3 amended to the rule (SHORT reconstructable, R7 unblocked). 2.4+ proceeding with real src/survival imports + the daemon order_builder pattern (SHORT-open=BUY+SHORT, ATR stop-loss, reference_price). 4.2 still blocked on a live Massive key.
 - 2.5: real `paper.simulate` is un-importable from repo root (bare `from models import` resolves only under the broker MCP launch posture) — MIRRORED its side-aware pricing (LONG->ASK, SHORT->BID uniform, since ProposedOrder.direction encodes the marketable side for opens+reduces). Revalidation seam: if broker is made importable, a CLOSE OrderIntent must carry the HELD-position direction (paper.py keys close on position dir).
+- 2.6: DayRoundTrip{entry_fill,exit_fill,exit_reason,flat_verified,survival_events} is the 2.7 seam. Two revalidation triggers: (a) flatten-leg volume=abs(net from entry_fill) vs stop-hit-leg volume=entry_order.volume — net flat only when equal; (b) close_ts defaults to day (not close instant) — fix when real data_client lands.

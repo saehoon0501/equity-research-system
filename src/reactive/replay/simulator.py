@@ -1054,6 +1054,270 @@ def _intraday_low_high(bars: list[dict]) -> tuple[float | None, float | None]:
     return min(lows), max(highs)
 
 
+# ============================================================================ #
+# Task 2.6 — §16.1 force-flatten before close + verify-flat post-condition.
+#
+# NON-BEHAVIORAL. The simulator plays BOTH roles the survival-gate R6 / daemon
+# split assigns to two services in production, over historical data: it OWNS the
+# flat-before-closure invariant + the verify-flat post-condition + the escalate
+# (survival-gate R6.1/R6.2/R6.4 — the gate's responsibility), AND it EXECUTES the
+# timed flatten (the daemon's responsibility, survival-gate R6.4). In replay both
+# collapse into one deterministic pass over the day.
+#
+# The §16.1 intraday-flat invariant: NO levered exposure is carried across a
+# market closure — at/near the day's close any open position from the day MUST be
+# flattened (design `simulator` "Intraday layer" + Core-algorithms #3). The
+# verify-flat post-condition is the load-bearing part: VERIFY the account is
+# actually flat (NET signed position == 0), NOT merely that a close order was
+# emitted (survival-gate R6.2 — "confirm the account is actually flat, rather
+# than relying on a flatten instruction having been issued").
+#
+# The four-scenario collapse (one path, the correctness tell): the flatten target
+# is whatever NET residual remains after the intraday path. `signed(fill) =
+# +volume (LONG) / −volume (SHORT)`; this works because a position's exit is
+# recorded on the OPPOSITE side (an entry LONG + its SHORT exit net to 0 —
+# `simulate_fill`/`_EXIT_SIDE`). So:
+#   - a stop-hit (2.5) already exited the position ⇒ entry + stop-exit net 0 ⇒
+#     the flatten is a no-op, still flat;
+#   - a no-trade day ⇒ no fills ⇒ net 0 ⇒ trivially flat;
+#   - an open residual ⇒ emit the opposite-side close for |net|, fill it via
+#     `simulate_fill` (2.5) at the closing intraday quote, re-verify net 0.
+#
+# Escalate (survival-gate R6.3): if the verify-flat post-condition FAILS — the
+# closing fill cannot be obtained (no closing quote ⇒ `simulate_fill` raises
+# `ValueError`) — surface a DISTINCT `flat_verify_failed` signal, NOT a silent
+# carry-over and NOT a crash. Replay is deterministic (re-fetching the same quote
+# returns the same empty result), so there is no retry loop: record-the-failure
+# is the replay analog of R6.3's escalate (`survival_gate_events.flat_verify_failed`).
+#
+# This step computes NO P&L (the §16.1 `(exit−entry) × vol × dir` formula is the
+# 2.7 step's). It emits the day's CLOSED round-trip — entry fill + exit fill
+# (stop-hit OR flatten) — the 2.7 total-return P&L step consumes (the seam).
+#
+# Source of truth: requirements.md R2 AC 2.3 (sequential account path honoring
+# the §16.1 intraday-flat invariant); design.md `simulator` "Intraday layer"
+# (force-flatten before close + verifiable flat post-condition) + Core-algorithms
+# #3 (§16.1 flatten); survival-gate R6 (gate owns invariant/verify/escalate, the
+# daemon executes — the simulator plays both in replay). Requirements: 2.3.
+# ============================================================================ #
+
+# Survival-event tags this step OWNS (the §16.1 exit leg). `OutcomeRecord.
+# survival_events` (types.py:128) lists the full vocabulary; 2.6 emits only the
+# exit-leg subset — `stop_hit` (a 2.5 intraday stop exit), `flatten` (a §16.1
+# close-emitted exit), `flat_verify_failed` (the R6.3 escalate). `admit_reject`
+# is 2.4's (not assembled here); 2.7 assembles the full per-day list.
+_EVENT_STOP_HIT = "stop_hit"
+_EVENT_FLATTEN = "flatten"
+_EVENT_FLAT_VERIFY_FAILED = "flat_verify_failed"
+
+# The signed-position contribution of a fill: a LONG-side fill is +volume, a
+# SHORT-side fill −volume. An entry and its opposite-side exit (stop-hit recorded
+# `_EXIT_SIDE`, or a flatten on the decided-close side) net to 0 — the arithmetic
+# the verify-flat post-condition checks (NET == 0), never an order-emitted flag.
+_SIDE_SIGN: dict[str, float] = {"LONG": 1.0, "SHORT": -1.0}
+
+# The close (flatten) order's side is the OPPOSITE of the held position — a held
+# LONG closes by selling (a SHORT-side order), a held SHORT closes by buying (a
+# LONG-side order). `build_order`'s reduce uses the same opposite-side convention;
+# here the flatten target is the residual position, so the close side is its
+# inverse (mirrors `_EXIT_SIDE`, reused for the same reason).
+_CLOSE_SIDE: dict[str, str] = {"LONG": "SHORT", "SHORT": "LONG"}
+
+
+@dataclass(frozen=True)
+class DayRoundTrip:
+    """One trading-day CLOSED round-trip — the §16.1 flatten verdict + the legs.
+
+    The per-day record `flatten_before_close` emits and the (later) 2.7 total-
+    return P&L step consumes (the seam). Frozen so the determinism contract (R9.1)
+    holds. Carries the entry leg + the exit leg (stop-hit OR flatten) + the
+    verify-flat verdict + the §16.1 exit-leg survival events — but NO P&L (the
+    `(exit − entry) × volume × dir` formula is 2.7's, not this step's).
+
+    Fields:
+      - `symbol`: the traded name.
+      - `entry_fill`: the day's entry `Fill` (from 2.4/2.5), or `None` on a
+        no-trade flat day.
+      - `exit_fill`: the day's exit `Fill` — the stop-hit fill (2.5) if the stop
+        was reached intraday, else the §16.1 flatten fill; `None` on a no-trade
+        day OR when the flatten could not be filled (an unfillable close — see
+        `flat_verified`).
+      - `exit_reason`: `"stop_hit"` (an intraday stop exit), `"flatten"` (a §16.1
+        close-emitted exit), or `None` (no-trade day / unfilled flatten).
+      - `flat_verified`: the verify-flat post-condition — `True` iff the net
+        signed position is 0 (the account is ACTUALLY flat — survival-gate R6.2),
+        `False` iff a residual could not be flattened (the R6.3 escalate case).
+      - `survival_events`: the §16.1 exit-leg tags THIS step owns — a subset of
+        `{"stop_hit","flatten","flat_verify_failed"}` (the full per-day list,
+        incl. 2.4's `admit_reject`, is assembled by 2.7).
+    """
+
+    symbol: str
+    entry_fill: Fill | None
+    exit_fill: Fill | None
+    exit_reason: str | None
+    flat_verified: bool
+    survival_events: list[str]
+
+
+def flatten_before_close(
+    entry_order: ProposedOrder | None,
+    *,
+    entry_fill: Fill | None,
+    port: DataPort,
+    symbol: str,
+    day: str,
+    close_ts: str | None = None,
+) -> DayRoundTrip:
+    """Force-flatten any open position before the day's close + VERIFY flat (§16.1).
+
+    The simulator playing both the survival-gate's invariant-owner role and the
+    daemon's flatten-executor role over historical data (survival-gate R6). For
+    the day's entry order/fill (from 2.4/2.5):
+
+      1. **Stop-hit first (2.5).** Run `detect_stop_hit` on the entry order's
+         intraday path: if the protective stop was reached, the position exited
+         intraday — that stop-hit `Fill` is the day's exit (`exit_reason=
+         "stop_hit"`), and the net residual is already 0.
+      2. **Force-flatten the residual (§16.1).** Compute the NET signed position
+         from the entry + any stop-exit fill (`_SIDE_SIGN`). If a residual remains
+         (no stop-hit), emit the opposite-side close (`_CLOSE_SIDE`) for `|net|`
+         and fill it via `simulate_fill` (2.5) at the closing intraday quote —
+         that flatten `Fill` is the day's exit (`exit_reason="flatten"`).
+      3. **Verify-flat post-condition (survival-gate R6.2).** VERIFY the account
+         is ACTUALLY flat — re-sum the signed fills and confirm NET == 0 — NOT
+         merely that a close order was emitted.
+      4. **Escalate if not flat (survival-gate R6.3).** If the closing fill cannot
+         be obtained (no closing quote ⇒ `simulate_fill` raises `ValueError`), the
+         verify-flat post-condition FAILS: surface a DISTINCT `flat_verify_failed`
+         signal (`flat_verified=False`), NOT a silent carry-over and NOT a crash.
+
+    A no-trade day (`entry_order` / `entry_fill` is `None`) is trivially flat — no
+    exit, no flatten, no escalation (§16.1 holds vacuously).
+
+    Args:
+        entry_order: the day's entry/open `ProposedOrder` (its `direction` is the
+            position side, its `stop_loss` the protective level) — `None` on a
+            no-trade day.
+        entry_fill: the day's entry `Fill` (from 2.4/2.5) — `None` on a no-trade
+            day. Its `side` is the position direction, its `volume` the held qty.
+        port: the injected point-in-time `DataPort` (R9.2 isolation seam) — its
+            `fetch_intraday` (stop-hit) + `fetch_quotes` (the closing fill).
+        symbol: the traded name.
+        day: the trading day (ISO) whose close is flattened to.
+        close_ts: the instant the closing quote is fetched as-of (defaults to
+            `day` — replay flattens unconditionally at the day's close; the live
+            `flatten_lead_seconds` countdown is the daemon's, not modeled here).
+
+    Returns:
+        a `DayRoundTrip` — the day's closed round-trip (entry + exit legs) + the
+        verify-flat verdict + the §16.1 exit-leg survival events, the 2.7 seam.
+    """
+    # A no-trade day is trivially flat (§16.1 holds vacuously) — net is 0.
+    if entry_order is None or entry_fill is None:
+        return DayRoundTrip(
+            symbol=symbol,
+            entry_fill=None,
+            exit_fill=None,
+            exit_reason=None,
+            flat_verified=True,
+            survival_events=[],
+        )
+
+    events: list[str] = []
+
+    # 1. Stop-hit first (2.5): a stop reached intraday already exited the position.
+    stop_exit = detect_stop_hit(entry_order, port=port, symbol=symbol, day=day)
+    if stop_exit is not None:
+        events.append(_EVENT_STOP_HIT)
+        # The stop-exit is opposite-side to the entry (`_EXIT_SIDE`), so entry +
+        # stop-exit net to 0 — the residual is already flat, no flatten needed.
+        net = _net_signed([entry_fill, stop_exit])
+        return DayRoundTrip(
+            symbol=symbol,
+            entry_fill=entry_fill,
+            exit_fill=stop_exit,
+            exit_reason=_EVENT_STOP_HIT,
+            flat_verified=net == 0.0,
+            survival_events=events,
+        )
+
+    # 2. Force-flatten the open residual (§16.1): emit the opposite-side close for
+    # |net| and fill it at the closing intraday quote.
+    net = _net_signed([entry_fill])
+    if net == 0.0:
+        # Defense-in-depth: a zero-volume entry is already flat (no close needed).
+        return DayRoundTrip(
+            symbol=symbol,
+            entry_fill=entry_fill,
+            exit_fill=None,
+            exit_reason=None,
+            flat_verified=True,
+            survival_events=events,
+        )
+
+    close_side = _CLOSE_SIDE.get(entry_fill.side)
+    if close_side is None:
+        # An unrecognized held side cannot be flattened deterministically →
+        # escalate (R6.3) rather than fabricate a flat.
+        events.append(_EVENT_FLAT_VERIFY_FAILED)
+        return DayRoundTrip(
+            symbol=symbol,
+            entry_fill=entry_fill,
+            exit_fill=None,
+            exit_reason=None,
+            flat_verified=False,
+            survival_events=events,
+        )
+
+    close_order = ProposedOrder(
+        symbol=symbol,
+        intent="SELL",  # a flatten closes the position; venue side is the mapper's
+        direction=close_side,
+        volume=abs(net),
+        stop_loss=None,  # a flatten/close carries no protective stop (it IS the exit)
+    )
+
+    # 3 + 4. Fill the close + verify-flat; an unfillable close (no closing quote)
+    # is the R6.3 escalate path — surface `flat_verify_failed`, never a crash or a
+    # silent carry.
+    try:
+        flatten_fill = simulate_fill(
+            close_order, port=port, symbol=symbol, ts=close_ts or day
+        )
+    except ValueError:
+        events.append(_EVENT_FLAT_VERIFY_FAILED)
+        return DayRoundTrip(
+            symbol=symbol,
+            entry_fill=entry_fill,
+            exit_fill=None,
+            exit_reason=None,
+            flat_verified=False,
+            survival_events=events,
+        )
+
+    events.append(_EVENT_FLATTEN)
+    net_after = _net_signed([entry_fill, flatten_fill])
+    return DayRoundTrip(
+        symbol=symbol,
+        entry_fill=entry_fill,
+        exit_fill=flatten_fill,
+        exit_reason=_EVENT_FLATTEN,
+        flat_verified=net_after == 0.0,
+        survival_events=events,
+    )
+
+
+def _net_signed(fills: list[Fill]) -> float:
+    """The NET signed position across `fills`: `+volume` for a LONG-side fill,
+    `−volume` for a SHORT-side fill (`_SIDE_SIGN`). An entry and its opposite-side
+    exit net to 0 — the arithmetic the verify-flat post-condition checks (NET ==
+    0), NOT an order-emitted flag (survival-gate R6.2). An unrecognized side
+    contributes 0 (it cannot reduce a real residual; the caller's `_CLOSE_SIDE`
+    guard surfaces the defect on the entry side)."""
+    return sum(_SIDE_SIGN.get(f.side, 0.0) * f.volume for f in fills)
+
+
 # --- Code-track candidate (DEFERRABLE for v0.1 — a guarded branch) ------------
 
 
@@ -1075,9 +1339,11 @@ def run_code_track_candidate(*args, **kwargs):  # noqa: ANN002, ANN003, ANN201
 __all__ = [
     "DEFAULT_STOP_LOSS_ATR_MULT",
     "DailyDecision",
+    "DayRoundTrip",
     "apply_admit_gating",
     "build_order",
     "detect_stop_hit",
+    "flatten_before_close",
     "index_champion_decisions",
     "run_code_track_candidate",
     "run_daily_layer",
