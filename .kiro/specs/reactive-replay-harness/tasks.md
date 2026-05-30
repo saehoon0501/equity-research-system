@@ -105,7 +105,7 @@
 
 - [ ] 4. Validation
 
-- [ ] 4.1 Determinism + isolation suite
+- [x] 4.1 Determinism + isolation suite
   - Identical (candidate, window, fixture-port responses) ⇒ identical `OutcomeRecord`s; the whole engine runs with stub cores + fixture data and no network/DB/LLM; assert the reactive/survival logic is driven (via stubs), never recomputed; a changed stub-core signature is caught (revalidation guard)
   - Observable: `pytest tests/unit/reactive/replay/` passes deterministically with no external services
   - _Requirements: 9.1, 9.2, 10.3_
