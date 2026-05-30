@@ -46,7 +46,7 @@
   - _Depends: 3.1_
 
 - [ ] 4. Core: standing monitor and capitalization precondition
-- [ ] 4.1 Implement the no-order standing monitor
+- [x] 4.1 Implement the no-order standing monitor
   - Evaluate account state with no proposed order: when margin level reaches the safe-mode buffer, escalate the safe-mode grade (monotonic and latched — never auto-loosens) and emit reduce/flatten directives; when a closure is within the flatten-lead window with levered exposure open, emit flatten directives and re-check the flat post-condition, escalating when not flat. There is NO halt branch — real-time halt detection is out of boundary (R7); an intraday halt is invisible to assess except via its account-level margin consequence, which routes through the margin/safe-mode path above.
   - Emit the next operational state, the reduce directives, and the events for the after-market batch; deterministic in all inputs.
   - Observable: a margin breach yields a tightened (never loosened) grade plus directives; a closure with open exposure yields flatten directives and a verify-flat escalation; no halt-triggered freeze/flatten/alert is emitted under any input.

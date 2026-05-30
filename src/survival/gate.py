@@ -10,15 +10,93 @@ Design source: ``.kiro/specs/survival-gate/design.md`` §"Decision core — `gat
 §"Architecture → Fail direction" + "Op-state freshness", and the Requirements
 Traceability row 1.
 
-Scope (tasks 3.1 + 3.2)
------------------------
+Scope (tasks 3.1 + 3.2 + 4.1)
+-----------------------------
 Task 3.1 created the module and the shared account-level margin-distance helper,
-:func:`check_margin_distance`. Task 3.2 ADDS the first public entry point,
-:func:`admit` (the per-order veto), and its private exit-vs-open classifier. The
-standing monitor ``assess`` (task 4.1) and the capitalization precondition
-``check_capitalization`` (task 4.2) are *later* tasks that ADD to this same file
-— they are deliberately **not** stubbed here (no placeholder functions, no
-TODOs).
+:func:`check_margin_distance`. Task 3.2 ADDED the first public entry point,
+:func:`admit` (the per-order veto), and its private exit-vs-open classifier.
+Task 4.1 ADDS the second public entry point, :func:`assess` (the no-order
+standing monitor). The capitalization precondition ``check_capitalization`` (task
+4.2) is a *later* task that ADDS to this same file — it is deliberately **not**
+stubbed here (no placeholder functions, no TODOs).
+
+The ``assess`` standing monitor (task 4.1)
+------------------------------------------
+:func:`assess` evaluates account state with **no proposed order** — the daemon
+calls it every tick whether or not an order exists (design §"System Flows →
+`assess`"). It returns an :class:`AssessDirective` carrying the next operational
+state, the de-risk directives, and the after-market events.
+
+The design flowchart reads as a cascade, but ``assess`` is implemented as an
+**accumulate-then-rank-max** evaluator (per the operator's safe-interpretation
+note, P6/P7): every condition is evaluated and its directives + events are
+*accumulated*, then the next grade is the **rank-max** over the input grade and
+every condition grade. This deliberately overrides the flowchart's branch
+structure so an engaged kill switch can never short-circuit and **mask** a
+co-occurring margin breach (the catastrophe to avoid is letting one protective
+condition hide another — fail-toward-more-protection).
+
+Conditions (each evaluated; none masks another):
+
+  1. **kill switch** (``op_state.kill_switch_engaged``): emit a ``FREEZE_ENTRIES``
+     directive. ``assess`` does NOT engage/disengage the kill switch
+     (operator-only, R9.3) — ``kill_switch_engaged`` is carried through unchanged.
+  2. **margin path (R1.5 / R8):** reuse :func:`check_margin_distance` with
+     ``additional_used_margin=0.0`` (no order → no delta). The band→grade mapping
+     reuses the helper's breach booleans (no re-derived thresholds):
+       * ``breaches_stop_out`` (level ≤ stop-out, the liquidation line) → FLATTEN
+         grade + FLATTEN directive + ``margin_breach`` / ``safe_mode_entered``
+         events.
+       * ``breaches_safe_mode_buffer and not breaches_stop_out`` (the danger band
+         strictly above stop-out) → HALT_NEW grade + REDUCE directive + the same
+         two events.
+     The lighter TIGHTEN band is **not** entered by the pure-margin path: with
+     only the two pinned thresholds (``stop_out_level_pct`` /
+     ``safe_mode_buffer_pct``) there is no third margin line to key a TIGHTEN
+     sub-band off, and inventing one would violate "no thresholds not in params"
+     (R10.3). TIGHTEN is reserved for other / Phase-2 anomaly inputs.
+     A degraded ``AccountState`` (e.g. ``NaN`` equity) fails toward breach for
+     free — :func:`check_margin_distance` already coerces ``NaN`` → ``0.0`` level
+     → stop-out breach → FLATTEN (so there is no parallel degraded-state detector
+     here; the fail-toward-protection direction is inherited).
+  3. **closure path (R6):** if ``clock.seconds_to_next_closure`` is within
+     ``params.flatten_lead_seconds`` AND there is open levered exposure
+     (positions held), emit a FLATTEN directive per held position, then
+     **re-check the flat post-condition** (R6.2 — verify actually flat, do not
+     trust that a flatten was issued). Within a single ``assess`` call the
+     ``state`` is fixed, so the re-check against the same ``state`` is not-flat
+     **whenever there were positions to flatten** — i.e. emitting flatten
+     directives and escalating to FLATTEN grade + a ``flat_verify_failed`` event
+     **co-occur** (there is no within-call grace period: a stateless function
+     cannot grant one — ``op_state`` carries no "flatten-requested" flag). R6.3's
+     "until flat" is realized **across ticks** by the daemon: the next tick sees a
+     now-flat state → the closure path does not fire → the latched grade stays.
+     The re-check is a structurally separate :func:`_is_flat` call (not an inlined
+     ``True``), proven by the already-flat closure case (no directives, no
+     escalation, no event).
+
+There is **no halt branch** (R7): ``assess`` has no ``trading_status`` / halt
+parameter and emits no halt-triggered freeze / flatten / alert under any input.
+An intraday halt is invisible to ``assess`` except via its account-level margin
+consequence (margin moving against the book), which routes through the margin /
+safe-mode path above. There is no ``FLATTEN_AT_REOPEN`` directive kind in the
+type at all.
+
+The grade is **monotonic-tighten + latched** (R8.3, design line 202):
+``next_op_state.safe_mode_grade`` rank is **≥** the input grade rank — it never
+decreases. It is computed as the rank-max of the input grade and every triggered
+condition grade, via the centralized :func:`grade_rank` (compared by integer
+rank, never by string string-comparison). Latching falls out: a clean call
+computes ``max(input, NONE) == input``, so a tripped grade survives a later clean
+tick (loosening is the operator / after-market path, out of boundary —
+R10.4 / §14.4).
+
+``assess`` is deterministic in all inputs (R11.1): it reads only its arguments
+(closure-imminence comes from ``clock``, never ``datetime.now()``) and builds the
+emitted ``entered_at`` / ``account_snapshot`` from inputs only — it never stamps
+a wall-clock time (the daemon stamps the real persist time). It carries the
+input ``op_state.entered_at`` / ``triggered_by`` through unchanged so two
+identical calls compare equal.
 
 The ``admit`` lexicographic walk + exit classification
 ------------------------------------------------------
@@ -156,11 +234,15 @@ from src.survival.params import SurvivalParameters
 from src.survival.types import (
     AccountState,
     AdmitDecision,
+    AssessDirective,
     ClockState,
     HALT_NEW_RANK,
     OperationalState,
     OrderEvaluation,
     ProposedOrder,
+    ReduceDirective,
+    SafeModeGrade,
+    SurvivalEvent,
     grade_rank,
 )
 
@@ -470,8 +552,254 @@ def admit(
     return _ALLOW
 
 
+# --------------------------------------------------------------------------- #
+# assess — the no-order standing monitor (task 4.1).                           #
+# --------------------------------------------------------------------------- #
+
+def _is_flat(state: AccountState) -> bool:
+    """The flat post-condition (R6.2): the account is flat iff it holds no open
+    positions. A structurally separate check — the closure path re-checks this
+    against the (fixed) ``state`` rather than trusting that a flatten directive
+    was issued.
+    """
+    return len(state.positions) == 0
+
+
+def _json_safe(value: float) -> float | None:
+    """Coerce a non-finite float (``NaN`` / ``inf`` — possible on a degraded
+    ``AccountState``) to ``None``.
+
+    Two reasons (both load-bearing for the degraded path the spec names by name):
+      * **Determinism (R11.1):** ``NaN != NaN``, so embedding a raw ``NaN`` in the
+        snapshot would make ``assess(...) == assess(...)`` False for a degraded
+        state — breaking "deterministic in **all** inputs". Mapping every
+        non-finite value to the single ``None`` sentinel restores equality.
+      * **JSONB persistence:** ``float('nan')`` / ``inf`` are not valid JSON, so a
+        raw non-finite snapshot field could fail when the daemon persists the
+        event. ``None`` is JSON-safe.
+    A finite value is returned unchanged.
+    """
+    return value if math.isfinite(value) else None
+
+
+def _account_snapshot(state: AccountState) -> dict:
+    """A deterministic, inputs-only, JSON-safe snapshot for a
+    :class:`SurvivalEvent`.
+
+    Built solely from ``state`` fields (no ``datetime.now()``, no object ids) so
+    two identical ``assess`` calls emit equal snapshots (R11.1). Numeric fields
+    pass through :func:`_json_safe` so a degraded ``NaN`` / ``inf`` (the spec's
+    named degraded case) becomes ``None`` — keeping the snapshot both
+    equality-stable (NaN != NaN would otherwise break determinism) and
+    JSONB-persistable. Position count is captured rather than the full mutable
+    position objects (the event log only needs the account-level picture; the
+    daemon persists it as JSONB).
+    """
+    return {
+        "equity": _json_safe(state.equity),
+        "used_margin": _json_safe(state.used_margin),
+        "free_margin": _json_safe(state.free_margin),
+        "margin_level": _json_safe(state.margin_level),
+        "balance": _json_safe(state.balance),
+        "stop_out_level": _json_safe(state.stop_out_level),
+        "activated": state.activated,
+        "open_position_count": len(state.positions),
+    }
+
+
+def _max_grade(*grades: str) -> SafeModeGrade:
+    """The monotonic rank-max of ``grades`` (R8.3 monotonic-tighten + latch).
+
+    Returns the grade *string* whose :func:`grade_rank` is highest — comparison
+    is by integer rank from the single ordering source (``types._GRADE_RANK``),
+    never by string. Keeping the winning string avoids needing a rank→string
+    inverse map. With ``_max_grade(input_grade)`` on a clean tick the input grade
+    is returned unchanged, so a tripped grade is **latched** across calls.
+    """
+    return max(grades, key=grade_rank)  # type: ignore[return-value]
+
+
+def assess(
+    state: AccountState,
+    op_state: OperationalState,
+    params: SurvivalParameters,
+    clock: ClockState,
+) -> AssessDirective:
+    """The no-order standing monitor: evaluate account state with **no proposed
+    order** and emit the next operational state, de-risk directives, and
+    after-market events (R1.5, R6, R7, R8, R11).
+
+    **Accumulate, then rank-max — never cascade-mask** (P6/P7): every condition is
+    evaluated and its directives + events are accumulated; the next grade is the
+    rank-max over the input grade and every triggered condition grade. An engaged
+    kill switch therefore cannot short-circuit and hide a co-occurring margin
+    breach (fail-toward-more-protection).
+
+    Conditions (each evaluated independently):
+
+      1. **kill switch** (``op_state.kill_switch_engaged``) → ``FREEZE_ENTRIES``
+         directive; ``kill_switch_engaged`` carried through unchanged (assess never
+         engages/disengages — operator-only, R9.3).
+      2. **margin (R1.5/R8)** — reuse :func:`check_margin_distance`
+         (``additional_used_margin=0.0``): stop-out breach → FLATTEN grade +
+         FLATTEN directive; buffer-only breach → HALT_NEW grade + REDUCE directive;
+         both emit ``margin_breach`` + ``safe_mode_entered``. A degraded state
+         (``NaN`` equity) fails toward breach via the helper (no parallel detector).
+      3. **closure (R6)** — closure within ``params.flatten_lead_seconds`` with
+         open exposure → a FLATTEN directive per held position, then re-check
+         :func:`_is_flat`; while not flat (positions remain in this fixed state) →
+         escalate to FLATTEN grade + a ``flat_verify_failed`` event. (R6.3's "until
+         flat" is realized across ticks by the daemon.)
+
+    There is **no halt branch** (R7): no halt input, no halt-triggered directive.
+    An intraday halt surfaces only via its margin consequence → the margin path.
+
+    The grade is monotonic-tighten + **latched** (R8.3): ``next_op_state``'s grade
+    rank is ≥ the input grade's; a clean tick keeps the input grade. Deterministic
+    in all inputs (R11.1): reads only its arguments, never the wall clock; carries
+    the input ``entered_at`` / ``triggered_by`` through (no ``now()`` re-stamp).
+    """
+    reduce_directives: list[ReduceDirective] = []
+    events: list[SurvivalEvent] = []
+    # Condition grades accumulate; the input grade seeds the rank-max so a
+    # previously-tripped grade is latched (never auto-loosens).
+    condition_grades: list[str] = [op_state.safe_mode_grade]
+
+    # --- Condition 1: kill switch (freeze new entries; carried through). ----- #
+    # assess never engages/disengages the kill switch (operator-only, R9.3); it
+    # only surfaces the freeze directive. This does NOT short-circuit — the
+    # margin and closure conditions below are still evaluated (no masking).
+    if op_state.kill_switch_engaged:
+        reduce_directives.append(
+            ReduceDirective(
+                kind="FREEZE_ENTRIES",
+                symbol=None,
+                target_volume=None,
+                reason="kill switch engaged — new entries frozen",
+            )
+        )
+
+    # --- Condition 2: margin path (R1.5 / R8). ------------------------------- #
+    # No proposed order → additional_used_margin = 0.0 (projected == current).
+    # The breach booleans key off the same helper used by admit; a degraded
+    # state (NaN equity) is already coerced to a stop-out breach inside the
+    # helper (fail toward FLATTEN, never "all clear").
+    margin = check_margin_distance(state, params, additional_used_margin=0.0)
+    if margin.breaches_stop_out:
+        # At/below the liquidation line → the heaviest response.
+        condition_grades.append("FLATTEN")
+        reduce_directives.append(
+            ReduceDirective(
+                kind="FLATTEN",
+                symbol=None,
+                target_volume=None,
+                reason="margin level at or below the stop-out liquidation line",
+            )
+        )
+        events.append(
+            SurvivalEvent(
+                event_type="margin_breach",
+                ticker=None,
+                detail="margin level at or below the stop-out line (FLATTEN band)",
+                account_snapshot=_account_snapshot(state),
+            )
+        )
+        events.append(
+            SurvivalEvent(
+                event_type="safe_mode_entered",
+                ticker=None,
+                detail="safe-mode entered at FLATTEN (stop-out breach)",
+                account_snapshot=_account_snapshot(state),
+            )
+        )
+    elif margin.breaches_safe_mode_buffer:
+        # In the danger band (stop-out < level <= buffer) → halt new + reduce.
+        condition_grades.append("HALT_NEW")
+        reduce_directives.append(
+            ReduceDirective(
+                kind="REDUCE",
+                symbol=None,
+                target_volume=None,
+                reason="margin level at or below the safe-mode buffer (danger band)",
+            )
+        )
+        events.append(
+            SurvivalEvent(
+                event_type="margin_breach",
+                ticker=None,
+                detail="margin level at or below the safe-mode buffer (HALT_NEW band)",
+                account_snapshot=_account_snapshot(state),
+            )
+        )
+        events.append(
+            SurvivalEvent(
+                event_type="safe_mode_entered",
+                ticker=None,
+                detail="safe-mode entered at HALT_NEW (safe-mode buffer breach)",
+                account_snapshot=_account_snapshot(state),
+            )
+        )
+
+    # --- Condition 3: flat-before-closure (R6). ------------------------------ #
+    # Fire only when a closure is within the flatten-lead window AND levered
+    # exposure is open. Emit a FLATTEN per held position, then RE-CHECK the flat
+    # post-condition (R6.2 — never trust that a flatten was issued). Because the
+    # state is fixed within this call, the re-check is not-flat whenever there
+    # were positions to flatten → escalate to FLATTEN + a flat_verify_failed
+    # event (R6.3). The daemon realizes "until flat" across ticks: a later tick
+    # over a now-flat state will not re-enter this path.
+    s2c = clock.seconds_to_next_closure
+    closure_imminent = s2c is not None and s2c <= params.flatten_lead_seconds
+    if closure_imminent and not _is_flat(state):
+        for pos in state.positions:
+            reduce_directives.append(
+                ReduceDirective(
+                    kind="FLATTEN",
+                    symbol=pos.symbol,
+                    target_volume=0.0,
+                    reason="flat-before-closure: closure within the flatten-lead window",
+                )
+            )
+        # Re-check the post-condition against the (fixed) state. Within this call
+        # positions still remain, so verify fails → escalate + record the event.
+        if not _is_flat(state):
+            condition_grades.append("FLATTEN")
+            events.append(
+                SurvivalEvent(
+                    event_type="flat_verify_failed",
+                    ticker=None,
+                    detail=(
+                        "flat post-condition not satisfied as closure approaches — "
+                        "levered exposure still open; escalating to FLATTEN"
+                    ),
+                    account_snapshot=_account_snapshot(state),
+                )
+            )
+
+    # --- Monotonic rank-max grade (latched; never auto-loosens). ------------- #
+    next_grade = _max_grade(*condition_grades)
+
+    next_op_state = OperationalState(
+        # Kill switch is operator-only (R9.3) — carry the input through unchanged.
+        kill_switch_engaged=op_state.kill_switch_engaged,
+        safe_mode_grade=next_grade,
+        # No wall-clock stamp (R11.1): carry the input identity fields through so
+        # identical inputs yield an identical directive. The daemon stamps the
+        # real persist time.
+        entered_at=op_state.entered_at,
+        triggered_by=op_state.triggered_by,
+    )
+
+    return AssessDirective(
+        next_op_state=next_op_state,
+        reduce_directives=reduce_directives,
+        events=events,
+    )
+
+
 __all__ = [
     "MarginDistanceResult",
     "check_margin_distance",
     "admit",
+    "assess",
 ]
