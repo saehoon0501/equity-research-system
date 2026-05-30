@@ -38,6 +38,34 @@ from typing import Literal, Optional
 # NONE → TIGHTEN → HALT_NEW → FLATTEN. Never auto-loosens.
 SafeModeGrade = Literal["NONE", "TIGHTEN", "HALT_NEW", "FLATTEN"]
 
+# Severity rank of each safe-mode grade — the SINGLE source of grade ordering for
+# the whole survival package (the gate's ``admit`` halt-new test, the DB guard in
+# migration 049, and task 4.1's escalation all read this map, so the ordering
+# cannot drift between Python and SQL). Compare by integer rank, never by string.
+# ``HALT_NEW_RANK`` is the threshold at/above which a grade "halts new entries":
+# HALT_NEW (2) and FLATTEN (3) block new opens; TIGHTEN (1) is the lighter
+# response and lets opens proceed.
+_GRADE_RANK: dict[str, int] = {
+    "NONE": 0,
+    "TIGHTEN": 1,
+    "HALT_NEW": 2,
+    "FLATTEN": 3,
+}
+HALT_NEW_RANK: int = _GRADE_RANK["HALT_NEW"]
+
+
+def grade_rank(grade: str) -> int:
+    """Integer severity rank of a :data:`SafeModeGrade` (the single ordering
+    source — see :data:`_GRADE_RANK`).
+
+    An unrecognized grade fails toward the **most severe** rank (it is treated as
+    at least FLATTEN-grade) so a degraded / unexpected op-state value can never
+    read as "less restrictive than it is" — consistent with the gate's
+    fail-toward-minimum-exposure direction for opens. Recognized grades return
+    their pinned rank.
+    """
+    return _GRADE_RANK.get(grade, _GRADE_RANK["FLATTEN"])
+
 # The constraint that bound an admit/assess decision (the lexicographic walk
 # emits the first one that fires for audit). No ``halt_freeze`` — real-time
 # per-instrument halt detection is out of boundary (R7).
@@ -145,6 +173,46 @@ class OperationalState:
     triggered_by: Optional[str]
 
 
+@dataclass(frozen=True)
+class OrderEvaluation:
+    """The three daemon-derived inputs the pure core cannot itself derive, passed
+    to ``gate.admit`` as one explicit, frozen context.
+
+    Deriving these needs broker / instrument / screen knowledge that is **Phase-2,
+    out of this spec's boundary** (design §"The projection input"; §Open Questions
+    "screen-predicate extraction"): the order's projected margin delta needs
+    leverage/price/contract-size; universe membership needs the S&P 500 ∩ Gate-441
+    list; the exclusion flag needs the consumed catalyst/quality screens. So the
+    pure walk takes the **results** in, rather than the raw broker handles. This
+    is a cross-spec contract the ``execution-daemon`` must populate (a
+    revalidation-trigger-adjacent seam — see the module docstring of ``gate``).
+
+    **Reject-leaning defaults (fail-toward-not-adding for opens).** Every field
+    defaults to the value that **rejects** an open, so a missing / unpopulated
+    screen can never read as "in-universe, not-excluded, zero-margin" (the
+    dangerous fail-open direction). ``OrderEvaluation()`` with no arguments
+    rejects every open:
+
+      * ``additional_used_margin`` — the order's projected margin delta fed to
+        ``check_margin_distance``. ``None`` is the "unknown" sentinel: margin
+        cannot be assessed → the gate rejects ``margin_distance`` (it never
+        defaults to ``0.0``, which would make ``projected == current`` and a
+        margin-unknown order fail open).
+      * ``in_universe`` — symbol ∈ S&P 500 ∩ Gate-441. Defaults ``False``
+        (off-universe → reject ``universe``).
+      * ``is_excluded`` — flagged by the consumed ex-ante screens. Defaults
+        ``True`` (flagged → reject ``entry_exclusion`` *when exclusion is
+        enabled*).
+
+    Frozen / immutable — the daemon supplies a fresh context per call; the gate
+    never mutates it.
+    """
+
+    additional_used_margin: Optional[float] = None
+    in_universe: bool = False
+    is_excluded: bool = True
+
+
 # --------------------------------------------------------------------------- #
 # Outputs.                                                                     #
 # --------------------------------------------------------------------------- #
@@ -212,12 +280,15 @@ class AssessDirective:
 
 __all__ = [
     "SafeModeGrade",
+    "HALT_NEW_RANK",
+    "grade_rank",
     "BindingConstraint",
     "Position",
     "AccountState",
     "ClockState",
     "ProposedOrder",
     "OperationalState",
+    "OrderEvaluation",
     "AdmitDecision",
     "ReduceDirective",
     "SurvivalEvent",
