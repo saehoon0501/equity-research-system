@@ -4,7 +4,7 @@
 
 - [ ] 1. Foundation: contract types, Massive data client, test scaffolding
 
-- [ ] 1.1 Define the shared contract types
+- [x] 1.1 Define the shared contract types
   - Frozen dataclasses: `Candidate` (param_snapshot / survival_parameters / code_version), `ReplayWindow` (start, end, tickers), `Fill` (side, price, volume, ts), `OutcomeRecord` (period, symbol, decision, predicted_probability, fills, total_return_pnl, survival_events, realized_outcome, realized_label), `ReplayResult` (records + fidelity), `FidelityResult` (status pass|fail|not_evaluable + detail); plus the `DataPort` `Protocol` (point-in-time fetch signatures)
   - Reuse the decision vocabulary from `src.reactive.types` and `Label` from `src.calibration.scorer` (no re-declaration)
   - Observable: all types import cleanly; `OutcomeRecord` exposes the nine fields; `walkforward-tuning-loop` can import `OutcomeRecord`/`ReplayResult` from here
