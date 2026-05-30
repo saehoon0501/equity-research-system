@@ -45,7 +45,7 @@
   - _Boundary: gate_
   - _Depends: 3.1_
 
-- [ ] 4. Core: standing monitor and capitalization precondition
+- [x] 4. Core: standing monitor and capitalization precondition
 - [x] 4.1 Implement the no-order standing monitor
   - Evaluate account state with no proposed order: when margin level reaches the safe-mode buffer, escalate the safe-mode grade (monotonic and latched — never auto-loosens) and emit reduce/flatten directives; when a closure is within the flatten-lead window with levered exposure open, emit flatten directives and re-check the flat post-condition, escalating when not flat. There is NO halt branch — real-time halt detection is out of boundary (R7); an intraday halt is invisible to assess except via its account-level margin consequence, which routes through the margin/safe-mode path above.
   - Emit the next operational state, the reduce directives, and the events for the after-market batch; deterministic in all inputs.
@@ -54,7 +54,7 @@
   - _Boundary: gate_
   - _Depends: 3.1_
   - Not parallel with 3.2/4.2: same decision-core module.
-- [ ] 4.2 Implement the capitalization-time funding-cap precondition
+- [x] 4.2 Implement the capitalization-time funding-cap precondition
   - Check that the account's funded balance does not exceed the speculative-sleeve cap of the supplied total-book figure, reusing the existing sleeve-cap math; this is a pre-funding check, not part of the per-order walk.
   - Observable: a funded balance above the sleeve cap of the supplied total book is rejected with the funding-cap constraint, while at or below passes.
   - _Requirements: 3_

@@ -1,24 +1,70 @@
 """Survival Gate decision core (pure, deterministic, inner-ring).
 
 This is the ``gate`` module of the ``survival`` package (dependency direction
-``types → params → gate``): it imports only from :mod:`src.survival.types` and
-:mod:`src.survival.params` and the standard library. Nothing is imported
-upward. Pure: **no I/O**, no DB / MCP / LLM imports; identical inputs produce an
-identical result (R11.1 / R11.2, P14).
+``types → params → gate``): it imports from :mod:`src.survival.types`,
+:mod:`src.survival.params`, the standard library, and — as the **one explicitly
+allowed cross-package import** (design "Allowed Dependencies") —
+:func:`src.supervisor.conviction_rollup.check_sleeve_cap`, reused by the
+capitalization-time funding-cap precondition (:func:`check_capitalization`, task
+4.2). Nothing in ``survival`` is imported upward. Pure: **no I/O**, no DB / MCP /
+LLM imports; identical inputs produce an identical result (R11.1 / R11.2, P14).
 
 Design source: ``.kiro/specs/survival-gate/design.md`` §"Decision core — `gate`",
 §"Architecture → Fail direction" + "Op-state freshness", and the Requirements
 Traceability row 1.
 
-Scope (tasks 3.1 + 3.2 + 4.1)
------------------------------
+Scope (tasks 3.1 + 3.2 + 4.1 + 4.2)
+-----------------------------------
 Task 3.1 created the module and the shared account-level margin-distance helper,
 :func:`check_margin_distance`. Task 3.2 ADDED the first public entry point,
 :func:`admit` (the per-order veto), and its private exit-vs-open classifier.
-Task 4.1 ADDS the second public entry point, :func:`assess` (the no-order
-standing monitor). The capitalization precondition ``check_capitalization`` (task
-4.2) is a *later* task that ADDS to this same file — it is deliberately **not**
-stubbed here (no placeholder functions, no TODOs).
+Task 4.1 ADDED the second public entry point, :func:`assess` (the no-order
+standing monitor). Task 4.2 ADDS the capitalization-time precondition
+:func:`check_capitalization` — a **pre-funding** check (run when wiring / adding
+funds), NOT part of the per-order ``admit`` walk (R3.2 reconciliation). It is the
+last function that adds to this file.
+
+The capitalization precondition ``check_capitalization`` (task 4.2)
+-------------------------------------------------------------------
+:func:`check_capitalization` enforces that the Gate account's funded balance does
+not exceed the **speculative-sleeve cap** (≤ 8%) of a supplied total-book equity
+figure (R3.1). It is a **capitalization-time** precondition — checked when funds
+are wired / added, **not** per order: once funded, the account holds only the
+funded ≤ 8% and cannot be un-funded at runtime, so the funding cap can never be
+breached per order (design §"System Flows → `admit`", R3.2 reconciliation). It is
+therefore deliberately **not** wired into :func:`admit`; ``admit`` never emits
+``funding_cap``.
+
+It **reuses** :func:`check_sleeve_cap` with tier ``"speculative_optionality"``
+(the Gate account IS the speculative sleeve, §16.1) — the cap is the canonical
+``_SLEEVE_CAPS["speculative_optionality"]`` from the shared vocabulary, NOT a
+survival-local literal (R3.3 — no parallel cap definition). The funded share of
+the book — ``funded_balance / total_book_equity × 100`` — is the speculative
+aggregate; it is passed as **both** ``current_aggregate_pct`` and
+``projected_aggregate_pct`` so that (a) the ``VIOLATION`` decision keys off
+``projected > cap`` (a funded share strictly above 8% → REJECT; a share exactly
+at 8% → ALLOW, at-or-below passes), and (b) a non-zero funded share reads as
+``PASS`` rather than spuriously tripping ``PASS_SOFT_WARNING`` (which fires only
+when ``current_aggregate_pct == 0.0``). The three ``check_sleeve_cap`` statuses
+map: ``VIOLATION`` → REJECT ``funding_cap``; ``PASS`` and ``PASS_SOFT_WARNING``
+→ ALLOW (``PASS_SOFT_WARNING`` is a pass — a zero funded share is trivially at /
+below the cap, R3.1).
+
+The canonical speculative cap is confirmed ``== 8.0 == params
+.speculative_sleeve_cap_pct``; both are 8.0, so there is no mismatch. The cap is
+routed solely through ``check_sleeve_cap`` (the authority) so that no parallel
+8% literal is introduced; were the pinned ``params.speculative_sleeve_cap_pct``
+ever tightened **below** the shared cap, the design's P7 tighten-only direction
+would prefer the tighter (lower) of the two — see the implementation note.
+
+**Fail toward not-funding** (this is an open / add of funded capital): because
+:func:`check_sleeve_cap` silently fail-opens on a negative / NaN funded share
+(``-5 > 8`` and ``NaN > 8`` are both ``False`` → it would return ``PASS``), the
+edge guards run **before** delegating. ``total_book_equity <= 0`` or non-finite
+(NaN / inf) → cannot assess the ratio → REJECT ``funding_cap`` (no
+divide-by-zero, no pass-by-default); a negative or non-finite ``funded_balance``
+→ REJECT ``funding_cap``. R3.4: only the speculative tier is consulted — the
+core / thematic tiers are not computed or managed here.
 
 The ``assess`` standing monitor (task 4.1)
 ------------------------------------------
@@ -230,6 +276,11 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+# The ONE explicitly-allowed cross-package import (design "Allowed
+# Dependencies"): the shared, pure sleeve-cap check, reused by
+# ``check_capitalization`` so the funding cap uses the SHARED vocabulary and the
+# canonical cap, with no parallel survival-local definition (R3.3).
+from src.supervisor.conviction_rollup import check_sleeve_cap
 from src.survival.params import SurvivalParameters
 from src.survival.types import (
     AccountState,
@@ -797,9 +848,113 @@ def assess(
     )
 
 
+# --------------------------------------------------------------------------- #
+# check_capitalization — the capitalization-time funding-cap precondition       #
+# (task 4.2). NOT part of the per-order admit walk (R3.2 reconciliation).       #
+# --------------------------------------------------------------------------- #
+
+# The shared sleeve tier the Gate account occupies: the Gate account IS the
+# speculative sleeve (§16.1). Named once here so the tier vocabulary is not
+# duplicated at the call site.
+_SPECULATIVE_TIER = "speculative_optionality"
+
+
+def check_capitalization(
+    funded_balance: float,
+    total_book_equity: float,
+    params: SurvivalParameters,
+) -> AdmitDecision:
+    """Capitalization-time funding-cap precondition (pure; R3.1, R3.3, R3.4,
+    R11.1).
+
+    Enforces that the Gate account's **funded balance** does not exceed the
+    **speculative-sleeve cap** (≤ 8%) of the supplied ``total_book_equity``
+    (R3.1). This is a **pre-funding** check — run when wiring / adding funds —
+    **NOT** part of the per-order :func:`admit` walk (R3.2 reconciliation): the
+    §16 funding cap is on funded capital, fixed at capitalization, so it cannot
+    be breached per order. ``admit`` never emits ``funding_cap``.
+
+    Reuses :func:`check_sleeve_cap` with tier ``"speculative_optionality"`` — the
+    cap is the canonical ``_SLEEVE_CAPS`` value from the shared vocabulary, NOT a
+    survival-local literal (R3.3). The funded share of the book —
+    ``funded_balance / total_book_equity × 100`` — is the speculative aggregate
+    and is passed as **both** ``current`` and ``projected`` so the ``VIOLATION``
+    decision keys off ``projected > cap`` (strictly-above → REJECT; exactly-at →
+    ALLOW) and a non-zero funded share reads ``PASS`` rather than spuriously
+    tripping ``PASS_SOFT_WARNING``. Status mapping: ``VIOLATION`` → REJECT
+    ``funding_cap``; ``PASS`` / ``PASS_SOFT_WARNING`` → ALLOW (``PASS_SOFT_WARNING``
+    is a pass — a zero funded share is trivially at / below the cap). Only the
+    speculative tier is consulted (R3.4 — core / thematic are not managed here).
+
+    **Fail toward not-funding** (an open / add of funded capital). The guards
+    below run **before** delegating because :func:`check_sleeve_cap` silently
+    fail-opens on a negative / NaN funded share (``-5 > 8`` and ``NaN > 8`` are
+    both ``False`` → ``PASS``):
+
+      * ``total_book_equity <= 0`` or non-finite (NaN / inf) → the ratio cannot be
+        assessed → REJECT ``funding_cap`` (no divide-by-zero, no pass-by-default).
+      * a negative or non-finite ``funded_balance`` → REJECT ``funding_cap``
+        (programmer / degraded input → fail toward not-funding). A funded balance
+        of exactly ``0.0`` is well-formed and falls through to the cap check
+        (→ ALLOW).
+
+    Pure and deterministic (R11.1): reads only its arguments, performs no I/O,
+    and returns an :class:`AdmitDecision` (the same inspectable output contract as
+    :func:`admit`, R11.3). The ``params`` argument is part of the contract; the
+    cap authority is :func:`check_sleeve_cap`. ``params.speculative_sleeve_cap_pct``
+    is confirmed ``== 8.0 ==`` the canonical cap, so they agree; were the pinned
+    param ever tightened **below** the shared cap, P7 (tighten-only) would prefer
+    the tighter (lower) bound — handled by the ``min`` below, which is a no-op
+    while the two agree and never *introduces* a parallel definition (it only
+    tightens the shared cap, never loosens it).
+    """
+    # --- Edge guards (fail toward not-funding) — BEFORE check_sleeve_cap. ----- #
+    if not math.isfinite(total_book_equity) or total_book_equity <= 0.0:
+        return _reject(
+            "funding_cap",
+            "total book equity is non-positive or non-finite — cannot assess the "
+            "funded share against the speculative-sleeve cap",
+        )
+    if not math.isfinite(funded_balance) or funded_balance < 0.0:
+        return _reject(
+            "funding_cap",
+            "funded balance is negative or non-finite — failing toward not-funding",
+        )
+
+    # The funded balance IS the speculative aggregate; its share of the book is
+    # both the current and the projected aggregate (no proposed add — this is a
+    # capitalization-time precondition, not a per-order projection).
+    funded_pct = funded_balance / total_book_equity * 100.0
+
+    result = check_sleeve_cap(
+        _SPECULATIVE_TIER,
+        current_aggregate_pct=funded_pct,
+        projected_aggregate_pct=funded_pct,
+    )
+
+    # The cap authority is the shared vocabulary. P7 tighten-only: if the pinned
+    # survival param is ever tightened BELOW the shared cap, prefer the lower
+    # (tighter) one. While both are 8.0 this is a no-op; it never loosens the
+    # shared cap nor introduces a parallel definition.
+    effective_cap = min(result["tier_cap"], params.speculative_sleeve_cap_pct)
+    over_pinned_cap = funded_pct > effective_cap
+
+    status = result["status"]
+    if status == "VIOLATION" or over_pinned_cap:
+        return _reject(
+            "funding_cap",
+            f"funded balance is {funded_pct:.4f}% of the supplied total book, "
+            f"exceeding the speculative-sleeve cap of {effective_cap}%",
+        )
+    # PASS and PASS_SOFT_WARNING are both passes (PASS_SOFT_WARNING is not a
+    # violation — a zero funded share is trivially at/below the cap).
+    return _ALLOW
+
+
 __all__ = [
     "MarginDistanceResult",
     "check_margin_distance",
     "admit",
     "assess",
+    "check_capitalization",
 ]
