@@ -15,7 +15,7 @@
   - Observable: `python -m src.reactive.daemon` imports and constructs a `DaemonConfig` from env without opening a connection; `.env.example` carries the new keys.
   - _Requirements: 1, 3_
   - _Boundary: config, db_
-- [ ] 1.3 (P) Daemon types
+- [x] 1.3 (P) Daemon types
   - `types.py`: `EvalTick`; `EpochContext` (run_id, code/param version, `walk_forward_window`, pinned snapshots); `PinnedParams` exposing `.reactive_snapshot` (the reactive `ParamSnapshot` `decide` consumes); `Candidate{features, direction, reference_price}`; `ProposedOrder{symbol, intent, direction, volume, stop_loss, position_id?}` (daemon-owned pre-admit order); `CommandRow`.
   - Observable: the module imports with no survival dependency; a `ProposedOrder` and a `Candidate` construct from synthetic fields; `PinnedParams.reactive_snapshot` is typed as the reactive `ParamSnapshot`.
   - _Requirements: 2, 11, 12_
