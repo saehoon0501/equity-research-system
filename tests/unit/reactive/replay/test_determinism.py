@@ -295,23 +295,43 @@ def test_determinism_holds_for_neutral_flat_window() -> None:
 # ============================================================================ #
 
 
-def test_full_engine_runs_with_no_db_driver_imported() -> None:
+def test_full_engine_runs_with_no_db_driver_imported(monkeypatch) -> None:
     """R9.2: the WHOLE engine (candidate pass + champion re-sim) runs through the
-    fixture port + stubs + fake readers WITHOUT importing the prod DB driver.
+    fixture port + stubs + injected readers WITHOUT reaching the production DB path.
 
-    `psycopg` is the only DB seam (lazily imported inside
-    `_read_champion_config_p2`, which the injected `champion_config_reader`
-    bypasses). It is genuinely absent from the inner-ring venv, so its presence in
-    `sys.modules` after a full run is a strong, behavioral proof that no DB path
-    was taken — not merely that a connection was mocked.
+    The engine's only DB seam is `harness._read_champion_config_p2` (it lazily
+    imports `psycopg` and opens a connection); the injected `champion_config_reader`
+    must bypass it. We booby-trap that seam so any attempt to reach it explodes —
+    a BEHAVIORAL proof robust to whether `psycopg` is already in `sys.modules`
+    (the `integration_live` conftest imports psycopg at collection time, so an
+    absolute `"psycopg" not in sys.modules` assertion gives a false failure under
+    the full `pytest tests/` suite). Mirrors the network-seam proof in
+    `test_injected_port_short_circuits_prod_data_client_construction`.
     """
+
+    def _boom_db(*a: Any, **k: Any) -> Any:
+        raise AssertionError(
+            "the engine reached the production DB path (_read_champion_config_p2) — "
+            "the injected query_trace / champion_config_reader did NOT short-circuit "
+            "it (R9.2)."
+        )
+
+    monkeypatch.setattr(harness, "_read_champion_config_p2", _boom_db)
+
+    # Defense in depth: the engine must import no NEW DB driver beyond what the test
+    # infra already loaded (a DELTA, not an absolute check — robust to a
+    # collection-time psycopg import by the integration conftest).
+    db_drivers = {"psycopg", "psycopg2", "asyncpg"}
+    modules_before = set(sys.modules)
+
     result = _run_full_engine(make_fixture_dataport())
 
+    newly_imported_db = db_drivers & (set(sys.modules) - modules_before)
     assert isinstance(result, ReplayResult)
     assert result.records  # the engine actually produced per-day records
-    assert "psycopg" not in sys.modules, (
-        "the prod DB driver was imported — the engine reached a live-DB path; the "
-        "injected query_trace / champion_config_reader must short-circuit it (R9.2)."
+    assert not newly_imported_db, (
+        f"the engine newly imported a DB driver {newly_imported_db} — it reached a "
+        "live-DB path; the injected readers must short-circuit it (R9.2)."
     )
 
 
