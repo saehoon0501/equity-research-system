@@ -25,7 +25,7 @@
   - _Boundary: data_client_
   - _Depends: 1.2_
 
-- [ ] 1.4 (P) Build the test scaffolding (fixture DataPort + stub cores)
+- [x] 1.4 (P) Build the test scaffolding (fixture DataPort + stub cores)
   - A fixture `DataPort` (deterministic canned responses), stub reactive `decide`/`compute_features` and stub survival `admit`/`assess` (DESIGNED-not-landed), and fixture decision/fill rows; lay out `tests/unit/reactive/replay/` per the repo per-module convention and register the `integration_live` path
   - Observable: a smoke unit test imports the fixtures + stubs and runs with no network/DB/LLM
   - _Requirements: 9.2_
@@ -127,3 +127,4 @@
 ## Implementation Notes
 - 1.2: worktree has no root dep manifest; `httpx` was installed into `.venv-replay` (uv). Reuse that venv for all tasks; if rebuilt, `uv pip install httpx pytest python-dotenv` first.
 - 1.3: `fetch_quotes`/`fetch_trades` bound at DAY granularity; if the simulator (2.3+) passes a sub-day instant for instant-precision fills, tighten the bound there to avoid same-day-later leakage (R4.1). And `DataPort.fetch_corporate_actions` reconciled types.py to `-> dict {splits,dividends}`.
+- 1.4: survival stubs mirror the in-progress survival-gate-impl: `admit(order,state,op_state,params,clock,evaluation)` carries a 6th `OrderEvaluation` arg (design omitted it) — task 2.4 must construct it. Stub INPUTS are `Any` (name/order match only). On survival landing: delete local mirrors, import from src.survival, re-run signature tests.
