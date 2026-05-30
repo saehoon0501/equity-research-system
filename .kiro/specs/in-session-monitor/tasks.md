@@ -25,7 +25,7 @@
   - _Requirements: 1.2, 2.1, 2.4, 9.1, 9.5_
   - _Boundary: diagnostic_
   - _Depends: 1.2_
-- [ ] 2.2 (P) Implement the envelope judge
+- [x] 2.2 (P) Implement the envelope judge
   - Pure map from diagnostic + params to a verdict: drifted when a metric's CI excludes the baseline by the configured margin over the configured window; severity banded mild/severe; actionable only when the window is inside survival limits (the survival-proximity flag), never the deterministic reflex's band; insufficient propagates to no-verdict
   - Verdict figures are derived from the diagnostic only — no asserted probability
   - Observable: a unit test asserts the CI-exclusion rule, severity banding, the survival-band gate (no verdict when in-band), and insufficient propagation
