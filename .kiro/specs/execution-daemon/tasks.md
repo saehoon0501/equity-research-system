@@ -102,7 +102,7 @@
   - _Requirements: 1, 5, 7, 9_
   - _Boundary: loop_
   - _Depends: 4.1, 4.2, 4.3_
-- [ ] 4.5 OrderEvaluation projection (the survival `admit` projection seam)
+- [x] 4.5 OrderEvaluation projection (the survival `admit` projection seam)
   - `evaluation.py`: build the `survival.types.OrderEvaluation` the landed `gate.admit` requires (survival's docstring: "a cross-spec contract the execution-daemon must populate", reject-leaning — bare `OrderEvaluation()` rejects every open). Three legs: (a) `additional_used_margin` = the order's projected margin delta from `volume × reference_price × leverage / contract-size` (broker instrument specs) — `None` only when genuinely unknown (rejects `margin_distance`; never defaults to `0.0`); (b) universe membership (S&P 500 ∩ Gate-441 — a v0.1 config list); (c) the exclusion flag = the slow-layer catalyst/quality screen result (§12.6 entry-exclusion). v0.1: margin computed; universe from config; exclusion fail-safe default (unknown → excluded → reject) with the live §12.6 screen wiring a tracked follow-on. Pure projection; imports only the `OrderEvaluation` type from survival.
   - Observable: a normal in-universe open yields an `OrderEvaluation` with a positive `additional_used_margin` that `gate.admit` accepts; an unknown-margin / out-of-universe / excluded order yields the reject-leaning `OrderEvaluation` that `admit` rejects.
   - _Requirements: 2, 10_
