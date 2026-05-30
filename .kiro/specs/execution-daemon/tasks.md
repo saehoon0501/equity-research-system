@@ -25,7 +25,7 @@
   - Observable: a daemon module imports `submit_decision` / `get_positions` / `Position` / `Label` through the seam without `ImportError`; a smoke test asserts the seam resolves all named symbols (including `Label`).
   - _Requirements: 3, 10, 11_
   - _Boundary: broker_import_seam_
-- [ ] 1.5 (P) Daemon runtime dependency manifest
+- [x] 1.5 (P) Daemon runtime dependency manifest
   - Author a runtime dependency manifest for the persistent daemon process pinning `psycopg[binary]>=3.2`, `httpx>=0.27`, `numpy`, `python-dotenv` (the deps `db.py` / the feed client / the loop import), matching the per-MCP-package pin style (`src/shared/regime_sidecar/pyproject.toml:11`). The repo has no root manifest today (gap G2); this makes the daemon's runtime reproducible on a fresh machine / CI / container instead of relying on the operator's global system python.
   - Observable: a fresh venv created from the manifest imports `psycopg`, `httpx`, `numpy`, `dotenv` and runs `python -m src.reactive.daemon` without `ImportError`.
   - _Requirements: 1, 3_
