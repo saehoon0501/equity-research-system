@@ -20,7 +20,7 @@
   - Observable: the module imports with no survival dependency; a `ProposedOrder` and a `Candidate` construct from synthetic fields; `PinnedParams.reactive_snapshot` is typed as the reactive `ParamSnapshot`.
   - _Requirements: 2, 11, 12_
   - _Boundary: types_
-- [ ] 1.4 (P) Broker-import seam
+- [x] 1.4 (P) Broker-import seam
   - Define the in-process seam that makes `broker.core.{submit_decision, get_positions}` + `broker.models.{Position, Direction, OrderIntent, Label}` importable from the daemon, given `src/mcp/broker/` is a self-contained uv package with flat imports and no `__init__.py` (cannot be plain namespace-imported). Provide a small adapter / `sys.path` shim isolating this in one seam; note `broker.models.Label` is itself re-exported from `src.calibration.scorer`, so the seam must also resolve that transitive import.
   - Observable: a daemon module imports `submit_decision` / `get_positions` / `Position` / `Label` through the seam without `ImportError`; a smoke test asserts the seam resolves all named symbols (including `Label`).
   - _Requirements: 3, 10, 11_
