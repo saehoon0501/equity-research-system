@@ -40,7 +40,7 @@
   - _Depends: 1.1, 1.3_
 
 - [ ] 3. Core: candidate, order construction, telemetry, events, commands (Phase 1)
-- [ ] 3.1 (P) Candidate assembly
+- [x] 3.1 (P) Candidate assembly
   - `candidate.py`: fetch fast-clock data (ticker bars + SPY + rf_yield) from the market feed (live fetch mocked in v0.1); `compute_features` over the fetched arrays; **read the tactical bin from `FeatureSet.raw["tactical_bin"]`** (NOT `trend_vote`, which folds `unavailable` into `neutral`) and map `positive→LONG`, `negative→SHORT`, `neutral`/`unavailable`→`None`; surface `reference_price = last close`; return `Candidate{features, direction, reference_price}` or `None` on a non-directional bin (Req 12.5) or insufficient data (Req 12.4), recording which case for telemetry attribution.
   - Observable: synthetic arrays with a positive bin return a LONG Candidate carrying `reference_price`; a neutral and an unavailable bin each return `None` and are distinguishable in what the candidate records; too-short history returns `None`.
   - _Requirements: 12_
