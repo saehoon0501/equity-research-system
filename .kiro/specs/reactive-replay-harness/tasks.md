@@ -34,7 +34,7 @@
 
 - [ ] 2. Core: the backtest engine
 
-- [ ] 2.1 (P) Feature adapter — daily features + as-of split rule
+- [x] 2.1 (P) Feature adapter — daily features + as-of split rule
   - Assemble the daily feature inputs (ticker daily adj-close + SPY + rf-yield + OHLC) from the `DataPort` and drive the landed `compute_features`; never reimplement the overlay cores
   - Apply the as-of split rule: split-adjust feature-window closes for ex-dates ≤ the as-of instant only (in-window pre-T splits applied; post-T never)
   - Observable: unit test — features for day D use only data ≤ D; an in-window split is applied while a post-D split is not
