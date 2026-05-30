@@ -11,7 +11,7 @@
   - _Requirements: 1.3, 8.1_
   - _Boundary: types_
 
-- [ ] 1.2 Build the Massive historical REST transport
+- [x] 1.2 Build the Massive historical REST transport
   - Mirror `src/mcp/broker/gate_client.py`: `httpx` client, `apiKey` auth from `MASSIVE_API_KEY`/`.env`, structured `Result`/`Error` (never raises), rate-limit parsed from response headers, injected-transport seam for tests; document `MASSIVE_REST_URL` in `.env.example`
   - Observable: a fixture-transport unit test returns a structured `Result` on 200 and a structured `Error` (no exception) on 429/5xx
   - _Requirements: 4.1_
