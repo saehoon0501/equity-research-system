@@ -1,0 +1,40 @@
+# Execution Daemon — runtime dependency manifest (execution-daemon task 1.5; gap G2 / research.md Option A).
+#
+# The daemon (`src/reactive/daemon/`) is the first repo-root namespace code with
+# its OWN runtime deps: it rides the existing namespace package (no pyproject/uv
+# per the tasks.md scope line), so its deps cannot live in a per-package
+# `pyproject.toml` the way each `src/mcp/<server>/` and `src/shared/<pkg>/` one
+# does. The repo had NO root manifest before this file — the four deps below were
+# importable only because they happened to be in the operator's global system
+# python (research.md G2). This manifest makes the daemon's runtime reproducible
+# on a fresh machine / CI runner / container instead of relying on that global.
+#
+# Pins match the per-package style of `src/shared/regime_sidecar/pyproject.toml:11`
+# (`psycopg[binary]>=3.2.0`): lower-bound, binary psycopg, no upper cap.
+#
+# Install path (documented per task 1.5):
+#   python3 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+#   python -m src.reactive.daemon            # imports psycopg/httpx/numpy/dotenv, no ImportError
+# A container service (task 4.4) installs from this same file in its build step.
+#
+# Scope: ONLY the persistent daemon's *runtime* imports. NOT a repo-wide manifest
+# — the MCP servers and shared packages keep their own per-package pyproject.toml
+# (each launched via `uv` per `.mcp.json`); this file is the daemon's seam alone.
+
+# db.py — the owned psycopg3 connection lifecycle (caller-passed conn; the house
+# `_dsn()` convention). `[binary]` ships the libpq wheel so no system libpq is
+# required on a fresh box.
+psycopg[binary]>=3.2.0
+
+# The concrete 3-leg market-feed client (task 3.6): thin httpx REST against the
+# Massive aggregates endpoint (ticker + SPY bars) + the FRED DGS1 risk-free leg.
+httpx>=0.27
+
+# `compute_features` + the reused overlay cores (candidate, task 3.1) operate on
+# numpy arrays of bars; the signal model consumes the numeric FeatureSet.
+numpy
+
+# Root `tests/conftest.py` loads `.env` before collection, and the daemon config
+# (`config.py`) reads its DSN + feed keys from the loaded environment.
+python-dotenv

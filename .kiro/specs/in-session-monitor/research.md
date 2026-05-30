@@ -157,3 +157,14 @@ Re-validation of the post-Rev-2.1 design surfaced 3 issues; resolved via 3 paral
 **Issue 3 — write-auth pre-live.** Paper-only is a `RuntimeMode` flag today; **no automated paper→live gate exists** (cutover is operator-manual). **Resolution:** framed as a **documented pre-live precondition** (run under a dedicated `in_session_monitor_role`), not an "enforced gate"; the enforcement mechanism (a `BEFORE INSERT` auth trigger + `daemon_authorized_writers` control table, mirroring the mig 003/048 append-only guards) is the **daemon's to build** (cross-spec suggestion, out of boundary). Monitor owns only the `issued_by` stamp + the restricted-role precondition.
 
 **Close-out:** remaining unknowns (tuner-published baseline contract, drift-threshold values, daemon mig-052 impl) are revalidation-triggers + task-brief items, not further design work. Design is done → `/kiro-spec-tasks`.
+
+---
+
+## Upstream-spec check post-tasks (2026-05-30)
+
+Checked the dependency specs after task generation. Two upstream advances since the Rev-2.1 reconcile; neither forces a structural change.
+
+- **execution-daemon Rev 2.2→2.4.1 (requirements + design APPROVED).** Entirely the **Edge order path** — new `candidate` (fast-clock fetch → `compute_features` → tactical-relative-strength bin→`direction`, reading `FeatureSet.raw['tactical_bin']` not `trend_vote`), `order_builder` (decision→`ProposedOrder`, ATR stop-loss price level, SHORT-open = BUY+Direction.SHORT), `PinnedParams.reactive_snapshot` (BL-2), and daemon-owned `ProposedOrder`/`Candidate` types. **None of it touches in-session-monitor's seams** — command-intake transport, the 3 command types, `issued_by`/`applied_at`/`status`/`reject_reason`, `select-validated-config`→hot-swap, and migs 051/052 are unchanged. No reconcile needed.
+- **walkforward-tuning-loop design (landed).** Resolves two carried revalidation triggers: (1) the **validated-version menu = the P2 `parameters` machinery** ("publishes validated values into `parameters` rows so `parameters_active` resolves to them; no bespoke registry") — confirms the source `SELECT_SAFER_CONFIG` already reads; trigger resolved. (2) **No tuner-published per-version baseline** — walkforward computes calibration only for its own gate + tuner-action audit, so the Issue-1 v0.1 decision (monitor computes its own per-version baseline) **stands**; the tuner's per-version calibration lives in its audit (joinable via the 4 keys) as a potential future source.
+
+tasks.md unaffected (the "validated-version menu" it references IS the now-confirmed P2 parameters machinery). Design revalidation triggers updated.

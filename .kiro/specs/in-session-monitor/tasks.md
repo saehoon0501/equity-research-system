@@ -1,0 +1,99 @@
+# Implementation Plan
+
+> **Phased per design (Option C).** Phase 1 (tasks 1–4 + 6.1) is buildable now against landed telemetry + calibration. **Phase 2 (tasks 5, 6.2) is design-complete but implementation-blocked on `execution-daemon` implementing migration 052 (`execution_daemon_command_intake` + epoch)** — an external cross-spec dependency, not executable until that lands. The audit store is an envelope on disk for v0.1 (no migration); promote to a table only when a consumer must join the "why" (P11) — out of scope here.
+
+- [ ] 1. Foundation: parameter namespace + domain types
+- [ ] 1.1 Seed the monitor parameter namespace
+  - Add a numbered append-only parameter-seed migration establishing the drift-rule knobs (sufficiency window floor, rolling window length, baseline-exclusion margin, severity-band cutoffs, the per-version in-sample baseline reference, and cadence) under a dedicated `monitor.*` namespace, following the idempotent guarded-insert seed convention
+  - Values are provisional and empirically calibrated (P15) — this task establishes the namespace and shape only, not final numbers
+  - Claim the next free migration number after the survival (049/050), daemon (051/052), and walkforward (053+) allocations; verify the free number at apply time
+  - Observable: applying the migration makes the active-parameters view return the monitor namespace's knobs as resolvable rows
+  - _Requirements: 1.1, 2.1, 2.2, 2.3, 8.3_
+- [x] 1.2 (P) Define the monitor domain types
+  - Pure typed dataclasses for the shared vocabulary: the envelope verdict (state + severity + binding metric), the drift diagnostic (per-metric observed value + bootstrap CI + survival-band flag + sufficiency), the intervention-intent enum (none / halt-new-entries / tighten-safe-mode / select-safer-config), the intervention command (writer-side row including the idempotency id + issuer), the intervention audit (correlation keys + applied flag + rationale), and the pinned monitor parameters
+  - Independent of 1.1 (no shared artifact) — runs alongside it
+  - Observable: a unit test imports the types and asserts each dataclass's field set + frozen-ness, and that the intent enum has exactly the four members
+  - _Requirements: 2.2, 3.1, 7.3_
+  - _Boundary: monitor types_
+
+- [ ] 2. Core: Phase-1 pure leaves (sense → judge → decide-intent → audit)
+- [ ] 2.1 (P) Implement the calibration diagnostic
+  - Read recent trace via the landed reader filtered to a single code-version/param-version cohort; extract softmax probability + realized outcome + the derived survival-proximity fields; compute reliability/Brier/ECE with the block-bootstrap CI; compare against that version's pinned baseline
+  - A window that would cross a version hot-swap uses only the current version's rows; below the sufficiency floor (including the post-hot-swap refill period) it returns an explicit insufficient result
+  - For v0.1, derive the per-version baseline from that version's own in-sample outcome rows (revalidation trigger: switch to a tuner-published baseline if one lands)
+  - Observable: a unit test feeds synthetic single-version and mixed-version rows and asserts the diagnostic uses only the current version and reports insufficiency below the floor
+  - _Requirements: 1.2, 2.1, 2.4, 9.1, 9.5_
+  - _Boundary: diagnostic_
+  - _Depends: 1.2_
+- [ ] 2.2 (P) Implement the envelope judge
+  - Pure map from diagnostic + params to a verdict: drifted when a metric's CI excludes the baseline by the configured margin over the configured window; severity banded mild/severe; actionable only when the window is inside survival limits (the survival-proximity flag), never the deterministic reflex's band; insufficient propagates to no-verdict
+  - Verdict figures are derived from the diagnostic only — no asserted probability
+  - Observable: a unit test asserts the CI-exclusion rule, severity banding, the survival-band gate (no verdict when in-band), and insufficient propagation
+  - _Requirements: 2.2, 2.3, 2.4, 5.3, 7.2_
+  - _Boundary: judge_
+  - _Depends: 1.2_
+- [ ] 2.3 (P) Implement the intervention decision
+  - Pure map from verdict to intent bounded to the three daemon command types: mild drift → select-a-safer-validated-config if one exists, else tighten safe mode; severe drift → halt new entries; conservative-only (any non-more-conservative intent is rejected to none); config selection reads only the validated-version menu and only toward-safer; never fits; a wedged component maps to halt plus an operator-action-required flag (no daemon restart seam)
+  - Observable: a unit test asserts the severity→intent mapping, conservative-only rejection, menu-only/toward-safer selection, and never-fit
+  - _Requirements: 1.4, 3.1, 3.2, 3.3, 5.1, 9.3_
+  - _Boundary: intervene_
+  - _Depends: 1.2_
+- [ ] 2.4 (P) Implement the intervention audit emitter
+  - Build the audit (the single analyzed version's correlation keys, the triggering diagnostic, a falsifiable rationale with observable falsifiers, the applied flag, an optional command reference) and persist it as an envelope under the agent/run-id naming convention; the dry-run path writes nothing; it owns the why only (no model-trace write); applied is false in Phase 1
+  - Observable: a unit test asserts the envelope carries all four correlation keys + applied=false + falsifiers, and that the dry-run path writes nothing
+  - _Requirements: 7.1, 7.2, 7.3, 7.4_
+  - _Boundary: audit_
+  - _Depends: 1.2_
+
+- [ ] 3. Core: audit validator + command serialization
+- [ ] 3.1 (P) Author and register the intervention-audit shape validator
+  - Author a presence-only shape validator (required-key + nullable-subkey convention, with named result fields for stuck-loop fingerprinting) for the audit envelope, and wire it into the gate machinery (runner + artifact type + fingerprint + gate id + valid-artifact-types) so it runs as that artifact's gate
+  - Observable: the gate machinery accepts the new artifact type, a canonical audit envelope validates as pass, and a missing-key envelope fails
+  - _Requirements: 7.4_
+  - _Boundary: eval gates_
+  - _Depends: 2.4_
+- [ ] 3.2 (P) Implement command serialization + the Phase-1 advisory path
+  - Mint a stable idempotency id hashed over the version-epoch keys + intent type (deliberately not the rolling window edge), serialize the command row (including the issuer identity), and implement the Phase-1 advisory path that returns an advisory result and records the would-be intent into the audit with applied=false (no live channel yet); the live write + confirm + single-flight are deferred to 5.1
+  - Observable: a unit test asserts the id is stable across ticks for the same version+intent but differs across intents, and that the advisory path writes nothing live while the audit records the intent
+  - _Requirements: 4.1, 6.2, 9.4_
+  - _Boundary: command_writer_
+  - _Depends: 1.2, 2.4_
+
+- [ ] 4. Integration: Phase-1 cadence orchestration
+- [ ] 4.1 Wire the scheduled supervisory loop (Phase 1, advisory)
+  - Author the markdown orchestration: mint the monitor's own run-id, pin the monitor namespace from the active-parameters view by value (single repeatable-read resolve; no run-snapshot row written — anti-contamination), run diagnostic → judge → intervene → audit each cadence tick in advisory mode, then validate the audit envelope via the manual validate seam with patch-on-retry under the attempt cap; honor autonomy, the per-run cost ceiling, paper-only, and never participating in the order-fire decision
+  - The monitor's own run-id names the audit envelope file; the audit's correlation keys are the daemon epoch keys read from the analyzed trace (distinct identifiers — do not conflate)
+  - Observable: a dry-run cadence tick reads the trace, produces a verdict, emits the run-id-named audit envelope, and the validate seam returns pass — entirely in advisory mode with no command issued
+  - _Requirements: 1.1, 1.3, 1.4, 5.3, 8.1, 8.2, 8.3, 8.4_
+  - _Depends: 1.1, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2_
+  - _Boundary: orchestrator_
+
+- [ ] 5. Phase 2 (design-complete; implementation-blocked on execution-daemon migration 052)
+- [ ] 5.1 Implement the live command write + confirm + single-flight
+  - Wire the command writer's live path against the daemon-owned command-intake table: insert the command row (with the issuer identity) idempotently on the id, achieve single-flight by skip-if-outstanding (reuse the confirm-read to skip a tick when an unapplied own-row already exists), confirm via the applied/status/reject markers, and on no-confirm or rejection escalate to the always-available halt and surface to the operator; never block a true exit or flatten
+  - **External cross-spec dependency: `execution-daemon` must have implemented migration 052 (the intake table + the loop poll). Blocked until that lands — not a preceding task in this spec.**
+  - Observable: an integration_live test against the implemented intake inserts a command, the daemon applies it, the writer confirms via the applied marker, and a rejected command drives the escalate-to-halt path
+  - _Requirements: 3.4, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 9.2, 9.5_
+  - _Boundary: command_writer_
+  - _Depends: 3.2_
+- [ ] 5.2 Flip the orchestration from advisory to live
+  - Switch the cadence loop's intervention path from the advisory no-op to the live command writer; enforce conservative-only end-to-end; on intervention, confirm-and-fail-safe and verify the component returned to a healthy responsive state before resuming normal monitoring; record the live command reference + applied=true in the audit
+  - **External cross-spec dependency: same as 5.1 (daemon migration 052). Blocked.**
+  - Observable: with the daemon running, a forced-drift cadence tick issues a real command, confirms application, and the audit records applied=true with the command reference
+  - _Requirements: 5.2, 6.1, 6.2, 6.3_
+  - _Depends: 4.1, 5.1_
+  - _Boundary: orchestrator_
+
+- [ ] 6. Validation
+- [ ] 6.1 (P) Audit envelope golden-shape contract test (Phase 1)
+  - Add a contract test richer than the presence-only validator (per the inner-ring discipline) asserting the full audit envelope shape: the four correlation keys, the applied-flag semantics (false in advisory), the falsifiable-rationale block, and the verdict/intent enums — serving as the tripwire for an audit-shape change (revalidation obligation). Depends only on 2.4 + 3.1, not on Phase 2
+  - Observable: the contract test passes on a canonical audit envelope and fails when a required block or key is dropped
+  - _Requirements: 7.1, 7.4, 9.5_
+  - _Depends: 2.4, 3.1_
+  - _Boundary: contract tests_
+- [ ] 6.2 Phase-2 command round-trip integration test (implementation-blocked on daemon migration 052)
+  - Add an integration_live test for the live command path: issue → daemon applies → confirm via the applied marker; the rejected → escalate-to-halt path; and the single-flight skip-if-outstanding behavior
+  - **External cross-spec dependency: daemon migration 052 implemented. Blocked.**
+  - Observable: the integration_live test (run under its marker against the daemon) confirms apply + the fail-safe + the single-flight skip
+  - _Requirements: 4.1, 6.1, 6.2_
+  - _Depends: 5.1_
