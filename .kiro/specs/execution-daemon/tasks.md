@@ -90,7 +90,7 @@
   - _Requirements: 3_
   - _Boundary: orchestrator_
   - _Depends: 4.1_
-- [ ] 4.3 (P) Version-pinned lifecycle + flat-before-close
+- [x] 4.3 (P) Version-pinned lifecycle + flat-before-close
   - `lifecycle.py`: flat-before-close action + verify-flat handshake — execute the gate's de-risk directives from `AssessDirective.reduce_directives` (`ReduceDirective{kind ∈ FLATTEN/REDUCE/FREEZE_ENTRIES, symbol, target_volume, reason}`; `symbol=None` = account-wide), re-check the flat post-condition, escalate + record a verify-flat failure; persist `AssessDirective.events` (`SurvivalEvent`); version-pin at open/close into `execution_daemon_position_version`; whole-object atomic hot-swap; manage open positions under their opening version; global-tightest survive across versions; adopt the version `commands` selected.
   - Observable: with synthetic survival directives, an in-window closure executes flatten then verifies flat (escalating on failure); a hot-swap flips the whole param object atomically and leaves open positions on their opening version.
   - _Requirements: 6, 8_
