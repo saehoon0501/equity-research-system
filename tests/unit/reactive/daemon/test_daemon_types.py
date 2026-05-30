@@ -24,7 +24,8 @@ No LLM, no MCP, no live DB (P14 inner ring).
 
 from __future__ import annotations
 
-import importlib
+import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -80,11 +81,27 @@ def _reactive_snapshot() -> ParamSnapshot:
 
 
 def test_types_module_imports_without_survival_dependency():
-    """The Phase-1 types module must not import src.survival (unbuilt, BL-3)."""
-    importlib.reload(daemon_types)
-    # No survival module is pulled into the interpreter by importing the types.
-    assert "src.survival" not in sys.modules
-    assert "src.survival.gate" not in sys.modules
+    """The Phase-1 types module must not import src.survival.
+
+    Verified in a FRESH subprocess (not this process's ``sys.modules``): now that
+    survival has landed, a sibling suite that already imported ``src.survival``
+    would pollute the shared ``sys.modules`` and make an in-process check
+    order-dependent. A clean interpreter that imports only the daemon types
+    proves the module's own import surface stays survival-free.
+    """
+    repo_root = pathlib.Path(__file__).resolve().parents[4]
+    code = (
+        "import sys; import src.reactive.daemon.types; "
+        "assert 'src.survival' not in sys.modules, 'types leaked src.survival'; "
+        "assert 'src.survival.gate' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 # --- Observable 2: ProposedOrder + Candidate construct from synthetic fields ---

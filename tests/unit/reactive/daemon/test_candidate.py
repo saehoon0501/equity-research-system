@@ -23,6 +23,8 @@ inner-ring: no LLM, no MCP, no live DB, no ``src.survival`` (P14).
 from __future__ import annotations
 
 import math
+import pathlib
+import subprocess
 import sys
 
 import pytest
@@ -206,12 +208,28 @@ def test_insufficient_data_distinct_from_non_directional_bin():
 
 
 def test_assemble_does_not_pull_in_survival():
-    """The candidate is Phase-1: assembling never imports src.survival."""
-    ticker = _ramp_bars(100.0, 1.0, _N)
-    feed = _StubFeed(ticker, [100.0] * _N, rf_yield_pct=1.0)
-    assemble("AAPL", feed, _pinned())
-    assert "src.survival" not in sys.modules
-    assert "src.survival.gate" not in sys.modules
+    """The candidate is Phase-1: importing it never pulls in src.survival.
+
+    Verified in a FRESH subprocess, not via this process's ``sys.modules`` — a
+    sibling suite (e.g. ``tests/unit/survival``) that already imported
+    ``src.survival`` would otherwise pollute the shared ``sys.modules`` and make
+    this check order-dependent (able to mask a real leak). The module-level
+    import surface is where a survival import would live; ``assemble`` adds no
+    dynamic import.
+    """
+    repo_root = pathlib.Path(__file__).resolve().parents[4]
+    code = (
+        "import sys; import src.reactive.daemon.candidate; "
+        "assert 'src.survival' not in sys.modules, 'candidate leaked src.survival'; "
+        "assert 'src.survival.gate' not in sys.modules"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_assemble_fetches_all_three_feed_legs():
