@@ -34,6 +34,14 @@ GATE_IDS: dict[str, str] = {
     "crowding_composition_check": "HG-35",
     "intangibles_adjustment_shape": "HG-38",
     "reversion_envelope_shape": "HG-36",
+    # in-session-monitor intervention-audit shape gate. HG-37 is NOT free —
+    # it is LOCKED for STRESS_GENERIC fresh-pull cache validation (see the
+    # authoritative enumeration in .claude/agents/eval/evaluator.md:818,
+    # 2026-05-20). HG-38 is intangibles, HG-40 is the WS-6 hybrid gate; a
+    # repo-wide HG-NN scan shows HG-39 is the only free low slot. Gate NAME /
+    # GATE_IDS key is the _shape-suffixed form (mirrors reversion/tactical);
+    # the REGISTRY artifact_type stays the short "intervention_audit".
+    "intervention_audit_shape": "HG-39",
 }
 
 

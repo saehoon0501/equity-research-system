@@ -58,6 +58,9 @@ from src.eval.gates.reversion_envelope_shape import (
 from src.eval.gates.intangibles_adjustment_shape import (
     validate_intangibles_adjustment,
 )
+from src.eval.gates.intervention_audit_shape import (
+    validate_intervention_audit_shape,
+)
 from src.eval.gates.catalyst_modifier_composition_check import (
     validate_catalyst_modifier_composition,
 )
@@ -74,6 +77,7 @@ from src.eval.gates._fingerprints import (
     fingerprint_envelope_shape,
     fingerprint_evidence,
     fingerprint_intangibles,
+    fingerprint_intervention_audit,
     fingerprint_outside_view,
     fingerprint_quant_memo,
     fingerprint_reversion_envelope,
@@ -323,6 +327,35 @@ def _run_reversion_envelope_shape(env: dict[str, Any], ctx: GateContext):
     return outcome, "reversion_envelope_shape", "pass" if shape.valid else "fail"
 
 
+def _run_intervention_audit(env: dict[str, Any], ctx: GateContext):
+    """In-session-monitor intervention-audit shape gate (HG-39).
+
+    Mirrors ``_run_envelope_shape`` exactly: runs the presence-only validator
+    (P13) over the audit envelope and emits the gate outcome.
+
+    Naming (mirrors reversion/tactical): the gate NAME passed to ``make_outcome``
+    and the GATE_IDS key are the ``_shape``-suffixed ``intervention_audit_shape``
+    (so ``make_outcome`` resolves ``GATE_IDS["intervention_audit_shape"]`` =
+    HG-39); the REGISTRY *artifact_type* it is registered under stays the short
+    ``intervention_audit`` (design.md §Gate — intervention_audit_shape).
+
+    This runner is registered AFTER the import-time WS-6 hybrid loop below
+    (Resolution A): the audit is presence-only (P13), NOT a WS-6 advisory-judge
+    artifact — ``_hybrid_gate._spine_for("intervention_audit")`` returns None,
+    so attaching a hybrid runner would fail-safe to FAIL and drag a valid audit
+    invalid. Registering post-loop keeps the audit out of the judge family the
+    design never sanctioned (design.md:255).
+    """
+    shape = validate_intervention_audit_shape(env)
+    outcome = make_outcome(
+        "intervention_audit_shape",
+        shape.valid,
+        to_dict_safe(shape),
+        fingerprint_intervention_audit(shape),
+    )
+    return outcome, "intervention_audit_shape", "pass" if shape.valid else "fail"
+
+
 # --------------------------------------------------------------------------- #
 # The registry: artifact_type -> ordered list of gate runners.
 # Order matches the pre-refactor _validate_* bodies exactly so the resulting
@@ -402,6 +435,18 @@ for _artifact_type in list(REGISTRY.keys()):
             cache=_HYBRID_CACHE,  # None when LLM cache disabled -> judge abstains
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# In-session-monitor intervention-audit artifact (Resolution A — register POST
+# hybrid loop). This artifact is presence-only (P13, design.md:255), NOT a WS-6
+# advisory-judge artifact: ``_hybrid_gate._spine_for("intervention_audit")``
+# returns None. Registering it AFTER the loop above means NO spine-less hybrid
+# runner is appended to it — a hybrid runner would fail-safe to HYBRID_FAIL and
+# drag a VALID audit invalid through ``validate_all``. The post-loop placement
+# is the design-correct seam, not a workaround (see ``_run_intervention_audit``).
+# --------------------------------------------------------------------------- #
+REGISTRY["intervention_audit"] = [_run_intervention_audit]
 
 
 __all__ = ["GateContext", "GateRunner", "REGISTRY"]

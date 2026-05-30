@@ -46,7 +46,7 @@
   - _Depends: 1.2_
 
 - [ ] 3. Core: audit validator + command serialization
-- [ ] 3.1 (P) Author and register the intervention-audit shape validator
+- [x] 3.1 (P) Author and register the intervention-audit shape validator
   - Author a presence-only shape validator (required-key + nullable-subkey convention, with named result fields for stuck-loop fingerprinting) for the audit envelope, and wire it into the gate machinery (runner + artifact type + fingerprint + gate id + valid-artifact-types) so it runs as that artifact's gate
   - Observable: the gate machinery accepts the new artifact type, a canonical audit envelope validates as pass, and a missing-key envelope fails
   - _Requirements: 7.4_

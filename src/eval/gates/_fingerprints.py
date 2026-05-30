@@ -21,6 +21,7 @@ from src.eval.gates.cdd_memo_shape import CDDMemoShapeResult
 from src.eval.gates.tactical_envelope_shape import TacticalEnvelopeShapeResult
 from src.eval.gates.reversion_envelope_shape import ReversionEnvelopeShapeResult
 from src.eval.gates.intangibles_adjustment_shape import IntangiblesAdjustmentResult
+from src.eval.gates.intervention_audit_shape import InterventionAuditShapeResult
 from src.eval.gates.catalyst_modifier_composition_check import (
     CatalystModifierCompositionResult,
 )
@@ -302,6 +303,17 @@ def fingerprint_reversion_envelope(r: ReversionEnvelopeShapeResult) -> str:
     return "|".join(sorted(parts)) if parts else "ok"
 
 
+def fingerprint_intervention_audit(r: InterventionAuditShapeResult) -> str:
+    """Deterministic stuck-loop signature for the intervention-audit shape gate (HG-39)."""
+    parts: list[str] = []
+    for k in r.missing_top_level:
+        parts.append(f"top:{k}")
+    for top_key in sorted(r.missing_subkeys):
+        for sk in r.missing_subkeys[top_key]:
+            parts.append(f"subkey:{top_key}.{sk}")
+    return "|".join(sorted(parts)) if parts else "ok"
+
+
 def fingerprint_counterfactual(r: CounterfactualCatalogResult) -> str:
     parts: list[str] = []
     if r.missing_buckets:
@@ -327,6 +339,7 @@ __all__ = [
     "fingerprint_tactical_envelope",
     "fingerprint_reversion_envelope",
     "fingerprint_intangibles",
+    "fingerprint_intervention_audit",
     "fingerprint_catalyst_modifier_composition",
     "fingerprint_crowding_composition",
     "fingerprint_counterfactual",

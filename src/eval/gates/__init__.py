@@ -132,6 +132,10 @@ VALID_ARTIFACT_TYPES = (
     "cdd_memo",
     "tactical_envelope",
     "reversion_envelope",
+    # in-session-monitor audit envelope (presence-only HG-39; registered
+    # post-hybrid-loop in _registry so it carries NO WS-6 hybrid runner —
+    # gate NAME is intervention_audit_shape, artifact_type is the short form).
+    "intervention_audit",
 )
 
 # Invariant: VALID_ARTIFACT_TYPES and REGISTRY share the same key set. This is
@@ -202,8 +206,9 @@ def validate_all(
     Args:
         envelope: parsed dict, or path-like to a JSON file.
         artifact_type: one of {pm_envelope, quant_memo, strategic_memo,
-            catalyst_memo, cdd_memo, tactical_envelope, reversion_envelope}.
-            Defaults to pm_envelope for backward compatibility.
+            catalyst_memo, cdd_memo, tactical_envelope, reversion_envelope,
+            intervention_audit}. Defaults to pm_envelope for backward
+            compatibility.
         resolve_evidence_db: HG-26 DB resolution check.
         case_ids_for_counterfactual: case_ids for HG-28 catalog check
             (pm_envelope only).

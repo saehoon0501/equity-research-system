@@ -35,6 +35,7 @@ from src.eval.gates._hybrid_gate import (
     JUDGE_STATUS_ERRORED,
     JUDGE_STATUS_UNCONFIGURED,
     EscalateRateMonitor,
+    _spine_for,
     evaluate_hybrid,
     make_hybrid_runner_for,
 )
@@ -378,15 +379,27 @@ def test_escalate_monitor_rolls_over_window():
 # =========================================================================== #
 # Reachability — gate runs PURELY via the registry append
 # =========================================================================== #
-def test_hybrid_gate_registered_for_every_artifact_via_append():
-    # Every artifact type's runner list contains a hybrid runner. We can't
-    # compare function identity (closures), so probe behaviorally: the gate
-    # appears in validate_all output for each artifact type.
+def test_hybrid_gate_present_iff_artifact_has_a_spine():
+    # The WS-6 hybrid runner is appended to every artifact that HAS a
+    # deterministic spine (``_spine_for(at) is not None``). A presence-only
+    # artifact with NO spine (e.g. the in-session-monitor ``intervention_audit``,
+    # registered post-loop in _registry — design.md:255) must NOT get a hybrid
+    # runner: a spine-less hybrid fail-safes to HYBRID_FAIL and would drag a
+    # valid envelope invalid. We assert BOTH directions so a future genuine
+    # coverage gap is still caught — a pipeline artifact silently LOSING its
+    # hybrid runner, AND a presence-only gate wrongly GAINING a spurious one.
+    # We can't compare function identity (closures), so probe behaviorally: the
+    # gate appears in validate_all output iff the artifact has a spine.
     for at in REGISTRY:
-        # build a minimal env that will at least let the runner execute.
-        result = validate_all({}, artifact_type=at)
-        names = {g.gate_name for g in result.gates}
-        assert HYBRID_GATE_NAME in names, f"hybrid gate missing for {at}"
+        names = {g.gate_name for g in validate_all({}, artifact_type=at).gates}
+        if _spine_for(at) is not None:
+            assert HYBRID_GATE_NAME in names, (
+                f"WS-6 spine artifact {at} lost its hybrid runner"
+            )
+        else:
+            assert HYBRID_GATE_NAME not in names, (
+                f"presence-only {at} got a spurious always-FAIL hybrid runner"
+            )
 
 
 def test_hybrid_runner_records_into_injected_monitor():
