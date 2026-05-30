@@ -19,9 +19,12 @@ proof; the dedicated, exhaustive param tests are task 5.1.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import importlib
 import math
+import pathlib
+import sys
 
 import pytest
 
@@ -271,3 +274,187 @@ def test_tighten_only_version_fields_carry_pinned_through():
     )
     assert result.code_version == "base-code"
     assert result.param_version == "base-param"
+
+
+# --------------------------------------------------------------------------- #
+# tighten_only — malformed override must NEVER loosen (R2.5 / R10.4).          #
+# --------------------------------------------------------------------------- #
+# `tighten_only` (unlike `resolve`) does not type/finiteness-validate its
+# override values. The binding survival invariant is R2.5: a runtime adjustment
+# is applied ONLY when it tightens; it must NEVER loosen a survival constraint.
+# These tests assert the requirement-level property — the resolved value is never
+# *looser* than the pinned value — for malformed input. They deliberately do NOT
+# assert that a non-finite override is applied verbatim (that would enshrine
+# arguably-buggy behavior; see the module concern on the resolve/tighten_only
+# validation asymmetry). The direction is encoded LOCALLY below so the test is
+# not circular with the module's own `_TIGHTENS` table.
+
+# field -> "higher" if a higher value is the tighter (more conservative) one,
+# else "lower". Derived independently from the design table, NOT from _TIGHTENS.
+_TIGHTER_DIRECTION = {
+    "stop_out_level_pct": "higher",
+    "safe_mode_buffer_pct": "higher",
+    "per_order_size_max": "lower",
+    "speculative_sleeve_cap_pct": "lower",
+    "flatten_lead_seconds": "higher",
+    "assess_max_latency_seconds": "lower",
+}
+
+
+def _is_not_looser(fieldname, pinned_value, result_value):
+    """True iff ``result_value`` is equal-or-tighter than ``pinned_value``.
+
+    "Not looser" is the R2.5 invariant: equal (override ignored / retained) or
+    strictly tighter is acceptable; strictly looser is a survival violation.
+    """
+    if _TIGHTER_DIRECTION[fieldname] == "higher":
+        # higher = tighter; looser would be a STRICTLY lower result.
+        return result_value >= pinned_value
+    # lower = tighter; looser would be a STRICTLY higher result.
+    return result_value <= pinned_value
+
+
+@pytest.mark.parametrize("fieldname", list(_TIGHTER_DIRECTION))
+def test_tighten_only_nan_override_never_loosens(fieldname):
+    # NaN compares False to everything, so the comparator rejects it and the
+    # pinned value is retained — for every numeric field, in both directions.
+    m = _params_module()
+    pinned = _pinned()
+    result = m.tighten_only(pinned, {fieldname: math.nan})
+    assert getattr(result, fieldname) == _PINNED_BASE[fieldname], (
+        f"{fieldname}: a NaN override must retain the pinned value (never loosen)"
+    )
+
+
+@pytest.mark.parametrize("fieldname", list(_TIGHTER_DIRECTION))
+def test_tighten_only_inf_override_never_loosens(fieldname):
+    # +inf is malformed; whether it is rejected (future hardened build) or
+    # applied (current build, only on higher-is-tighter fields), the result must
+    # never be LOOSER than the pinned value. We assert the requirement, not the
+    # current applied/rejected outcome.
+    m = _params_module()
+    pinned = _pinned()
+    pinned_value = getattr(pinned, fieldname)
+    for bad in (math.inf, -math.inf):
+        result = m.tighten_only(pinned, {fieldname: bad})
+        assert _is_not_looser(fieldname, pinned_value, getattr(result, fieldname)), (
+            f"{fieldname}: a {bad} override must never loosen the survival "
+            f"constraint (pinned={pinned_value}, got={getattr(result, fieldname)})"
+        )
+
+
+@pytest.mark.parametrize("bad", ["2.0", None, [1.0], {"x": 1}])
+@pytest.mark.parametrize("fieldname", list(_TIGHTER_DIRECTION))
+def test_tighten_only_wrong_type_override_fails_closed_never_loosens(fieldname, bad):
+    # A wrong-type override to a numeric field currently raises from the
+    # comparator (`'<'/'>' not supported`) — i.e. it fails closed rather than
+    # silently loosening. If 1.2 later adds explicit validation it will still
+    # raise; either way it must never silently apply a looser value. We accept
+    # (TypeError, ValueError) so the assertion survives a future explicit-
+    # validation change.
+    m = _params_module()
+    pinned = _pinned()
+    pinned_value = getattr(pinned, fieldname)
+    try:
+        result = m.tighten_only(pinned, {fieldname: bad})
+    except (TypeError, ValueError):
+        return  # fail-closed: acceptable (never loosened, raised instead).
+    # If it did NOT raise, the result must at minimum never be looser.
+    assert _is_not_looser(fieldname, pinned_value, getattr(result, fieldname)), (
+        f"{fieldname}: a wrong-type override ({bad!r}) that does not raise must "
+        f"never loosen the survival constraint"
+    )
+
+
+def test_tighten_only_unknown_key_override_is_ignored():
+    # An override key the gate does not know cannot loosen a constraint: it is
+    # ignored and the full pinned set is carried through unchanged.
+    m = _params_module()
+    pinned = _pinned()
+    result = m.tighten_only(pinned, {"not_a_survival_field": 0.0, "another": -1})
+    assert result == pinned
+
+
+def test_tighten_only_malformed_exclusion_override_cannot_disable():
+    # Boolean loosen-guard (R5.4 / R10.4): with exclusion pinned True, NO
+    # malformed/falsy/truthy override may flip it to False. Disabling the ex-ante
+    # exclusion stage at runtime is the boolean LOOSEN and must be impossible via
+    # any override value.
+    m = _params_module()
+    pinned = m.SurvivalParameters(**{**_PINNED_BASE, "exclusion_enabled": True})
+    for bad in (False, 0, "", None, math.nan, "false"):
+        result = m.tighten_only(pinned, {"exclusion_enabled": bad})
+        assert result.exclusion_enabled is True, (
+            f"exclusion override {bad!r} must not disable the pinned-True "
+            f"ex-ante exclusion stage (boolean loosen)"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# resolve — remaining fail-closed branches (inf, empty version string).        #
+# --------------------------------------------------------------------------- #
+
+def test_resolve_fails_closed_on_inf():
+    # _coerce_float rejects non-finite (inf), like NaN — closing the second
+    # branch of the finiteness guard.
+    m = _params_module()
+    snap = _valid_snapshot()
+    snap["survival.flatten_lead_seconds"] = math.inf
+    with pytest.raises(ValueError):
+        m.resolve(snap)
+
+
+def test_resolve_fails_closed_on_empty_version_string():
+    # An empty version string is malformed run-identity metadata; resolve must
+    # fail closed rather than admit an empty four-key identity (P3).
+    m = _params_module()
+    snap = _valid_snapshot()
+    snap["code_version"] = ""
+    with pytest.raises(ValueError):
+        m.resolve(snap)
+
+
+# --------------------------------------------------------------------------- #
+# R11.2 — inner-ring isolation: no LLM / MCP / live-DB import in the path.     #
+# --------------------------------------------------------------------------- #
+
+def test_params_module_imports_are_stdlib_or_survival_only():
+    """Structural proof of R11.2 / P14: ``params.py`` pulls in only the standard
+    library and the ``src.survival`` package — no LLM client, MCP, or DB driver
+    can sit on the decision path. AST-scan of the direct imports (not a
+    transitive graph walk — proportionate to the inner-ring isolation claim).
+
+    Crucially this resolves ``src.*`` imports to their FULL dotted path and
+    requires ``src.survival.*`` specifically: ``from src.mcp import ...`` or
+    ``import src.shared.db`` must fail, not slip through on the shared ``src``
+    top-level token.
+    """
+    m = _params_module()
+    source = pathlib.Path(m.__file__).read_text()
+    tree = ast.parse(source)
+
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                modules.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                continue  # relative intra-package import (`from . import x`) — safe.
+            if node.module:
+                modules.add(node.module)
+
+    stdlib = set(sys.stdlib_module_names)
+    for mod in modules:
+        top = mod.split(".")[0]
+        if top == "src":
+            assert mod.split(".")[:2] == ["src", "survival"], (
+                f"params.py imports {mod!r} — only src.survival.* is allowed on "
+                f"the inner-ring path (R11.2 isolation); a non-survival src.* "
+                f"import (e.g. src.mcp / src.shared.db) would break it"
+            )
+        else:
+            assert top in stdlib, (
+                f"params.py imports {mod!r}, which is neither stdlib nor under "
+                f"src.survival — R11.2 inner-ring isolation would be broken"
+            )
