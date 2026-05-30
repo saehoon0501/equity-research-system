@@ -424,9 +424,12 @@ def _is_true_exit(order: ProposedOrder, state: AccountState) -> bool:
     only case that short-circuits ``admit`` to ALLOW (fail-toward-flat).
 
     A true exit is, *strictly*: opposite-side to a **single** held position in the
-    **same symbol**, with ``order.volume <= position.volume`` (≤ is inclusive — a
-    full flatten is an exit). Classification is by **effect on the held position,
-    not the disposition label** (P7 — ``intent`` is ignored).
+    **same symbol**, with a **finite, strictly-positive** ``order.volume`` not
+    exceeding the held volume (``0 < order.volume <= position.volume`` — the upper
+    bound is inclusive, so a full flatten is an exit; a zero / negative / non-finite
+    volume net-reduces nothing and is NOT an exit, so it cannot bypass the kill
+    switch — R9.1). Classification is by **effect on the held position, not the
+    disposition label** (P7 — ``intent`` is ignored).
 
     **Fails toward OPEN on every ambiguity** (the catastrophe to avoid is
     misclassifying an open as an exit and slipping new exposure past the kill
@@ -453,8 +456,15 @@ def _is_true_exit(order: ProposedOrder, state: AccountState) -> bool:
         return False  # garbage held side → fail toward open
     if held.direction == order.direction:
         return False  # same-side add increases exposure → open
-    # Opposite side: a true exit iff it does not exceed the held volume (no flip).
-    return order.volume <= held.volume
+    # Opposite side: a true exit iff it strictly net-reduces without a flip — a
+    # FINITE, STRICTLY-POSITIVE volume not exceeding the held volume. A zero /
+    # negative / non-finite (NaN / inf) volume net-reduces NOTHING (and a negative
+    # volume may be exposure-increasing), so it does NOT receive the
+    # fail-toward-flat carve-out — it falls through to the full walk (→ REJECTED
+    # under an engaged kill switch). The carve-out exists ONLY because "getting
+    # flat must always be possible" (design "Fail direction"); a non-reducing
+    # order must not bypass the kill switch (R9.1).
+    return math.isfinite(order.volume) and 0.0 < order.volume <= held.volume
 
 
 def _reject(

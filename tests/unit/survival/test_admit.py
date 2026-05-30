@@ -739,6 +739,101 @@ def test_exit_volume_at_held_volume_is_a_true_exit():
 
 
 # --------------------------------------------------------------------------- #
+# 13b. KILL-SWITCH BYPASS GUARD — a zero/negative-volume opposite-side order    #
+#      net-reduces NOTHING, so it is NOT a true exit and must NOT receive the    #
+#      fail-toward-flat carve-out. The exit carve-out exists ONLY because        #
+#      "getting flat must always be possible" (design "Fail direction"); a       #
+#      zero-volume order flattens nothing and a negative-volume order may be      #
+#      exposure-increasing. Both must fall through to the full lexicographic     #
+#      walk → REJECTED under an engaged kill switch (fail-safe, R9.1).            #
+# --------------------------------------------------------------------------- #
+
+def test_zero_volume_opposite_side_is_not_exit_rejected_under_kill_switch():
+    """A ZERO-volume opposite-side order (SHORT 0.0 vs held LONG 10) net-reduces
+    nothing → NOT a true exit → full walk → REJECT ``kill_switch`` under an
+    engaged kill switch. (Buggy ``volume <= held`` classified ``0.0 <= 10`` as a
+    true exit and short-circuited to ALLOW — bypassing R9.1.)"""
+    held = _position(symbol="AAPL", direction="LONG", volume=10.0)
+    d = _admit(
+        order=_order(symbol="AAPL", intent="SELL", direction="SHORT", volume=0.0),
+        state=_account(positions=[held]),
+        op_state=_op(kill_switch=True),
+        params=_params(),
+        clock=None,
+        evaluation=_order_evaluation(),  # all-reject defaults
+    )
+    assert d.decision == "REJECT"
+    assert d.binding_constraint == "kill_switch"
+
+
+def test_negative_volume_opposite_side_is_not_exit_rejected_under_kill_switch():
+    """A NEGATIVE-volume opposite-side order (SHORT -5.0 vs held LONG 10)
+    net-reduces nothing (a negative volume may be exposure-increasing) → NOT a
+    true exit → full walk → REJECT ``kill_switch``. (Buggy ``volume <= held``
+    classified ``-5.0 <= 10`` as a true exit and short-circuited to ALLOW —
+    bypassing R9.1.)"""
+    held = _position(symbol="AAPL", direction="LONG", volume=10.0)
+    d = _admit(
+        order=_order(symbol="AAPL", intent="SELL", direction="SHORT", volume=-5.0),
+        state=_account(positions=[held]),
+        op_state=_op(kill_switch=True),
+        params=_params(),
+        clock=None,
+        evaluation=_order_evaluation(),  # all-reject defaults
+    )
+    assert d.decision == "REJECT"
+    assert d.binding_constraint == "kill_switch"
+
+
+def test_is_true_exit_false_for_zero_and_negative_volume():
+    """Classify directly: ``_is_true_exit`` must return False for a zero-volume
+    and a negative-volume opposite-side order (net-reduces nothing → no
+    fail-toward-flat carve-out). The genuine net-reducing exit (positive volume
+    ≤ held) still classifies True."""
+    gate = _gate_module()
+    held = _position(symbol="AAPL", direction="LONG", volume=10.0)
+    state = _account(positions=[held])
+    # Zero volume — RED against the buggy `volume <= held`.
+    assert gate._is_true_exit(
+        order=_order(symbol="AAPL", direction="SHORT", volume=0.0), state=state
+    ) is False
+    # Negative volume — RED against the buggy `volume <= held`.
+    assert gate._is_true_exit(
+        order=_order(symbol="AAPL", direction="SHORT", volume=-5.0), state=state
+    ) is False
+    # Genuine net-reducing exit still classifies True (no clipping of valid exits).
+    assert gate._is_true_exit(
+        order=_order(symbol="AAPL", direction="SHORT", volume=8.0), state=state
+    ) is True
+
+
+def test_nan_volume_opposite_side_is_not_exit_rejected_under_kill_switch():
+    """A NaN-volume opposite-side order is NOT a true exit → REJECT
+    ``kill_switch``. NON-DISCRIMINATING for RED: ``nan <= 10`` is already False,
+    so the buggy code ALSO rejects this (``_is_true_exit`` returns False both
+    before and after the fix — for different reasons: pre-fix via the comparison
+    being False, post-fix via the explicit finite-and-positive guard). Kept as a
+    post-fix guard assertion that the finiteness guard rejects NaN from the
+    carve-out, NOT as a bypass demonstration."""
+    held = _position(symbol="AAPL", direction="LONG", volume=10.0)
+    nan = float("nan")
+    gate = _gate_module()
+    assert gate._is_true_exit(
+        order=_order(symbol="AAPL", direction="SHORT", volume=nan), state=_account(positions=[held])
+    ) is False
+    d = _admit(
+        order=_order(symbol="AAPL", intent="SELL", direction="SHORT", volume=nan),
+        state=_account(positions=[held]),
+        op_state=_op(kill_switch=True),
+        params=_params(),
+        clock=None,
+        evaluation=_order_evaluation(),
+    )
+    assert d.decision == "REJECT"
+    assert d.binding_constraint == "kill_switch"
+
+
+# --------------------------------------------------------------------------- #
 # 14. funding_cap is NEVER the binding constraint in admit.                     #
 # --------------------------------------------------------------------------- #
 
