@@ -1,6 +1,8 @@
 # Design Document
 
 > **Revision 2 (2026-05-30)** — design follow-up after `/kiro-validate-gap` Refresh 2: closes the **command-transport** gap (the v1 design exposed only in-process command seams; the out-of-process `in-session-monitor` had no channel to reach the daemon) and folds in two forward contracts that the now-landed consumer specs resolved (`walk_forward_window` registry-sourcing; event-queue single-drainer). All v1 decisions otherwise stand.
+>
+> **Revision 2.1 (2026-05-30)** — `/kiro-validate-design` GO-with-conditions: (1) the epoch/`run_id` now uses a **daemon-owned `execution_daemon_epoch` table** instead of reusing `run_parameters_snapshot` — keeps the LLM `/research-company` run lifecycle + P6 orphan reconciler uncontaminated (Issue 1, operator chose option b); (2) the **Phase-1/Phase-2 build split** is encoded (§Build Phasing) — `reactive.decide` landed 2026-05-30, so Phase 2 is now blocked on **`survival-gate` impl only** (Issue 2); (3) a **command-intake write-authorization** note added (Issue 3).
 
 ## Overview
 
@@ -47,7 +49,7 @@
 ### Allowed Dependencies
 - **In-process leaf imports** (never via MCP): `broker-cfd-adapter` `core` (`submit_decision`, `get_positions`, `get_account_assets`, `get_history`, `validate_symbol`), `reactive-signal-model` `signal_model.decide`, `survival-gate` `gate.admit`/`assess`/`check_capitalization`.
 - **Landed write/read API**: `src/reactive/telemetry/{trace_writer,reader,schema}` — the daemon passes its own `conn`.
-- **P2 machinery**: `parameters` / `parameters_active` / `run_parameters_snapshot` (reactive + survival namespaces, pinned by value, REPEATABLE READ) + the param-version **registry** the tuner publishes to (the source of validated configs + the advanced window).
+- **P2 machinery**: `parameters` / `parameters_active` (reactive + survival namespaces, read by value, REPEATABLE READ — the daemon pins into its **own** `execution_daemon_epoch`, not `run_parameters_snapshot`) + the param-version **registry** the tuner publishes to (the source of validated configs + the advanced window).
 - **Reused tables**: `survival_gate_state` / `survival_gate_events` (the daemon persists what the gate emits; a kill-switch / safe-mode intake command is translated into a gate-path op-state write the loop reads fresh).
 - **Convention**: per-module `_dsn()` + psycopg3 caller-passed `conn`; the append-only-guard trigger pattern (mig 003/048).
 - **Forbidden**: importing `walkforward-tuning-loop` / `in-session-monitor`; any MCP call from the loop; any LLM dispatch. Dependency direction is downstream→daemon→deps only.
@@ -63,7 +65,7 @@
 ## Architecture
 
 ### Existing Architecture Analysis
-The four dependencies are pure/leaf and **all synchronous** (the broker's "async submit→poll→reconcile" is venue order-semantics, a blocking poll, not Python coroutines). The repo has **no persistent process** and **no connection pool**; every writer declares a local `_dsn()` and takes a caller-passed `conn`. The telemetry writer's `conn=None` is a **dry-run** path (the daemon's inner-ring test seam). Param pinning exists as `run_parameters_snapshot`; reactive + survival params share that machinery via distinct namespaces. The append-only-guard trigger is the house event-log pattern. **No in-process channel exists between an out-of-process markdown orchestration and the daemon** (the daemon is not an MCP server, §14.10) — hence the inbound command-intake table is the transport.
+The four dependencies are pure/leaf and **all synchronous** (the broker's "async submit→poll→reconcile" is venue order-semantics, a blocking poll, not Python coroutines). The repo has **no persistent process** and **no connection pool**; every writer declares a local `_dsn()` and takes a caller-passed `conn`. The telemetry writer's `conn=None` is a **dry-run** path (the daemon's inner-ring test seam). Param pinning exists as `run_parameters_snapshot` (the LLM-run pattern the daemon **mirrors into its own `execution_daemon_epoch`** rather than reusing — Issue 1/option b); reactive + survival params share the `parameters` machinery via distinct namespaces. The append-only-guard trigger is the house event-log pattern. **No in-process channel exists between an out-of-process markdown orchestration and the daemon** (the daemon is not an MCP server, §14.10) — hence the inbound command-intake table is the transport.
 
 ### Architecture Pattern & Boundary Map
 Selected pattern: a **single-threaded blocking evaluation loop** (process + scheduler) wrapping a **§13 gate-orchestrator**, with supporting services (trace-assembler, lifecycle-manager, command-surface) and an emit-only event-queue. One owned psycopg3 connection is serialized through the loop. The command surface reads an **inbound intake table** each cycle (the out-of-process transport) and applies through gated seams. Rationale: mandated by survival-gate's op-state-freshness guarantee, matches the all-sync deps, smallest correct shape (P1 leaf, no asyncio, no pool).
@@ -89,7 +91,7 @@ graph TB
     QTable --> Tuner[walkforward tuning loop sole drainer]
     Lifecycle --> PVTable[execution_daemon_position_version]
     Params[params epoch pin run_id window] --> Orch
-    Params --> Snapshot[run_parameters_snapshot]
+    Params --> Epoch[execution_daemon_epoch]
     Params --> Registry
 ```
 
@@ -99,7 +101,7 @@ Dependency direction (strict, left→right): `types → config → db → params
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
 | Backend / Services | Python ≥3.11 (stdlib + project libs) | the persistent loop + orchestration leaf | imports broker/reactive/survival cores in-process |
-| Data / Storage | Postgres (append-only) | event_queue + position_version + command_intake; reuses decision_process_trace, survival_gate_*, run_parameters_snapshot + the P2 registry | one owned psycopg3 conn; local `_dsn()` |
+| Data / Storage | Postgres (append-only) | owns event_queue + position_version + command_intake + epoch; reuses decision_process_trace, survival_gate_*, parameters_active + the P2 registry | one owned psycopg3 conn; local `_dsn()` |
 | Messaging / Events | DB-table event queue (emit) + DB-table command intake (inbound) | after-market hand-off (one external drainer) + out-of-process command transport | append-only-guard; no file-queue; no MCP/in-process call from the commander |
 | Infrastructure / Runtime | new `docker compose` service (or supervised `python -m src.reactive.daemon`) | launches/supervises the long-lived process | restart policy; **new process shape** (no precedent) |
 
@@ -113,7 +115,7 @@ src/reactive/daemon/
 ├── config.py            # _dsn() + DaemonConfig: paper flag, assess_max_latency, poll timeout, cadence, intake-poll cadence
 ├── db.py                # owned psycopg3 connection lifecycle; per-cycle conn.transaction() helper
 ├── types.py             # EvalTick, EpochContext (run_id, code/param version, walk_forward_window, pinned snapshots), CommandRow
-├── params.py            # per-epoch pin: REPEATABLE-READ resolve of parameters_active (reactive+survival) -> run_parameters_snapshot row + run_id mint; re-source walk_forward_window from the P2 registry at hot-swap (v0.1 bootstrap until the tuner publishes)
+├── params.py            # per-epoch pin: REPEATABLE-READ resolve of parameters_active (reactive+survival) -> a daemon-owned execution_daemon_epoch row (epoch_id = run_id, pinned-hash, window, opened/closed); re-source walk_forward_window from the P2 registry at hot-swap (v0.1 bootstrap until the tuner publishes)
 ├── trace_assembler.py   # ReactiveDecision + survival fields + broker fill -> DecisionTraceRow / FillOutcomeRow; trace_id mint, event_ts, run_id+window inject, substrate->signal_values / binding_constraint->gate_link / derive liq_proximity,stop_out,declined; parent linking
 ├── event_queue.py       # emit decision/lifecycle/command events to execution_daemon_event_queue (EMIT ONLY; never sets drained_at). Documents the single-drainer drain contract consumers use
 ├── lifecycle.py         # flat-before-close action + verify-flat handshake; version-pin (open/close) into execution_daemon_position_version; atomic hot-swap (whole-object pointer flip); global-tightest survive across versions
@@ -132,9 +134,16 @@ tests/integration/
 
 ### Modified / New Files
 - `db/migrations/051_execution_daemon_event_queue.sql` — **NEW** append-only `execution_daemon_event_queue` + guard (mig-003/048 pattern).
-- `db/migrations/052_execution_daemon_state.sql` — **NEW** `execution_daemon_position_version` (open/close + version pin) **and** `execution_daemon_command_intake` (inbound command transport) + guards. (Two daemon-state tables co-located to keep the daemon at 051/052 and avoid renumbering 053+/≥054.)
+- `db/migrations/052_execution_daemon_state.sql` — **NEW** `execution_daemon_position_version` (open/close + version pin), `execution_daemon_command_intake` (inbound command transport), **and `execution_daemon_epoch`** (epoch_id=run_id, pinned-hash, window, opened/closed) + guards. (Three daemon-state tables co-located to keep the daemon at 051/052 and avoid renumbering 053+/≥054.)
 - `docker-compose.yml` — **MODIFIED**: add a daemon service (paper mode) alongside `postgres`, with a restart policy.
 - `.env.example` — **MODIFIED**: daemon config keys (paper flag, `assess_max_latency_seconds`, poll timeout, intake-poll cadence).
+
+### Build Phasing (dep-readiness, P14) — added R2.1
+The daemon is last in build order; its clusters split by dependency-readiness (state as of 2026-05-30):
+- **Phase 1 — buildable now (dep-independent):** migrations 051/052 + guards; `config` / `db` / `types`; `params` (epoch resolver against synthetic param rows); `trace_assembler` (against `write_decision_trace(conn=None)` dry-run); `event_queue`; `commands` (intake poll/apply against synthetic op-state). All inner-ring-testable with no `survival.gate`. **`reactive.decide` landed 2026-05-30** (`src/reactive/signal_model.py`), so the Edge wiring is no longer blocked.
+- **Phase 2 — blocked on `survival-gate` implementation only:** `orchestrator` (the §13 walk needs `survival.admit`/`assess`), `lifecycle` flatten action (needs `survival` assess directives), the end-to-end loop, integration/e2e tests. Do **not** wire these until `src/survival/gate.py` exists.
+
+Task generation must mark Phase-2 sub-tasks `_Depends:_` blocked-on-survival-gate so they are not started prematurely (P14 — outer-ring/e2e wiring is uninterpretable without the dep's inner ring).
 
 ## System Flows
 
@@ -237,7 +246,7 @@ sequenceDiagram
 | `lifecycle` | control | flatten + version-pin + hot-swap | 6.x, 8.x | broker (P0), params (P0) | Service, State |
 | `commands` | control | inbound intake transport + gated apply | 5.4, 7.2, 7.4, 9.2-9.4 | command_intake (P0), survival_gate_state (P0) | Service, State, Batch |
 | `event_queue` | persistence | emit-only event log | 9.1 | db (P0) | Event |
-| `params` | config | epoch pin + run_id + window re-source | 1.4, 4.2, 8.1 | run_parameters_snapshot + P2 registry (P0) | State, Service |
+| `params` | config | epoch pin + run_id + window re-source | 1.4, 4.2, 8.1 | parameters_active + P2 registry (P0) | State, Service |
 
 ### Control — `commands` (revised in R2)
 | Field | Detail |
@@ -262,7 +271,7 @@ def select_validated_config(version_id) -> None: ...  # registry-member + toward
 **Responsibilities & Constraints**: emit decision / fill / lifecycle / command / safe_mode / kill_switch events to `execution_daemon_event_queue` (INSERT only). The daemon **never drains** — `drained_at` is set exclusively by the single external drainer (`walkforward-tuning-loop`). If `in-session-monitor` needs in-session event visibility it uses a **read-only, non-draining** SELECT (not provided by the daemon; out of boundary). **Contracts**: Event.
 
 ### Config — `params` (revised in R2)
-**Responsibilities & Constraints**: at startup and at each hot-swap, resolve `parameters_active` (reactive + survival namespaces) under a single REPEATABLE-READ transaction into a `run_parameters_snapshot` row, mint the epoch `run_id`, and **re-source `walk_forward_window` from the P2 param-version registry** — published there by `walkforward-tuning-loop` alongside the promoted version (its Req 7.3). v0.1 uses a bootstrap window label tied to the epoch until the tuner first publishes. Expose pinned snapshots by value; never re-resolve mid-cycle (P2). Build item: a small Python snapshot-resolver mirroring `/research-company` §1.5 (no Python precedent exists).
+**Responsibilities & Constraints**: at startup and at each hot-swap, resolve `parameters_active` (reactive + survival namespaces) under a single REPEATABLE-READ transaction into a **daemon-owned `execution_daemon_epoch` row** (the row's `epoch_id` IS the `run_id` the trace carries; it captures the pinned-parameter hash + the window), and **re-source `walk_forward_window` from the P2 param-version registry** — published there by `walkforward-tuning-loop` alongside the promoted version (its Req 7.3). v0.1 uses a bootstrap window label tied to the epoch until the tuner first publishes. Expose pinned snapshots by value; never re-resolve mid-cycle (P2). Build item: a small Python resolver mirroring the `/research-company` §1.5 REPEATABLE-READ read but writing the **daemon's own `execution_daemon_epoch`, not `run_parameters_snapshot`** (Issue 1 / option b) — keeping the research-company run lifecycle + P6 orphan reconciler uncontaminated.
 
 ### Control — `orchestrator` / `trace_assembler` / `lifecycle` / Runtime — `loop`
 *(Unchanged from R1 except where noted.)* `orchestrator`: the §13 walk, persist-then-act, resize-on-advisory, declined-trace, never-upsize; obtains decisions/verdicts/sizing/venue-actions exclusively from the deps (10.2/10.3). `trace_assembler`: mint `trace_id`, stamp `event_ts` at decision time, inject `run_id`+`walk_forward_window`, map substrate→`signal_values` / `binding_constraint`→`gate_link`, derive `liq_proximity`/`stop_out`/`declined`, link decision↔fill; idempotent via the writer's `ON CONFLICT`; inner-ring-tested against `write_decision_trace(conn=None)`. `lifecycle`: flatten-in-window + verify-flat escalation; version-pin at open; manage under opening version after hot-swap; whole-object atomic swap; global-tightest survive; **adopts the version `commands` selected** (Req 9.4). `loop`: single-eval-at-a-time; **polls intake first**, then `assess` within cadence + on margin-material events; fail-toward-minimum-exposure on dependency error.
@@ -274,8 +283,11 @@ def select_validated_config(version_id) -> None: ...  # registry-member + toward
 **`execution_daemon_position_version`** (mig 052; append-only, guard trigger): `record_id` (PK), `run_id`, `venue_position_id`, `code_version`, `param_version`, `event` (opened | closed), `event_ts`, `created_at`. INSERT-only; the open/close pair reconstructs a position's version-pinned lifetime.
 
 **`execution_daemon_command_intake`** (mig 052; append-only, guard trigger): `command_id` (PK, commander-minted), `issued_by` (monitor | operator), `command_type` (engage_kill_switch | set_safe_mode_grade | select_validated_config), `target` (JSONB — e.g. grade, version_id), `created_at`, `applied_at` (nullable), `status` (pending | applied | rejected), `reject_reason` (nullable). INSERT by the commander; UPDATE permitted only on the `applied_at`/`status`/`reject_reason` whitelist, **set exclusively by the daemon** (state-guard). The commander never sets `applied_at`; the daemon never inserts.
+> **Write-authorization (Issue 3 — no in-repo DB-role precedent):** the intake is a control channel into a levered session, so INSERT must be restricted. v0.1 (paper) accepts a documented permissive default, but the design **mandates a dedicated DB role/grant for the commander before any live cutover**, and the daemon validates `issued_by` against a configured allowlist at apply-time. The toward-safer guard already caps blast radius (a spurious command can only tighten/halt or select a registry member, never loosen); the residual unmitigated risk is a **halt-DoS via spurious `engage_kill_switch`**, accepted eyes-open for v0.1 paper.
 
-**Reused (not owned)**: `decision_process_trace` + `counterfactual_ledger` version dims (telemetry, mig 048); `survival_gate_state` / `survival_gate_events` (survival, migs 049/050); `run_parameters_snapshot` / `parameters_active` + the P2 param-version registry (mig 034/004 + the tuner's registry).
+**`execution_daemon_epoch`** (mig 052; append-only + narrow state-guard — Issue 1/option b): `epoch_id` (PK — **is** the `run_id` carried on every trace + event in the epoch), `pinned_param_hash`, `code_version`, `param_version`, `walk_forward_window`, `opened_at`, `closed_at` (nullable), `status` (open | closed). One row per pinned-param epoch (daemon start + each hot-swap). INSERT by the daemon; UPDATE permitted only on the `closed_at`/`status` whitelist. **Daemon-owned — deliberately NOT `run_parameters_snapshot`**, so the LLM `/research-company` run lifecycle (`run_status` in_progress/failed) + the P6 orphan reconciler stay uncontaminated.
+
+**Reused (not owned)**: `decision_process_trace` + `counterfactual_ledger` version dims (telemetry, mig 048); `survival_gate_state` / `survival_gate_events` (survival, migs 049/050); `parameters_active` + the P2 param-version registry (mig 004 + the tuner's registry). *(The daemon no longer writes `run_parameters_snapshot` — Issue 1/option b — it owns `execution_daemon_epoch` instead.)*
 
 ## Error Handling
 
@@ -300,13 +312,14 @@ Every decision, fill, lifecycle transition, and command (applied or rejected) is
 - **`loop` (1.x, 1.5):** single-eval-at-a-time; intake polled before assess; assess within cadence + on a margin-material event; dependency-error → fail-toward-minimum-exposure.
 
 ### Integration Tests (`integration_live`, real Postgres — `tests/integration/test_daemon_persistence.py`)
-- Migrations 051/052 apply; the guards reject UPDATE/DELETE except the whitelisted `drained_at` (event_queue) and `applied_at`/`status`/`reject_reason` (command_intake); a non-whitelisted UPDATE is rejected.
+- Migrations 051/052 apply; the guards reject UPDATE/DELETE except the whitelisted `drained_at` (event_queue), `applied_at`/`status`/`reject_reason` (command_intake), and `closed_at`/`status` (epoch); a non-whitelisted UPDATE is rejected.
 - A decision then linked fill round-trip via a real owned `conn`; re-insert of the same `trace_id` is a no-op (idempotency); a pending intake row is applied + marked exactly once.
 
 ## Open Questions / Risks
 - **`select-validated-config` registry contract** — the P2 param-version "menu" shape the daemon selects from is deferred to `walkforward-tuning-loop` design; the daemon re-sources it. Revalidation trigger when that registry shape lands.
 - **Read-only in-session event view** — if `in-session-monitor` needs to read recent events intra-session, it must use a non-draining SELECT (it must NOT set `drained_at`). Whether the daemon should expose a convenience read view is deferred to `in-session-monitor` design (out of daemon boundary for now).
-- **`run_id`/snapshot write path is markdown-orchestrated today** — `params` builds a Python REPEATABLE-READ resolver mirroring `/research-company` §1.5. Inner-ring tested.
+- **`run_id`/epoch write path** — `params` builds a Python REPEATABLE-READ resolver mirroring `/research-company` §1.5, writing the **daemon-owned `execution_daemon_epoch`** (Issue 1/option b — not `run_parameters_snapshot`). Inner-ring tested.
+- **Command-intake write-authorization** (Issue 3) — no in-repo DB-role precedent; v0.1 accepts a permissive default but a dedicated DB role/grant + `issued_by` allowlist is mandated before live cutover. Residual halt-DoS via spurious `engage_kill_switch` accepted eyes-open for paper.
 - **Version-pinned lifecycle is paper-moot** — §16.1 intraday-flat; its inner-ring coverage is synthetic multi-version fixtures (operator-accepted, 2026-05-30).
 - **New process shape** — launch/supervision (docker compose service vs supervised script) is greenfield; must stay P1-clean.
 - **Migration coordination** — 051/052 (command_intake co-located in 052 to avoid a 053+ cascade); verify against `db/migrations/` at author time (049/050 reserved by survival-gate; 053+ walkforward; ≥054 in-session-monitor).

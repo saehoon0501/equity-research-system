@@ -194,3 +194,13 @@ The command-transport gap + the two consumer-resolved forward contracts are now 
 - **Resolved — `walk_forward_window`**: re-sourced from the P2 registry at hot-swap (the tuner publishes it alongside the promoted version per its Req 7.3); v0.1 bootstrap label until the tuner first publishes.
 - **Resolved — event queue is emit-only, single external drainer**: the tuner is the sole `drained_at` setter; the daemon never drains; `in-session-monitor` (if it reads events in-session) must use a non-draining SELECT.
 - **Synthesis**: generalized `commands` into one intake+gated-apply surface (poll → validate → apply → mark) covering all three command types; adopted the existing append-only-guard + state-guard-whitelist patterns for the intake table (build-vs-adopt); no new file vs R1 (the intake-poll lives in `commands.py`).
+
+---
+
+# Design Follow-up — R2.1 (validate-design GO-with-conditions — 2026-05-30)
+
+`/kiro-validate-design` returned **GO (conditional)** with 3 critical issues; resolved into `design.md` Revision 2.1 (re-approval still required — `design.approved` stays false).
+
+- **Issue 1 — `run_id`/snapshot semantics mismatch → option (b), operator-chosen.** The daemon now owns a new `execution_daemon_epoch` table (`epoch_id` = `run_id`, pinned-hash, window, open/close; mig 052 co-located → still 051/052) **instead of reusing `run_parameters_snapshot`**. Keeps the LLM `/research-company` run lifecycle (`run_status` in_progress/failed) + the P6 orphan reconciler uncontaminated. `params` writes the epoch table, not the snapshot table.
+- **Issue 2 — Phase-2 readiness not encoded → resolved + narrowed.** git re-check 2026-05-30: **`reactive.decide` now LANDED** (`src/reactive/signal_model.py` + features/params/types + unit tests, Phase-1 inner-ring merged at `7ab701f`); **`survival.gate` still spec-only** (no `src/survival/`, `ready=False`). So Phase 2 (orchestrator + lifecycle + e2e) is blocked on **survival-gate only**, not two deps. Encoded as a §Build Phasing section; `/kiro-spec-tasks` must mark Phase-2 sub-tasks `_Depends:_` blocked-on-survival-gate.
+- **Issue 3 — command-intake write-auth → noted, no in-repo precedent.** grep found no `GRANT`/`CREATE ROLE` pattern in migrations/src. Mandate: a dedicated DB role/grant for the commander + an `issued_by` allowlist before any live cutover; v0.1 paper accepts a documented permissive default; the residual **halt-DoS via spurious `engage_kill_switch`** is accepted eyes-open (the toward-safer guard already prevents loosening).
