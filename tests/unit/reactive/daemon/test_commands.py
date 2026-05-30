@@ -218,6 +218,38 @@ def test_direct_mutation_row_rejected_with_reason() -> None:
     assert results[0].status == "rejected"
 
 
+def test_gated_seam_check_pins_direct_mutation_with_a_valid_payload() -> None:
+    """Mutation-killer for the gated-seam type check (5.6 coverage gap).
+
+    A direct-mutation row carrying an OTHERWISE-VALID ``select_validated_config``
+    payload (a registry-member ``version_id``) must still be rejected *because its
+    command_type is not a gated seam* — not merely because the payload is
+    malformed. Without the gated-seam check (``command_type not in
+    GATED_COMMAND_TYPES``), this row would fall through to the
+    ``select_validated_config`` branch, pass the registry guard, and be **applied**.
+    The plain direct-mutation test does not pin that branch (its payload lacks a
+    ``version_id`` and is rejected by the fall-through for the wrong reason); this
+    one fails if the gated-seam check is removed.
+    """
+    op = _SyntheticOpState()
+    row = CommandRow(
+        command_id="cmd-mutate-validpayload",
+        issued_by="monitor",
+        command_type="apply_config_and_mutate",  # type: ignore[arg-type]  # NOT a gated seam
+        target={"version_id": "cfg-validated-A"},  # a real registry member
+    )
+    results, intake = _run([row], op)
+
+    assert intake.status_of("cmd-mutate-validpayload") == "rejected"
+    reason = intake.reason_of("cmd-mutate-validpayload") or ""
+    assert "gated seam" in reason or "direct-mutation" in reason
+    # The apply seam is NEVER reached — without the gated-seam check this row
+    # would have been recorded as a config selection.
+    assert op.apply_calls == []
+    assert op.selected_config_version is None
+    assert results[0].status == "rejected"
+
+
 # --------------------------------------------------------------------------- #
 # 3. A safe-mode-loosen row is rejected (Observable 3, Req 7.4 / P7)           #
 # --------------------------------------------------------------------------- #

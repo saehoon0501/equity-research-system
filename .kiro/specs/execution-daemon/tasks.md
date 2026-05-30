@@ -116,31 +116,31 @@
   - _Requirements: 4, 5, 8, 9_
   - _Boundary: tests_
   - _Depends: 1.1, 3.4_
-- [ ] 5.2 (P) Params tests
+- [x] 5.2 (P) Params tests
   - Epoch pin mints `run_id`; param hash + window pinned by value; `walk_forward_window` re-source at hot-swap + bootstrap; no mid-cycle re-resolution.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 1, 4, 8_
   - _Boundary: tests_
   - _Depends: 2.1_
-- [ ] 5.3 (P) Candidate tests
+- [x] 5.3 (P) Candidate tests
   - Bin read from `raw["tactical_bin"]` not `trend_vote`; `positive→LONG` / `negative→SHORT`; `neutral`→None and `unavailable`→None, distinguishable (12.5 vs 12.4); `reference_price` = last close surfaced; insufficient data → None.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 12_
   - _Boundary: tests_
   - _Depends: 3.1_
-- [ ] 5.4 (P) Order-builder tests
+- [x] 5.4 (P) Order-builder tests
   - intent+direction incl. SHORT-open = `BUY`+`SHORT`; volume capped by survival advisory + clamped ≤ held (no flip); `stop_loss` price level = `reference ∓ atr×mult` (satisfies mandatory-stop); `atr` from `feature_values` + None-guard; `position_id` targeting; HOLD → no order.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 11, 2_
   - _Boundary: tests_
   - _Depends: 3.2_
-- [ ] 5.5 (P) Trace-assembler tests
+- [x] 5.5 (P) Trace-assembler tests
   - Full 4-key correlation; `run_id`/window inject; `trace_id` mint; `event_ts` at decision; decision↔fill link; idempotency; substrate mapping — against `write_decision_trace(conn=None)` dry-run.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 4_
   - _Boundary: tests_
   - _Depends: 3.3_
-- [ ] 5.6 (P) Commands tests
+- [x] 5.6 (P) Commands tests
   - Intake poll+apply; gated-path-only; reject direct mutation; toward-safer guard (reject safe-mode loosen + non-registry/looser config); kill-switch blocks opens / allows exits.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 5, 7, 9_
@@ -164,7 +164,7 @@
   - _Requirements: 1, 5_
   - _Boundary: tests_
   - _Depends: 4.4_
-- [ ] 5.10 (P) Market-feed client tests
+- [x] 5.10 (P) Market-feed client tests
   - Massive `dict`→daily `Bar` adapter (intraday→daily aggregation, ≥252 closes, `ts`/`vwap` stripped); SPY leg returns daily adj-close; DGS1 TTL cache hits once per epoch/day (no per-tick GET); 401/403/non-200 surfaced; no FastMCP/websocket import pulled in. Transport mocked (httpx) — inner-ring; a double-guarded opt-in live round-trip skips cleanly with no keys.
   - Observable: the suite passes with no live network (transport mocked); the opt-in live leg skips when feed keys are absent.
   - _Requirements: 12, 1_
@@ -179,3 +179,4 @@
 
 ## Implementation Notes
 - **2026-05-30 — survival-gate landed mid-build; Phase-2 re-planned.** A parallel session merged survival-gate Phase-1 (`src/survival/{gate,types,params}.py` + migs 049/050) during the Foundation wave. The `BLOCKED: survival-gate` tags on 4.1–4.4 / 5.7–5.9 are cleared. P12 smoke of the landed contract: `admit(order, state, op_state, params, clock, evaluation) -> AdmitDecision`, `assess(state, op_state, params, clock) -> AssessDirective{next_op_state, reduce_directives, events}`. **BL-3 resolved:** survival owns its own `ProposedOrder` (no `position_id`, `direction:str`) — order_builder (3.2) stays daemon-owned + Phase-1; 4.1 maps daemon→survival `ProposedOrder` at the admit seam. **New obligation surfaced:** `gate.admit` requires an `OrderEvaluation` (margin delta + universe + §12.6 exclusion, reject-leaning defaults) the daemon must populate → new task **4.5** (+ test **5.11**). order_builder/candidate (Phase-1 Core) are unaffected by survival; build them first.
+- **2026-05-30 — Phase-1 build complete; Validation co-satisfied by the component TDD.** Foundation (1.1–1.5, 2.1) + Core (3.1–3.6) built, all green (108 daemon + 486 reactive/survival tests). The repo's build/test split means each component task wrote its inner-ring test under TDD, so Validation tasks **5.2/5.3/5.4/5.5/5.10** are satisfied by `test_{params,candidate,order_builder,trace_assembler,feed}.py` (mutation-verified by the Core reviewers) — checkboxes flipped. **5.6** had a coverage gap (the gated-seam type check was not pinned — a direct-mutation row was rejected by a fall-through for the wrong reason); filled with `test_gated_seam_check_pins_direct_mutation_with_a_valid_payload` (a non-gated row carrying a registry-member payload is rejected *because* it is not a gated seam, not merely a malformed payload). A canonical-suite regression was also fixed: the daemon "no src.survival import" purity tests asserted on shared `sys.modules` (order-dependent once survival's suite loads it) → re-verified in a fresh subprocess. **Still open:** 5.1 (persistence integration, needs a live DB / `-m integration_live`) + Phase-2 (4.1–4.5, 5.7–5.9, 5.11).
