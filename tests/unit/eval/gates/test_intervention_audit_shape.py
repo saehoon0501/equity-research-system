@@ -7,10 +7,10 @@ checks KEY PRESENCE of the intervention-audit envelope, not value type-correctne
 Design contract (`.kiro/specs/in-session-monitor/design.md` §Gate —
 intervention_audit_shape, §Data Models — InterventionAudit):
 
-  Required keys: the 4 correlation keys (run_id / code_version / param_version /
-  walk_forward_window), ``trigger_diagnostic``, ``verdict``,
-  ``intervention_intent``, ``rationale`` (with a ``falsifiers`` sub-key), and
-  ``event_ts``.
+  Required keys: a ``keys`` block carrying the 4 correlation keys (run_id /
+  code_version / param_version / walk_forward_window) nested, ``trigger_diagnostic``,
+  ``verdict``, ``intervention_intent``, ``rationale`` (with a ``falsifiers``
+  sub-key), and ``event_ts``.
 
 Two surfaces are pinned:
   * ``validate_intervention_audit_shape`` DIRECTLY (the validator unit); and
@@ -50,12 +50,15 @@ def _canonical_audit() -> dict:
     ``command_ref`` (Phase-1 advisory "NO ACTION TAKEN" signal).
     """
     return {
-        # The 4 correlation keys (CorrelationKeys: the daemon-epoch keys of the
-        # single analyzed (code_version, param_version)).
-        "run_id": "8f6e3c2a-0001-4a2b-9c3d-aaaaaaaaaaaa",
-        "code_version": "rcfd-2026.05.30+a1b2c3",
-        "param_version": "monitor-v0.1",
-        "walk_forward_window": "2026Q2-wf03",
+        # The 4 correlation keys NESTED under ``keys`` (CorrelationKeys: the
+        # daemon-epoch keys of the single analyzed (code_version, param_version)),
+        # exactly as emit_audit serializes them.
+        "keys": {
+            "run_id": "8f6e3c2a-0001-4a2b-9c3d-aaaaaaaaaaaa",
+            "code_version": "rcfd-2026.05.30+a1b2c3",
+            "param_version": "monitor-v0.1",
+            "walk_forward_window": "2026Q2-wf03",
+        },
         # Derived triggering diagnostic (no asserted probability — P15).
         "trigger_diagnostic": {
             "metric": "reliability",
@@ -105,14 +108,15 @@ def test_missing_each_required_top_level_key_fails(missing_key):
 
 
 def test_missing_correlation_key_fails():
-    """Dropping one of the 4 correlation keys (param_version) fails the gate."""
+    """Dropping one of the 4 correlation keys (param_version) from the nested
+    ``keys`` block fails the gate and names it under missing_subkeys["keys"]."""
     env = _canonical_audit()
-    del env["param_version"]
+    del env["keys"]["param_version"]
 
     result = validate_intervention_audit_shape(env)
 
     assert result.valid is False
-    assert "param_version" in result.missing_top_level
+    assert "param_version" in result.missing_subkeys["keys"]
 
 
 def test_missing_falsifiers_subkey_fails():

@@ -16,9 +16,10 @@ audit is enforced by the audit dataclass + a richer per-agent contract test
 Required keys (design §Gate — intervention_audit_shape, §Data Models —
 InterventionAudit):
 
-  * the 4 correlation keys: ``run_id``, ``code_version``, ``param_version``,
-    ``walk_forward_window`` (CorrelationKeys — the daemon-epoch keys of the single
-    analyzed ``(code_version, param_version)``);
+  * ``keys`` — a block carrying the 4 correlation keys (``run_id``,
+    ``code_version``, ``param_version``, ``walk_forward_window``) NESTED under it,
+    exactly as ``emit_audit`` serializes the ``CorrelationKeys`` dataclass (the
+    daemon-epoch keys of the single analyzed ``(code_version, param_version)``);
   * ``trigger_diagnostic`` — the derived triggering figure (P15, no asserted prob);
   * ``verdict`` — IN_ENVELOPE | DRIFTED | INSUFFICIENT;
   * ``intervention_intent`` — NONE | HALT_NEW_ENTRIES | TIGHTEN_SAFE_MODE |
@@ -45,10 +46,14 @@ CORRELATION_KEYS: tuple[str, ...] = (
     "walk_forward_window",
 )
 
-# Top-level keys per the InterventionAudit data model (design §Data Models).
-# Presence-only (P13): each must be present and non-empty EXCEPT the nullable
-# keys below, for which only KEY presence is required.
-REQUIRED_TOP_LEVEL: tuple[str, ...] = CORRELATION_KEYS + (
+# Top-level keys per the InterventionAudit data model (design §Data Models). The
+# four correlation keys ride NESTED under the ``keys`` block (a CorrelationKeys),
+# exactly as ``audit.emit_audit`` serializes them via ``dataclasses.asdict`` — so
+# ``keys`` is the required top-level block and the four keys are its sub-keys
+# (REQUIRED_SUBKEYS below), NOT top-level. Presence-only (P13): each must be
+# present and non-empty EXCEPT the nullable keys below (KEY presence only).
+REQUIRED_TOP_LEVEL: tuple[str, ...] = (
+    "keys",
     "trigger_diagnostic",
     "verdict",
     "intervention_intent",
@@ -68,9 +73,14 @@ NULLABLE_TOP_LEVEL: frozenset[str] = frozenset(
     }
 )
 
-# Required sub-keys per top-level block. The rationale block must carry observable
-# ``falsifiers`` (P15) — a hypothesis alone is not a falsifiable rationale.
+# Required sub-keys per top-level block.
 REQUIRED_SUBKEYS: dict[str, tuple[str, ...]] = {
+    # The ``keys`` block carries all four correlation keys (R7.3) nested, matching
+    # the CorrelationKeys dataclass that ``emit_audit`` serializes — so the audit
+    # joins to the model trace + outcome ledger.
+    "keys": CORRELATION_KEYS,
+    # The rationale block must carry observable ``falsifiers`` (P15) — a hypothesis
+    # alone is not a falsifiable rationale.
     "rationale": ("falsifiers",),
 }
 
