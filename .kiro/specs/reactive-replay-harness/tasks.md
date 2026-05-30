@@ -103,7 +103,7 @@
   - _Boundary: harness_
   - _Depends: 2.2, 2.7, 2.8, 1.3_
 
-- [ ] 4. Validation
+- [x] 4. Validation
 
 - [x] 4.1 Determinism + isolation suite
   - Identical (candidate, window, fixture-port responses) ⇒ identical `OutcomeRecord`s; the whole engine runs with stub cores + fixture data and no network/DB/LLM; assert the reactive/survival logic is driven (via stubs), never recomputed; a changed stub-core signature is caught (revalidation guard)
@@ -118,7 +118,7 @@
   - _Boundary: data_client_
   - _Depends: 1.3_
 
-- [ ] 4.3 E2E cycle — champion-reproduction + not-evaluable
+- [x] 4.3 E2E cycle — champion-reproduction + not-evaluable
   - Seeded one-config, one-window replay → `OutcomeRecord`s; a champion-version replay reproduces a seeded fill P&L within tolerance ⇒ fidelity pass; a sparse-baseline window ⇒ not-evaluable — end to end with fixtures
   - Observable: the E2E test asserts both the champion-reproduction pass and the not-evaluable branch
   - _Requirements: 1.1, 7.1, 7.3, 8.1, 9.1_
@@ -142,3 +142,5 @@
 - 3.1: harness wired end-to-end (replay_candidate + champion re-sim reading P2 run_parameters_snapshot by param_version from effective_parameters_jsonb, + query_trace fills synthesized via parent_trace_id->decision join). LIMITATION (out-of-boundary, flagged in harness.py): cross-day survival MARGIN does not evolve — admit reads a static seed account; full sequential margin evolution is a later-fidelity revalidation (impl agent socket-crashed after writing+testing; FRESH REVIEWER verified APPROVED, 157 pass).
 - 4.2: LIVE PROBE RESULT 2026-05-30 (`pytest -m integration_live`, key in `.env`): 3 PASS / 5 FAIL. PASS = reference/calendar data entitled (splits, dividends, market-holidays endpoints answer 200). FAIL = ALL historical market data `NOT_AUTHORIZED "Your plan doesn't include this data timeframe"` (SPY daily bars, S&P500 daily bars, /v3/trades, /v3/quotes, delisted OHLC). Confirms the deep-research's flagged "needs a live probe" risk: the current key's plan tier serves reference data but none of the price-path data the replay consumes. **Operator must upgrade to Massive Advanced/Business before live replay can run.** Code correct (`DataFetchError(auth)` raised + test reports the gap); deployment prerequisite only. NB: the `integration_live` `skipif` guards on key PRESENCE not SUFFICIENCY — a present-but-under-entitled key runs + fails-with-gap rather than self-skipping (intended, per the "reports the precise gap" observable).
 - venv: `.venv-replay` is the canonical worktree test venv but was provisioned lean (httpx only); `psycopg[binary]` added 2026-05-30 (declared in the merged-in root `requirements.txt` alongside `httpx>=0.27`) so `tests/integration/` collects. If the venv is rebuilt, `uv pip sync requirements.txt` (or at minimum add psycopg+httpx+pytest+python-dotenv). The stale Impl Note 1.2 ("no root dep manifest") predates the shared-branch merge that landed `requirements.txt`.
+- 4.1/4.3: independent reviewer (kiro-review) APPROVED both; tight `1e-6` fidelity tolerance bite verified (good seed -> pass, mis-seed -> fail), and both not-evaluable branches (absent baseline + sparse lone-leg) asserted distinct from `fail` (R7.3). FYI non-blocker: 4.1 `test_full_engine_runs_with_no_db_driver_imported` docstring claims psycopg is "absent from the inner-ring venv" — psycopg is now installed, but the assertion mechanism (lazy `import psycopg` in the DB path would pollute `sys.modules` and trip the `"psycopg" not in sys.modules` assert) is still sound; the rationale is stale, the guard is real.
+- CLOSE-OUT 2026-05-30: all 16 sub-tasks done; 174 unit tests green in `.venv-replay`; `integration_live` auto-skips by default. Feature gate `/kiro-validate-impl` run at close-out.
