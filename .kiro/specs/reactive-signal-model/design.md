@@ -51,7 +51,7 @@
 Reuse-by-import of three pure overlay cores + `indicators.py` (discovery 2026-05-29 confirmed zero I/O coupling — all take pre-fetched arrays). The cores expose heterogeneous outputs: **flow** returns a continuous `composite_score_normalized ∈ [−1,+1]` (direct vote); **tactical** returns only a categorical `bin` (its continuous 12mo momentum is computed then discarded → must map bin→vote, and it cannot supply a continuous strength); **reversion** returns a categorical `bin` plus exposed continuous components (v0.1 uses the bin for the vote, components feed the substrate). `signal_model.py` (intraday) supplies the temperature-scaled-softmax *pattern* but **not** its intraday-microstructure features, its liquidity hold-logit, or its slow-layer prior; `/micro` is left untouched (sibling module). Parameters: the project's `parameters`/`parameters_active` machinery resolves *live*; this model instead consumes a **pinned** snapshot by value (P2), with module-constant defaults for the inner ring.
 
 ### Architecture Pattern & Boundary Map
-Selected pattern: a **pure deterministic pipeline** (feature adapter → directional aggregation → signed projection → 2-class logistic → threshold), wrapped by a by-value parameter contract. Rationale: P14 inner-ring testability + P1 leaf module; no orchestration.
+Selected pattern: a **pure deterministic pipeline** (feature adapter → directional aggregation → signed projection → 2-class logistic → threshold), wrapped by a by-value parameter contract. It is exposed as **two pure entry points the caller chains** — `compute_features(...) → FeatureSet | FeatureFailure` and `decide(features, direction, snapshot, ...) → ReactiveDecision` (the component graph below shows the internal pipeline; the failure-ownership split between the two is in §Feature adapter / §System Flows). Rationale: P14 inner-ring testability + P1 leaf module; no orchestration.
 
 ```mermaid
 graph LR
@@ -99,14 +99,16 @@ tests/unit/reactive/
 
 ```mermaid
 flowchart TD
-    A[decide called with ticker_bars spy_close rf direction snapshot runtime_threshold] --> B{history sufficient}
-    B -- no --> H[HOLD reason insufficient_history]
-    B -- yes --> C{direction valid LONG or SHORT}
+    A[compute_features ticker_bars spy_close rf atr_period] --> B{history sufficient and atr computable nonzero}
+    B -- no --> FF[FeatureFailure reason insufficient_history or degenerate_features]
+    B -- yes --> FS[FeatureSet cores to signed votes ATR normalized]
+    FF --> DEC[decide features direction snapshot runtime_threshold]
+    FS --> DEC
+    DEC --> C{direction valid LONG or SHORT}
     C -- no --> I[HOLD reason invalid_direction]
-    C -- yes --> Z{atr computable nonzero}
-    Z -- no --> J[HOLD reason degenerate_features]
-    Z -- yes --> D[features adapter cores to signed votes ATR normalized]
-    D --> E[aggregate s equals wt trend plus wf flow plus wm meanrev times one minus trend_strength]
+    C -- yes --> FQ{features is a FeatureFailure}
+    FQ -- yes --> J[HOLD reason from the FeatureFailure no recheck]
+    FQ -- no --> E[aggregate s equals wt trend plus wf flow plus wm meanrev times one minus trend_strength]
     E --> F[signed equals s if LONG else minus s]
     F --> G[P equals logistic signed over temperature]
     G --> T[effective_threshold equals max snapshot_threshold runtime_if_higher]
@@ -115,12 +117,11 @@ flowchart TD
     K -- no --> M[HOLD non_final true no sizing_hint]
     L --> S[attach substrate features P threshold version calibration_evidence]
     M --> S
-    H --> S
     I --> S
     J --> S
 ```
 
-Key decisions: the deterministic reflex order is *gate-then-derive* (history + direction validity + ATR computability before computing), so malformed inputs cost nothing and HOLD with a machine-readable reason. `effective_threshold` is **tighten-only** — a runtime override applies only when strictly higher than the snapshot threshold.
+Key decisions: the flow is a **two-stage split** (per the §Feature-adapter failure-ownership, below). `compute_features` *gates-then-derives* — it owns the history-length + ATR-computability checks and returns a `FeatureFailure` (`insufficient_history` / `degenerate_features`) without raising. `decide` then validates the caller's `direction` **first** (`invalid_direction`, owned here), maps any `FeatureFailure` → HOLD with its reason (trusting the discriminator — no re-check of history/ATR), and otherwise derives score → probability → thresholded decision. Malformed inputs cost nothing and HOLD with a machine-readable reason on every path. `effective_threshold` is **tighten-only** — a runtime override applies only when strictly higher than the snapshot threshold.
 
 ## Requirements Traceability
 
