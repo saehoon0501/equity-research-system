@@ -146,19 +146,19 @@
   - _Requirements: 5, 7, 9_
   - _Boundary: tests_
   - _Depends: 3.5_
-- [ ] 5.7 (P) Orchestrator + paper-lifecycle tests
+- [x] 5.7 (P) Orchestrator + paper-lifecycle tests
   - §13 ordering (admit never before decide); reject-kills-order; resize-on-advisory single pass; declined-trace; never-upsize; permit derived from op-state; plus the paper lifecycle — submit→poll→reconcile to a terminal outcome, double-send guard, unconfirmed-not-filled, paper-only routing — on synthetic dep fixtures.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 2, 3, 10_
   - _Boundary: tests_
   - _Depends: 4.1, 4.2_
-- [ ] 5.8 (P) Lifecycle tests
+- [x] 5.8 (P) Lifecycle tests
   - Flatten-in-window; verify-flat-failure escalation; version-pin; atomic hot-swap; global-tightest survive.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 6, 8_
   - _Boundary: tests_
   - _Depends: 4.3_
-- [ ] 5.9 (P) Loop tests
+- [x] 5.9 (P) Loop tests
   - Single-eval-at-a-time; assess cadence; intake-poll-first cadence; fail-toward-minimum-exposure on dep error.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 1, 5_
@@ -170,7 +170,7 @@
   - _Requirements: 12, 1_
   - _Boundary: tests_
   - _Depends: 3.6_
-- [ ] 5.11 (P) OrderEvaluation projection tests
+- [x] 5.11 (P) OrderEvaluation projection tests
   - margin delta from `volume × price × leverage`; unknown margin → `None` (admit rejects `margin_distance`); out-of-universe → reject-leaning eval; excluded (slow-layer screen) → reject-leaning eval; a clean in-universe open → admit-acceptable eval; bare `OrderEvaluation()` defaults assert reject-leaning. Against synthetic broker specs + a stub universe/screen.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
   - _Requirements: 2, 10_
@@ -180,3 +180,4 @@
 ## Implementation Notes
 - **2026-05-30 — survival-gate landed mid-build; Phase-2 re-planned.** A parallel session merged survival-gate Phase-1 (`src/survival/{gate,types,params}.py` + migs 049/050) during the Foundation wave. The `BLOCKED: survival-gate` tags on 4.1–4.4 / 5.7–5.9 are cleared. P12 smoke of the landed contract: `admit(order, state, op_state, params, clock, evaluation) -> AdmitDecision`, `assess(state, op_state, params, clock) -> AssessDirective{next_op_state, reduce_directives, events}`. **BL-3 resolved:** survival owns its own `ProposedOrder` (no `position_id`, `direction:str`) — order_builder (3.2) stays daemon-owned + Phase-1; 4.1 maps daemon→survival `ProposedOrder` at the admit seam. **New obligation surfaced:** `gate.admit` requires an `OrderEvaluation` (margin delta + universe + §12.6 exclusion, reject-leaning defaults) the daemon must populate → new task **4.5** (+ test **5.11**). order_builder/candidate (Phase-1 Core) are unaffected by survival; build them first.
 - **2026-05-30 — Phase-1 build complete; Validation co-satisfied by the component TDD.** Foundation (1.1–1.5, 2.1) + Core (3.1–3.6) built, all green (108 daemon + 486 reactive/survival tests). The repo's build/test split means each component task wrote its inner-ring test under TDD, so Validation tasks **5.2/5.3/5.4/5.5/5.10** are satisfied by `test_{params,candidate,order_builder,trace_assembler,feed}.py` (mutation-verified by the Core reviewers) — checkboxes flipped. **5.6** had a coverage gap (the gated-seam type check was not pinned — a direct-mutation row was rejected by a fall-through for the wrong reason); filled with `test_gated_seam_check_pins_direct_mutation_with_a_valid_payload` (a non-gated row carrying a registry-member payload is rejected *because* it is not a gated seam, not merely a malformed payload). A canonical-suite regression was also fixed: the daemon "no src.survival import" purity tests asserted on shared `sys.modules` (order-dependent once survival's suite loads it) → re-verified in a fresh subprocess. **Still open:** 5.1 (persistence integration, needs a live DB / `-m integration_live`) + Phase-2 (4.1–4.5, 5.7–5.9, 5.11).
+- **2026-05-30 — Phase-2 complete; spec feature-complete bar the live-DB integration.** Built 4.5 (OrderEvaluation projection) + 4.1 (§13 orchestrator + BL-3 daemon→survival `ProposedOrder` map, resize-once, declined-trace) + 4.2 (paper submit→poll→reconcile + double-send guard + unconfirmed-not-filled) + 4.3 (version-pinned lifecycle + flat-before-close via `ReduceDirective`) + 4.4 (single-eval loop + `__main__` + docker-compose service), all against the landed survival contract; tests **5.7/5.8/5.9/5.11** co-satisfied by the TDD (`test_{orchestrator,paper_lifecycle,lifecycle,loop,evaluation}.py`, mutation-verified). Full canonical suite green: **643 passed, 1 skipped** (the opt-in live feed leg). **Deferred — both need a live DB (`docker compose up`):** task **5.1** (persistence integration, `-m integration_live`) AND the loop's live `build_and_run` DB wiring. Note the **persist-then-act op-state write (Req 5.1/5.x)** lands with that live wiring, not the inner-ring — the inner-ring loop runs the op-state transition through the orchestrator's internal `admit`, so there is no inner-ring seam to persist before `admit` (P14 deferral envelope; flagged by the 4.4 reviewer). Minor non-blocking follow-ons: 4.1's coarse exit pre-filter uses an identity-vs-string compare (authoritative `gate.admit` backstops it); 4.5 contract-size divisor wording.
