@@ -85,7 +85,7 @@
   - _Boundary: simulator_
   - _Depends: 2.6_
 
-- [ ] 2.8 Outcome-record assembly
+- [x] 2.8 Outcome-record assembly
   - Assemble the per-period `OutcomeRecord` from the simulator output (decision, predicted probability, fills, total-return P&L, survival events, realized outcome + label); compute NO survival-net metric, calibration, or gate (the consumer's)
   - Observable: unit test — a record carries all nine fields; the module exposes no metric/gate function
   - _Requirements: 8.1, 8.2_
@@ -138,3 +138,4 @@
 - RESUME 2026-05-30: direction-selection rule SPECIFIED (execution-daemon R2.3/R2.4 + Req 12.5, §12.3): tactical bin->direction (positive=LONG, negative=SHORT, neutral|unavailable=no-trade), read FeatureSet.raw["tactical_bin"]. survival-gate LANDED (merged a45f072). 2.3 amended to the rule (SHORT reconstructable, R7 unblocked). 2.4+ proceeding with real src/survival imports + the daemon order_builder pattern (SHORT-open=BUY+SHORT, ATR stop-loss, reference_price). 4.2 still blocked on a live Massive key.
 - 2.5: real `paper.simulate` is un-importable from repo root (bare `from models import` resolves only under the broker MCP launch posture) — MIRRORED its side-aware pricing (LONG->ASK, SHORT->BID uniform, since ProposedOrder.direction encodes the marketable side for opens+reduces). Revalidation seam: if broker is made importable, a CLOSE OrderIntent must carry the HELD-position direction (paper.py keys close on position dir).
 - 2.6: DayRoundTrip{entry_fill,exit_fill,exit_reason,flat_verified,survival_events} is the 2.7 seam. Two revalidation triggers: (a) flatten-leg volume=abs(net from entry_fill) vs stop-hit-leg volume=entry_order.volume — net flat only when equal; (b) close_ts defaults to day (not close instant) — fix when real data_client lands.
+- 2.8: outcomes.assemble_outcome wires all 9 OutcomeRecord fields; admit_reject is CALLER-SUPPLIED (apply_admit_gating returns bare None, cannot carry it) — 3.1 must pass admit_rejected=True when a day was rejected. SEAM: predicted_probability is None on flat days (OutcomeRecord annotation says float) — the tuner must filter flat days before calibrating. realized_label is a pure decision->Label map (not margin-thresholded — consumer applies scorer.score margin per R8.2). (2.8 impl agent socket-crashed AFTER writing+testing; verified independently: 145 pass, 9 fields, no metric/gate surface.)
