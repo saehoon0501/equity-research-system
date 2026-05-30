@@ -10,7 +10,7 @@
   - Observable: both migrations apply cleanly on a fresh DB; a direct UPDATE/DELETE on each table raises the append-only exception, while moving `drained_at` (051) / `applied_at` (intake) / `closed_at` (epoch) from NULL succeeds once and a second write to the same column is rejected.
   - _Requirements: 4, 5, 8, 9_
   - _Boundary: db schema (migrations 051/052)_
-- [ ] 1.2 (P) Config + DB connection lifecycle + package scaffold
+- [x] 1.2 (P) Config + DB connection lifecycle + package scaffold
   - `src/reactive/daemon/{__init__,__main__}.py` scaffold (namespace package, no pyproject); `config.py` = `_dsn()` (env DSN, mirroring `telemetry.trace_writer._dsn`) + `DaemonConfig` (paper flag, `assess_max_latency_seconds`, poll timeout, eval cadence, intake-poll cadence, `stop_loss_atr_mult`, market-feed provider keys); `db.py` = owned psycopg3 connection lifecycle + per-cycle `conn.transaction()` helper. Add the daemon config keys to `.env.example` as a new commented section.
   - Observable: `python -m src.reactive.daemon` imports and constructs a `DaemonConfig` from env without opening a connection; `.env.example` carries the new keys.
   - _Requirements: 1, 3_
