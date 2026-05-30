@@ -57,7 +57,7 @@
   - _Boundary: simulator_
   - _Depends: 2.1_
 
-- [ ] 2.4 Simulator — decision→order + survival gating
+- [ ] 2.4 Simulator — decision→order _Blocked: direction-selection rule not landed (upstream) — see BLOCKED note_ + survival gating
   - Construct the order from a decision (volume from `sizing_hint` + `per_order_size_max`; venue side via `map_decision_to_action`); drive the landed/stub survival `admit` (candidate `SurvivalParameters`) and step the sequential account path; a HOLD or `admit=REJECT` yields a flat day. Code-track candidates (run candidate code end-to-end) are **deferrable for v0.1** (param-track first) — left as a guarded branch, not built now
   - Observable: unit test (stub survival) — an actionable decision produces an order at `advisory_max_volume` when admit caps it; a rejected/HOLD day stays flat
   - _Requirements: 2.3, 3.2, 3.3_
@@ -111,7 +111,7 @@
   - _Requirements: 9.1, 9.2, 10.3_
   - _Depends: 3.1_
 
-- [ ] 4.2 (P) Massive `integration_live` smoke — the live-probe gate
+- [ ] 4.2 (P) Massive `integration_live` smoke _Blocked: needs live Massive Advanced/Business key (operator-gated)_ — the live-probe gate
   - Marked `integration_live` (skipped by default). Confirm the four unverified-in-research items: SPY + a sample S&P 500 symbol resolve; `/v3/trades` + `/v3/quotes` return for a past window; the splits/dividends/market-holidays reference endpoints answer 200 (not 403) on the account tier; a delisted name returns OHLC for its trading period
   - Observable: `pytest -m integration_live` against a live Massive Advanced/Business key passes, or reports the precise gap
   - _Requirements: 4.1, 4.4, 6.1_
@@ -130,3 +130,8 @@
 - 1.4: survival stubs mirror the in-progress survival-gate-impl: `admit(order,state,op_state,params,clock,evaluation)` carries a 6th `OrderEvaluation` arg (design omitted it) — task 2.4 must construct it. Stub INPUTS are `Any` (name/order match only). On survival landing: delete local mirrors, import from src.survival, re-run signature tests.
 - 2.2: fidelity.compare takes HARNESS-SYNTHESIZED recorded-fill dicts {day,symbol,direction,side,actual_fill_price,fill_volume} (schema fill rows lack symbol/side — they live in the decision JSONB; the harness/3.1 must do the parent_trace_id->decision join). DIVIDEND-BASIS asymmetry: recorded side price-only vs simulated total-return -> a dividend day can false-fail (conservative, P7). 3.1/4.3 + calibration: set tolerance to absorb it OR strip dividends from the simulated side before compare.
 - 2.3: DIRECTION GAP (linchpin) — reactive `decide` takes direction as INPUT (returns it or HOLD); replay hard-defaults LONG, so SHORT is unreconstructable and champion-SHORT days fail fidelity (R7). Direction is chosen upstream by the daemon (not landed). Also: champion symbol key `trace["symbol"]` is a guess (daemon-minted, schema-free) — fails loud if absent; retarget on daemon landing.
+
+## BLOCKED (paused 2026-05-30 — operator decision: pause the chain for the daemon's direction rule)
+- **2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 4.1, 4.3 — BLOCKED on the direction-selection rule.** `decide` takes direction as an INPUT; the daemon's long/short selection rule is not landed/specified. Hard-defaulting LONG breaks champion-SHORT fidelity (R7), so the simulator chain + harness + their validation are paused until the rule lands. **Routing: owned upstream — execution-daemon (§12.3 "direction comes from the reactive layer") and/or reactive-signal-model.** When that contract lands, resume at 2.4 (read champion's recorded direction for fidelity; apply the landed rule for candidate direction) and clear these blocks.
+- **4.2 — BLOCKED on a live Massive Advanced/Business API key** (operator-gated; the unit suite uses fixtures).
+- **DONE + green (1.1–2.3):** types, transport, fetch-methods, scaffolding, feature-adapter, fidelity, simulator-daily — 81 unit tests pass in `.venv-replay`.
