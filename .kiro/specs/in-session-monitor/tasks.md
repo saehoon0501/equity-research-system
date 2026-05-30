@@ -85,7 +85,7 @@
   - _Boundary: orchestrator_
 
 - [ ] 6. Validation
-- [ ] 6.1 (P) Audit envelope golden-shape contract test (Phase 1)
+- [x] 6.1 (P) Audit envelope golden-shape contract test (Phase 1)
   - Add a contract test richer than the presence-only validator (per the inner-ring discipline) asserting the full audit envelope shape: the four correlation keys, the applied-flag semantics (false in advisory), the falsifiable-rationale block, and the verdict/intent enums — serving as the tripwire for an audit-shape change (revalidation obligation). Depends only on 2.4 + 3.1, not on Phase 2
   - Observable: the contract test passes on a canonical audit envelope and fails when a required block or key is dropped
   - _Requirements: 7.1, 7.4, 9.5_
