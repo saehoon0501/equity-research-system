@@ -38,7 +38,7 @@
   - _Requirements: 1.4, 3.1, 3.2, 3.3, 5.1, 9.3_
   - _Boundary: intervene_
   - _Depends: 1.2_
-- [ ] 2.4 (P) Implement the intervention audit emitter
+- [x] 2.4 (P) Implement the intervention audit emitter
   - Build the audit (the single analyzed version's correlation keys, the triggering diagnostic, a falsifiable rationale with observable falsifiers, the applied flag, an optional command reference) and persist it as an envelope under the agent/run-id naming convention; the dry-run path writes nothing; it owns the why only (no model-trace write); applied is false in Phase 1
   - Observable: a unit test asserts the envelope carries all four correlation keys + applied=false + falsifiers, and that the dry-run path writes nothing
   - _Requirements: 7.1, 7.2, 7.3, 7.4_
