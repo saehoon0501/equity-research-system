@@ -62,7 +62,7 @@
   - _Depends: 1.2_
   - Not parallel with 3.2/4.1: same decision-core module.
 
-- [ ] 5. Validation: inner-ring unit tests
+- [x] 5. Validation: inner-ring unit tests
 - [x] 5.1 (P) Parameter tests
   - Defaults complete; tighten-only resolver (loosening override rejected, tightening applied); malformed parameters fail closed.
   - Observable: the suite passes with no LLM, MCP, or live-database access.
@@ -75,7 +75,7 @@
   - _Requirements: 2, 3, 4, 5, 9, 11_
   - _Boundary: tests_
   - _Depends: 3.2, 4.2_
-- [ ] 5.3 (P) Standing-monitor tests
+- [x] 5.3 (P) Standing-monitor tests
   - Margin-to-safe-mode escalation with a latched monotonic grade; closure-imminence driven via the clock input — with open levered exposure, assert the flatten directive is emitted AND, when the re-checked flat post-condition still fails, the grade escalates (FLATTEN/safe-mode) and a flat-verify-failed event is recorded (assert on the escalation, not merely that a directive was emitted); no-halt-branch — assert assess emits no halt-triggered freeze/flatten/alert for any input (R7, detection out of boundary) and that a held-name margin move routes through the margin/safe-mode path; determinism on identical inputs.
   - Observable: the suite passes; the latching (a transient blip stays latched), the no-halt-branch (no halt-triggered directive emitted), and the closure verify-flat-failure escalation cases are explicitly asserted.
   - _Requirements: 1, 6, 7, 8, 11_

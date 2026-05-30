@@ -342,6 +342,83 @@ def test_held_name_margin_move_routes_through_margin_path():
         assert "halt" not in e.event_type.lower()
 
 
+# A behavioral sweep over representative input classes, discharging the 5.3
+# observable's "assess emits NO halt-triggered freeze/flatten/alert for ANY
+# input" as a universal claim rather than two spot-checks. Each case names the
+# kind of input it stands for. (Behavioral only — no type-vocabulary assertions
+# on the ReduceDirective.kind / BindingConstraint Literals; that surface is owned
+# by test_types.py.)
+_NO_HALT_SWEEP = {
+    "clean": dict(
+        state=_account(),
+        op_state=_op(grade="NONE"),
+        clock=_clock(),
+    ),
+    "kill_switch": dict(
+        state=_account(),
+        op_state=_op(kill_switch=True, grade="NONE"),
+        clock=_clock(),
+    ),
+    "buffer_breach": dict(
+        state=_state_at_margin_level(75.0),
+        op_state=_op(grade="NONE"),
+        clock=_clock(),
+    ),
+    "stopout_breach": dict(
+        state=_state_at_margin_level(40.0, positions=[_position()]),
+        op_state=_op(grade="NONE"),
+        clock=_clock(),
+    ),
+    "closure_with_exposure": dict(
+        state=_account(positions=[_position()]),
+        op_state=_op(grade="NONE"),
+        clock=_clock(seconds_to_next_closure=120.0),
+    ),
+    "session_open_held_name": dict(
+        state=_account(positions=[_position(symbol="HALTED")]),
+        op_state=_op(grade="NONE"),
+        clock=_clock(session_open=True, seconds_to_next_closure=None),
+    ),
+    "session_closed_held_name": dict(
+        state=_account(positions=[_position(symbol="HALTED")]),
+        op_state=_op(grade="NONE"),
+        clock=_clock(session_open=False, seconds_to_next_closure=None),
+    ),
+    "latched_flatten_clean": dict(
+        state=_account(),
+        op_state=_op(grade="FLATTEN"),
+        clock=_clock(),
+    ),
+    "degraded_nan": dict(
+        state=_account(equity=float("nan"), used_margin=1_000.0),
+        op_state=_op(grade="NONE"),
+        clock=_clock(),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", list(_NO_HALT_SWEEP), ids=list(_NO_HALT_SWEEP))
+def test_no_halt_triggered_directive_or_event_for_any_input(case):
+    """No-halt-branch (R7), as a UNIVERSAL behavioral claim: across every
+    representative input class — clean, kill switch, buffer breach, stop-out
+    breach, imminent closure, a held name in an open AND a closed session, a
+    latched grade, and the degraded NaN case — ``assess`` emits NO halt-triggered
+    freeze / flatten / alert. Every directive ``kind`` and every event
+    ``event_type`` is asserted to carry no halt/reopen keyword. Any directives /
+    events that DO fire are the account-level margin / safe-mode / closure
+    consequences (R7.2), never a halt-specific response."""
+    out = _assess(**_NO_HALT_SWEEP[case], params=_params())
+
+    for d in out.reduce_directives:
+        kind = d.kind.lower()
+        assert "halt" not in kind, f"{case}: halt-keyed directive {d.kind!r}"
+        assert "reopen" not in kind, f"{case}: reopen-keyed directive {d.kind!r}"
+    for e in out.events:
+        etype = e.event_type.lower()
+        assert "halt" not in etype, f"{case}: halt-keyed event {e.event_type!r}"
+        assert "reopen" not in etype, f"{case}: reopen-keyed event {e.event_type!r}"
+
+
 # --------------------------------------------------------------------------- #
 # Kill switch — FREEZE_ENTRIES + carried through unchanged.                    #
 # --------------------------------------------------------------------------- #
