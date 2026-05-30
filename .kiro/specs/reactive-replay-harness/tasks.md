@@ -2,7 +2,7 @@
 
 > `reactive-replay-harness` — a pure compute leaf at `src/reactive/replay/` consuming the landed reactive cores + the DESIGNED survival cores (stubbed in unit tests until `survival-gate` lands) + the landed broker paper-fill sim, over a NEW Massive historical REST client. No DB table (read-only consumer). Inner-ring first (P14): `tests/unit/reactive/replay/` + one `integration_live` Massive smoke. Sanity-reviewed 2026-05-30 (2 reviewers); the intraday simulator was split per the sizing review.
 
-- [ ] 1. Foundation: contract types, Massive data client, test scaffolding
+- [x] 1. Foundation: contract types, Massive data client, test scaffolding
 
 - [x] 1.1 Define the shared contract types
   - Frozen dataclasses: `Candidate` (param_snapshot / survival_parameters / code_version), `ReplayWindow` (start, end, tickers), `Fill` (side, price, volume, ts), `OutcomeRecord` (period, symbol, decision, predicted_probability, fills, total_return_pnl, survival_events, realized_outcome, realized_label), `ReplayResult` (records + fidelity), `FidelityResult` (status pass|fail|not_evaluable + detail); plus the `DataPort` `Protocol` (point-in-time fetch signatures)
@@ -32,7 +32,7 @@
   - _Boundary: tests_
   - _Depends: 1.1_
 
-- [ ] 2. Core: the backtest engine
+- [x] 2. Core: the backtest engine
 
 - [x] 2.1 (P) Feature adapter — daily features + as-of split rule
   - Assemble the daily feature inputs (ticker daily adj-close + SPY + rf-yield + OHLC) from the `DataPort` and drive the landed `compute_features`; never reimplement the overlay cores
@@ -92,7 +92,7 @@
   - _Boundary: outcomes_
   - _Depends: 2.7_
 
-- [ ] 3. Integration: the harness entry point
+- [x] 3. Integration: the harness entry point
 
 - [x] 3.1 Wire `replay_candidate` + the champion re-sim orchestration
   - `replay_candidate(candidate, window, *, data_port=None, conn=None)`: construct the production `DataPort` over the data client when none is injected; run the simulator; assemble outcomes; return `ReplayResult`
