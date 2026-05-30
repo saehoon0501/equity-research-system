@@ -78,7 +78,7 @@
   - _Boundary: simulator_
   - _Depends: 2.5_
 
-- [ ] 2.7 Simulator — total-return P&L (dividends credited separately)
+- [x] 2.7 Simulator — total-return P- [ ] 2.7 Simulator — total-return P&LL (dividends credited separately)
   - Per-day round-trip P&L = `(exit − entry) × filled_volume × dir` + same-day cash dividends; never assume bars are dividend-adjusted
   - Observable: unit test — P&L credits a fixture cash dividend separately from the price change; a dividend-paying name is not mis-scored
   - _Requirements: 5.1, 5.2_

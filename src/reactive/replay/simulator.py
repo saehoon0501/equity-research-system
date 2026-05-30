@@ -1318,6 +1318,154 @@ def _net_signed(fills: list[Fill]) -> float:
     return sum(_SIDE_SIGN.get(f.side, 0.0) * f.volume for f in fills)
 
 
+# ============================================================================ #
+# Task 2.7 — total-return P&L (price P&L + same-day cash dividends, credited
+# SEPARATELY). NON-BEHAVIORAL.
+#
+# The simulator's per-day P&L output — a plain number — the 2.8 step folds into
+# `OutcomeRecord.total_return_pnl` (types.py:234). From the day's CLOSED
+# `DayRoundTrip` (2.6):
+#
+#   price P&L = (exit_fill.price − entry_fill.price) × filled_volume × dir
+#               where dir = +1 (a LONG entry) / −1 (a SHORT entry)  [design 203]
+#   + same-day cash dividend × held_volume × dir-sign — a LONG holder RECEIVES
+#     the dividend, a SHORT PAYS it (R5.1) — credited SEPARATELY from the price
+#     change (ADDED on top), NEVER folded into a dividend-adjusted price. The
+#     bars are `adjusted=false` (R5.2), so the dividend term MUST be added here.
+#
+# `dir` is read off the ENTRY fill side: the exit is recorded OPPOSITE-side by
+# construction (`_EXIT_SIDE`/`_CLOSE_SIDE`), so reading dir off the exit would
+# invert the sign. The held volume is the entry fill's volume (== the exit's by
+# construction — the §16.1 one-position round-trip).
+#
+# Dividend matching: `DataPort.fetch_corporate_actions(symbol, day, day)` →
+# `{"splits":[...],"dividends":[{ex_dividend_date, cash_amount}, ...]}` (the 1.3
+# shape). ONLY dividends whose `ex_dividend_date == day` are same-day and
+# credited — the port may legitimately return a wider list (the fixture ignores
+# its date bounds), so this layer filters by ex-date rather than trusting the
+# bound. Splits are NOT consumed here (the as-of split rule is the features /
+# data_client concern, design Core-algorithms #4 — out of this boundary).
+#
+# Out of boundary (R8.2): this computes NO survival-net metric / calibration /
+# gate — those are the consumer's (`walkforward-tuning-loop`). This returns only
+# the raw per-day total-return P&L number.
+#
+# Source of truth: requirements.md R5 AC 5.1/5.2; design.md `simulator`
+# "Core algorithms #3" (the §16.1 P&L term, design line 203); the
+# `DataPort.fetch_corporate_actions` shape (types.py / 1.3). Requirements: 5.1, 5.2.
+# ============================================================================ #
+
+# The corporate-actions wire keys (the 1.3 `fetch_corporate_actions` shape):
+# `dividends` is a list of `{ex_dividend_date, cash_amount}`. Read THESE; splits
+# (`{"splits": [...]}`) are the features/data_client concern, not consumed here.
+_CA_DIVIDENDS_KEY = "dividends"
+_DIV_EX_DATE_KEY = "ex_dividend_date"
+_DIV_CASH_KEY = "cash_amount"
+
+# The entry-side → P&L direction sign: +1 for a LONG entry, −1 for a SHORT entry
+# (design line 203 `dir`). Reused for BOTH the price term and the dividend term
+# (a LONG holder receives the dividend, a SHORT pays it — same sign). An
+# unrecognized entry side contributes no exposure (dir 0 → 0 P&L for that day,
+# defense-in-depth — a malformed fill cannot fabricate a P&L).
+_ENTRY_DIR_SIGN: dict[str, float] = {"LONG": 1.0, "SHORT": -1.0}
+
+
+def day_round_trip_pnl(
+    round_trip: DayRoundTrip,
+    *,
+    port: DataPort,
+    day: str,
+) -> float:
+    """The day's total-return P&L: price P&L + same-day cash dividends (R5.1/5.2).
+
+    NON-BEHAVIORAL. From the CLOSED `DayRoundTrip` (2.6), compute the §16.1 P&L
+    (design line 203):
+
+        price P&L = (exit_fill.price − entry_fill.price) × filled_volume × dir
+        + same-day cash dividend × held_volume × dir
+          (a LONG holder RECEIVES the dividend, a SHORT PAYS it)
+
+    where ``dir = +1`` for a LONG entry / ``−1`` for a SHORT entry — read off the
+    ENTRY fill side (the exit is recorded opposite-side by construction, so the
+    exit side would invert the sign). The dividend is credited SEPARATELY — ADDED
+    on top of the price change, NEVER folded into a dividend-adjusted price (the
+    bars are `adjusted=false`, R5.2).
+
+    A flat / no-round-trip day (no entry OR no exit fill — incl. the R6.3
+    unfillable-close escalate) has no realizable price round-trip → 0 price term.
+    The dividend term needs a holding (the entry's side + volume); with no entry
+    there is none, so a flat day is 0 total-return P&L.
+
+    Args:
+        round_trip: the day's closed `DayRoundTrip` (2.6) — its `entry_fill` side
+            drives `dir`, `entry_fill.volume` is the held quantity.
+        port: the injected point-in-time `DataPort` (R9.2 isolation seam) — its
+            `fetch_corporate_actions(symbol, day, day)` supplies the dividends.
+        day: the trading day (ISO) — the same-day dividend ex-date predicate
+            (only `ex_dividend_date == day` dividends are credited).
+
+    Returns:
+        the day's total-return P&L (a plain `float`). NO metric / calibration /
+        gate (R8.2 — the consumer's, out of boundary).
+    """
+    entry = round_trip.entry_fill
+    exit_ = round_trip.exit_fill
+    # A flat / no-round-trip day (or an unfillable close — no exit leg) has no
+    # realizable round-trip and no holding to credit a dividend on → 0 P&L.
+    if entry is None or exit_ is None:
+        return 0.0
+
+    dir_sign = _ENTRY_DIR_SIGN.get(entry.side, 0.0)
+    volume = entry.volume
+
+    price_pnl = (exit_.price - entry.price) * volume * dir_sign
+    dividend_pnl = _same_day_dividend_pnl(
+        port, round_trip.symbol, day, volume, dir_sign
+    )
+    # Credited SEPARATELY — the dividend is ADDED to the price change (R5.1),
+    # never folded into an adjusted price (R5.2).
+    return price_pnl + dividend_pnl
+
+
+def _same_day_dividend_pnl(
+    port: DataPort,
+    symbol: str,
+    day: str,
+    volume: float,
+    dir_sign: float,
+) -> float:
+    """The same-day cash-dividend P&L term: `Σ cash_amount × volume × dir` over
+    the dividends whose `ex_dividend_date == day` (R5.1).
+
+    Pulls the day's corporate actions via `fetch_corporate_actions(symbol, day,
+    day)` and credits ONLY same-day (ex-date == `day`) cash dividends — the port
+    may return a wider list (its date bounds are advisory), so this filters by
+    ex-date rather than trusting the bound. A LONG holder RECEIVES (`dir = +1`),
+    a SHORT PAYS (`dir = −1`). No same-day dividend → 0.0 (a non-ex day is pure
+    price P&L). Splits are NOT consumed here (the features/data_client concern).
+    """
+    actions = port.fetch_corporate_actions(symbol, day, day)
+    dividends = actions.get(_CA_DIVIDENDS_KEY) if isinstance(actions, Mapping) else None
+    if not dividends:
+        return 0.0
+
+    # Match the ex-date to `day` on the bare ISO day (`_iso_day`) on BOTH sides:
+    # today both are bare ISO dates, but normalizing guards against a future day
+    # source (wired in 2.8) delivering a timestamp form — an un-normalized exact
+    # compare would then silently UNDER-credit (return 0), the inverse of the
+    # fixture's over-credit hazard. The same join-normalization the champion
+    # `(day, symbol)` index uses.
+    ex_day = _iso_day(day)
+    same_day_cash = sum(
+        float(div.get(_DIV_CASH_KEY, 0.0))
+        for div in dividends
+        if isinstance(div, Mapping)
+        and div.get(_DIV_EX_DATE_KEY) is not None
+        and _iso_day(str(div[_DIV_EX_DATE_KEY])) == ex_day
+    )
+    return same_day_cash * volume * dir_sign
+
+
 # --- Code-track candidate (DEFERRABLE for v0.1 — a guarded branch) ------------
 
 
@@ -1342,6 +1490,7 @@ __all__ = [
     "DayRoundTrip",
     "apply_admit_gating",
     "build_order",
+    "day_round_trip_pnl",
     "detect_stop_hit",
     "flatten_before_close",
     "index_champion_decisions",

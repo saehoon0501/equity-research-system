@@ -1523,3 +1523,203 @@ def test_round_trip_carries_entry_and_exit_for_pnl_seam() -> None:
     assert rt.exit_fill is not None  # exit price (the flatten leg)
     # The shape carries no P&L field (2.7's concern) — only the legs.
     assert not hasattr(rt, "total_return_pnl")
+
+
+# ============================================================================ #
+# Task 2.7 — total-return P&L (price P&L + same-day cash dividends, credited
+# SEPARATELY). NON-BEHAVIORAL.
+#
+# The per-day total-return P&L the simulator emits and 2.8 folds into the
+# `OutcomeRecord.total_return_pnl` field (types.py:234). From the day's CLOSED
+# `DayRoundTrip` (2.6):
+#
+#   price P&L = (exit_fill.price − entry_fill.price) × filled_volume × dir
+#               where dir = +1 (LONG entry) / −1 (SHORT entry)  [design line 203]
+#   + same-day cash dividend × held_volume × dir-sign (a LONG holder RECEIVES
+#     the dividend, a SHORT PAYS it), credited SEPARATELY from the price change
+#     (R5.1) — NEVER assume the bars are dividend-adjusted (bars are
+#     `adjusted=false`, R5.2).
+#
+# `dir` is read off the ENTRY fill side (the exit is recorded OPPOSITE-side by
+# construction — `_EXIT_SIDE`/`_CLOSE_SIDE` — so reading dir off the exit would
+# invert the sign). The held volume is the entry fill's volume.
+#
+# The fixture `fetch_corporate_actions` ALWAYS returns the canned dividend at
+# `ex_dividend_date="2024-01-15"` (it ignores start/end) and is out of this
+# task's boundary, so the P&L function must FILTER dividends to those whose
+# ex-date == the round-trip `day`: a `day="2024-01-15"` round-trip credits the
+# dividend; a `day="2024-01-31"` round-trip filters it to zero (pure price P&L).
+# That date mismatch is what makes "credited separately" testable on one fixture.
+#
+# DayRoundTrip is constructed DIRECTLY here (round prices, not the canned NBBO)
+# so the formula assertion is clean and the P&L unit is isolated from the fill
+# machinery (P14 inner ring).
+#
+# Source of truth: requirements.md R5 AC 5.1/5.2; design.md `simulator`
+# "Core algorithms #3" (the §16.1 P&L term, design line 203); the
+# `DataPort.fetch_corporate_actions` `{"splits":[...],"dividends":[...]}` shape
+# (types.py / fixture, 1.3). Requirements: 5.1, 5.2.
+# ============================================================================ #
+
+
+from src.reactive.replay.simulator import day_round_trip_pnl  # noqa: E402
+
+# The fixture dividend ex-date (`_fixtures.FixtureDataPort.fetch_corporate_actions`)
+# — a round-trip on THIS day credits the canned cash dividend; any other day
+# filters it to zero.
+_DIV_EX_DATE = "2024-01-15"
+_DIV_CASH = 0.24  # the fixture default `dividend_cash`
+_NON_DIV_DAY = "2024-01-31"  # a day with NO same-day dividend in the fixture
+
+
+def _round_trip(
+    *,
+    entry_side: str,
+    entry_price: float,
+    exit_price: float,
+    volume: float,
+    exit_reason: str = "flatten",
+) -> DayRoundTrip:
+    """A CLOSED `DayRoundTrip` built DIRECTLY (round prices, no NBBO machinery).
+
+    The entry `side` is the position direction (drives `dir`); the exit is
+    recorded OPPOSITE-side by construction (a LONG exits SHORT, a SHORT exits
+    LONG — `_EXIT_SIDE`/`_CLOSE_SIDE`), as `flatten_before_close` (2.6) emits.
+    """
+    exit_side = "SHORT" if entry_side == "LONG" else "LONG"
+    return DayRoundTrip(
+        symbol="AAPL",
+        entry_fill=Fill(side=entry_side, price=entry_price, volume=volume, ts=_NON_DIV_DAY),
+        exit_fill=Fill(side=exit_side, price=exit_price, volume=volume, ts=_NON_DIV_DAY),
+        exit_reason=exit_reason,
+        flat_verified=True,
+        survival_events=[exit_reason],
+    )
+
+
+def _flat_round_trip() -> DayRoundTrip:
+    """A no-trade / no-round-trip day — no entry, no exit (the 2.6 vacuous-flat)."""
+    return DayRoundTrip(
+        symbol="AAPL",
+        entry_fill=None,
+        exit_fill=None,
+        exit_reason=None,
+        flat_verified=True,
+        survival_events=[],
+    )
+
+
+# --- 5.1: price P&L — LONG / SHORT directional sign ---------------------------
+
+
+def test_long_round_trip_pnl_is_exit_minus_entry_times_vol() -> None:
+    """A LONG round-trip P&L = (exit − entry) × volume × (+1) — design line 203.
+    On a NON-dividend day the total-return P&L is exactly the price P&L."""
+    rt = _round_trip(entry_side="LONG", entry_price=100.0, exit_price=102.0, volume=0.5)
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    # (102 − 100) × 0.5 × (+1) = +1.0
+    assert pnl == 1.0
+
+
+def test_short_round_trip_pnl_is_entry_minus_exit_times_vol() -> None:
+    """A SHORT round-trip P&L = (entry − exit) × volume — i.e. (exit − entry) ×
+    volume × (−1), dir read off the ENTRY side (design line 203). A SHORT that
+    exits LOWER profits."""
+    rt = _round_trip(entry_side="SHORT", entry_price=100.0, exit_price=98.0, volume=0.5)
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    # (98 − 100) × 0.5 × (−1) = +1.0  (a profitable short)
+    assert pnl == 1.0
+
+
+def test_short_round_trip_loses_when_price_rises() -> None:
+    """A SHORT whose price ROSE loses: (exit − entry) × vol × (−1) < 0 — confirms
+    the dir sign is read off the entry, not the (opposite) exit side."""
+    rt = _round_trip(entry_side="SHORT", entry_price=100.0, exit_price=103.0, volume=1.0)
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    # (103 − 100) × 1.0 × (−1) = −3.0
+    assert pnl == -3.0
+
+
+# --- 5.1 / 5.2: same-day cash dividend credited SEPARATELY --------------------
+
+
+def test_dividend_day_credits_cash_separately_on_top_of_price_pnl() -> None:
+    """A dividend-paying day credits the cash dividend SEPARATELY — ADDED on top
+    of the price P&L (R5.1), never folded into a dividend-adjusted price (R5.2).
+    Same LONG round-trip on the ex-date vs a non-ex day differs by exactly the
+    dividend term (cash × volume × +1)."""
+    long_rt = _round_trip(entry_side="LONG", entry_price=100.0, exit_price=102.0, volume=0.5)
+    price_only = day_round_trip_pnl(long_rt, port=_quote_port(), day=_NON_DIV_DAY)
+    total_return = day_round_trip_pnl(long_rt, port=_quote_port(), day=_DIV_EX_DATE)
+    # The dividend is ADDED separately: total = price P&L + (cash × volume × +1).
+    assert total_return == price_only + _DIV_CASH * 0.5
+    # And the price term itself is unchanged (the dividend is separate, not folded
+    # into an adjusted entry/exit price — R5.2).
+    assert price_only == 1.0
+
+
+def test_flat_price_dividend_day_yields_plus_dividend_for_long() -> None:
+    """A flat-PRICE day (exit == entry, zero price P&L) on the ex-date yields
+    EXACTLY +dividend P&L for a LONG holder — the dividend-paying name is NOT
+    mis-scored to 0 just because the price didn't move (R5.1 / R5.2)."""
+    flat_price = _round_trip(entry_side="LONG", entry_price=100.0, exit_price=100.0, volume=2.0)
+    pnl = day_round_trip_pnl(flat_price, port=_quote_port(), day=_DIV_EX_DATE)
+    # price P&L = 0; total-return = cash dividend × volume × (+1) = 0.24 × 2.0.
+    assert pnl == _DIV_CASH * 2.0
+
+
+def test_short_holder_pays_the_dividend() -> None:
+    """A SHORT holder PAYS the same-day cash dividend (the dividend term carries
+    the dir-sign: −1 for a short) — credited separately from the price P&L."""
+    flat_price = _round_trip(entry_side="SHORT", entry_price=100.0, exit_price=100.0, volume=1.0)
+    pnl = day_round_trip_pnl(flat_price, port=_quote_port(), day=_DIV_EX_DATE)
+    # price P&L = 0; the short PAYS the dividend → −(cash × volume).
+    assert pnl == -_DIV_CASH * 1.0
+
+
+def test_dividend_on_different_day_is_not_credited() -> None:
+    """The canned fixture dividend (ex-date 2024-01-15) is NOT credited on a
+    round-trip dated differently — the P&L function filters dividends by
+    ex-date == day, so a non-ex day is pure price P&L (the fixture would
+    otherwise pollute every day with +0.24)."""
+    rt = _round_trip(entry_side="LONG", entry_price=100.0, exit_price=102.0, volume=0.5)
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    assert pnl == 1.0  # price P&L only — no dividend term on a non-ex day
+
+
+# --- 5.1: a flat / no-round-trip day is 0 P&L ---------------------------------
+
+
+def test_flat_no_round_trip_day_is_zero_pnl() -> None:
+    """A flat / no-round-trip day (no entry, no exit) → 0 P&L — no entry, no exit,
+    no dividend term (there is no holding to credit)."""
+    pnl = day_round_trip_pnl(_flat_round_trip(), port=_quote_port(), day=_DIV_EX_DATE)
+    assert pnl == 0.0
+
+
+def test_unfilled_close_round_trip_is_zero_price_pnl() -> None:
+    """The R6.3 escalate case — entry present but the close could NOT fill
+    (`exit_fill is None`, `flat_verified=False`) — has no realizable exit, so the
+    price term is 0 (no `(exit − entry)` to compute). The simple rule: no entry
+    OR no exit → 0 price P&L. (SEAM for 2.8: the OutcomeRecord consumer reads
+    `flat_verify_failed` from `survival_events`; the P&L is not the place that
+    flags it.)"""
+    rt = DayRoundTrip(
+        symbol="AAPL",
+        entry_fill=Fill(side="LONG", price=100.0, volume=0.5, ts=_NON_DIV_DAY),
+        exit_fill=None,  # unfillable close (R6.3) — no exit leg
+        exit_reason=None,
+        flat_verified=False,
+        survival_events=["flat_verify_failed"],
+    )
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    assert pnl == 0.0
+
+
+def test_day_round_trip_pnl_returns_a_number() -> None:
+    """The simulator's per-day P&L output is a plain number (the seam 2.8 folds
+    into `OutcomeRecord.total_return_pnl`) — NOT a record/metric (R8.2: the
+    survival-net metric/calibration is the consumer's, out of boundary)."""
+    rt = _round_trip(entry_side="LONG", entry_price=100.0, exit_price=102.0, volume=0.5)
+    pnl = day_round_trip_pnl(rt, port=_quote_port(), day=_NON_DIV_DAY)
+    assert isinstance(pnl, (int, float))
