@@ -32,7 +32,7 @@
   - _Requirements: 2.2, 2.3, 2.4, 5.3, 7.2_
   - _Boundary: judge_
   - _Depends: 1.2_
-- [ ] 2.3 (P) Implement the intervention decision
+- [x] 2.3 (P) Implement the intervention decision
   - Pure map from verdict to intent bounded to the three daemon command types: mild drift → select-a-safer-validated-config if one exists, else tighten safe mode; severe drift → halt new entries; conservative-only (any non-more-conservative intent is rejected to none); config selection reads only the validated-version menu and only toward-safer; never fits; a wedged component maps to halt plus an operator-action-required flag (no daemon restart seam)
   - Observable: a unit test asserts the severity→intent mapping, conservative-only rejection, menu-only/toward-safer selection, and never-fit
   - _Requirements: 1.4, 3.1, 3.2, 3.3, 5.1, 9.3_
