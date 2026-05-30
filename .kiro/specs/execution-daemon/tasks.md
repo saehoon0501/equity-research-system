@@ -110,7 +110,7 @@
   - _Depends: 1.3, 1.4_
 
 - [ ] 5. Validation: inner-ring unit tests + persistence integration
-- [ ] 5.1 (P) Migration + persistence integration tests
+- [x] 5.1 (P) Migration + persistence integration tests
   - `tests/integration/test_daemon_persistence.py`: migs 051/052 apply; append-only guards reject UPDATE/DELETE except the set-once whitelists (`drained_at`; `applied_at`/`status`/`reject_reason`; `closed_at`/`status`); event_queue emit round-trip; decision+fill + intake round-trips via a real conn.
   - Observable: the integration suite passes under `-m integration_live` against a live DB and asserts each guard rejection + each set-once column.
   - _Requirements: 4, 5, 8, 9_
