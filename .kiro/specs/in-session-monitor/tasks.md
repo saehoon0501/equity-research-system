@@ -52,7 +52,7 @@
   - _Requirements: 7.4_
   - _Boundary: eval gates_
   - _Depends: 2.4_
-- [ ] 3.2 (P) Implement command serialization + the Phase-1 advisory path
+- [x] 3.2 (P) Implement command serialization + the Phase-1 advisory path
   - Mint a stable idempotency id hashed over the version-epoch keys + intent type (deliberately not the rolling window edge), serialize the command row (including the issuer identity), and implement the Phase-1 advisory path that returns an advisory result and records the would-be intent into the audit with applied=false (no live channel yet); the live write + confirm + single-flight are deferred to 5.1
   - Observable: a unit test asserts the id is stable across ticks for the same version+intent but differs across intents, and that the advisory path writes nothing live while the audit records the intent
   - _Requirements: 4.1, 6.2, 9.4_
