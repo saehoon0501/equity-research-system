@@ -64,7 +64,7 @@
   - _Requirements: 9_
   - _Boundary: event_queue_
   - _Depends: 1.1_
-- [ ] 3.5 (P) Command intake + gated apply
+- [x] 3.5 (P) Command intake + gated apply
   - `commands.py`: poll `execution_daemon_command_intake` each cycle; validate gated seams only (engage-kill-switch / set-safe-mode-grade / select-validated-config); reject direct-mutation rows; enforce the toward-safer guard (safe-mode tighten-only; config must be a registry member, not looser); apply via op-state write (gate path the loop reads fresh) / hot-swap select; mark `applied_at`/`status`/`reject_reason`; emit a command event. Tested against synthetic op-state; the real op-state write integrates with `survival_gate_state` when survival lands (wired in 4.1).
   - Observable: a gated kill-switch row is applied and marked; a direct-mutation row is rejected with a reason; a safe-mode-loosen row is rejected; an un-gated row never mutates state.
   - _Requirements: 5, 7, 9_
