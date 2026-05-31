@@ -102,6 +102,8 @@ from src.survival.types import HALT_NEW_RANK, grade_rank
 __all__ = [
     "OrchestrationOutcome",
     "new_exposure_permitted",
+    "run_assess",
+    "run_edge_path",
     "orchestrate_tick",
     "PaperLifecycleOutcome",
     "PaperSendGuard",
@@ -258,7 +260,34 @@ _DIRECTION_FOR_DECISION: dict[str, Direction] = {
 }
 
 
-def orchestrate_tick(
+def run_assess(
+    *,
+    op_state: OperationalState,
+    account: AccountState,
+    survival_params: SurvivalParameters,
+    clock: ClockState,
+    assess: Callable[
+        [AccountState, OperationalState, SurvivalParameters, ClockState],
+        AssessDirective,
+    ],
+) -> AssessDirective:
+    """Phase 1 of the §13 walk — the Survive standing-monitor (Req 1.2/5.1).
+
+    Runs ``assess`` and returns the directive **without acting on it**. This is
+    the **persist-then-act seam** (Req 5.1): the loop (task 4.4) calls this first,
+    **durably persists** the resulting ``next_op_state`` transition + the events
+    (to ``survival_gate_state`` / ``survival_gate_events`` via the owned conn,
+    inside a transaction) **before** :func:`run_edge_path` runs the per-order
+    admit/submit path. Splitting the §13 walk here means the op-state transition
+    is committed to durable storage before any directive is executed or any order
+    is admitted — a just-engaged kill switch / safe-mode escalation can never be
+    bypassed by an in-flight admit (Req 5.1). ``assess`` is pure (no I/O); it only
+    *emits* the transition + events for the daemon to persist.
+    """
+    return assess(account, op_state, survival_params, clock)
+
+
+def run_edge_path(
     *,
     symbol: str,
     epoch: EpochContext,
@@ -271,6 +300,7 @@ def orchestrate_tick(
     leverage: Optional[float],
     is_excluded: Optional[bool],
     stop_loss_atr_mult: float,
+    assess_directive: AssessDirective,
     assemble: Callable[..., Optional[Candidate]],
     decide: Callable[..., ReactiveDecision],
     build_order: Callable[..., Optional[ProposedOrder]],
@@ -286,66 +316,49 @@ def orchestrate_tick(
         ],
         AdmitDecision,
     ],
-    assess: Callable[
-        [AccountState, OperationalState, SurvivalParameters, ClockState],
-        AssessDirective,
-    ],
 ) -> OrchestrationOutcome:
-    """Run one §13 gate-orchestration walk and return its structured outcome.
+    """Phase 2 of the §13 walk — candidate → decide → order_builder → admit.
 
-    The deps are injected (the loop, task 4.4, wires the real
-    ``candidate.assemble`` / ``signal_model.decide`` / ``order_builder.build_order``
-    / ``broker.get_positions`` / ``gate.admit`` / ``gate.assess``) so this stays
-    inner-ring-testable with synthetic state + the REAL pure ``admit`` / ``assess``
-    (P14). ``assess`` is reached via the injected ``admit``'s sibling — but the
-    standing-monitor is run here through the same gate module, so the loop passes
-    ``gate.assess`` in as well; for the orchestrator's purposes the assess call is
-    made through the injected ``_assess`` below.
+    Runs the **edge path** on top of the **already-persisted** ``assess_directive``
+    (Phase 1, :func:`run_assess`): derive the op-state permit, assemble the
+    candidate, request the decision, build the order, and run the per-order admit
+    (with the single resize-on-advisory pass). This is the part that **acts** —
+    it constructs the order ``admit`` vetoes (and the loop submits). It runs
+    **only after** the loop has durably persisted the Phase-1 op-state transition
+    (persist-then-act, Req 5.1), so a just-persisted kill-switch op-state is the
+    one this path's permit + admit observe.
+
+    The ``assess_directive`` is threaded in (rather than re-run) so the standing
+    monitor is evaluated exactly once per tick and its transition is the one that
+    was persisted before this path acts. Otherwise behaviorally identical to the
+    Phase-3 portion of the legacy combined walk.
 
     Args:
         symbol: the ticker under evaluation.
         epoch: the pinned-param epoch (P3 — supplies the reactive snapshot via
             ``epoch.pinned_params.reactive_snapshot`` for ``decide``).
-        op_state: the **freshly-read** operational state (Req 5.2 — the loop reads
-            it from ``survival_gate_state`` each tick; never a pinned copy).
-        account: the broker-assembled survival ``AccountState`` (the loop builds it
-            from ``broker.get_account_assets`` + ``get_positions`` and reads it
-            fresh per tick) — fed to ``assess`` / ``admit``. Its ``.positions`` are
-            **survival** ``Position``; the ``order_builder`` consumes the **broker**
-            ``Position`` from ``get_positions`` (the two types share fields but are
-            distinct — G4), so both seams are threaded rather than re-deriving one
-            from the other.
+        op_state: the **freshly-read** operational state (Req 5.2). When the loop
+            wires this it is the op-state read *after* the Phase-1 persist, so the
+            admit sees the just-persisted transition.
+        account: the broker-assembled survival ``AccountState`` fed to ``admit``.
         survival_params: the pinned ``SurvivalParameters`` (survival namespace).
-        clock: the ``ClockState`` (closure-imminence + session — admit ignores it,
-            assess uses it).
+        clock: the ``ClockState``.
         feed: the fast-clock ``MarketFeed`` (threaded into ``assemble``).
-        universe: the v0.1 S&P 500 ∩ Gate-441 allow-list (the OrderEvaluation
-            universe leg).
-        leverage: the broker-instrument leverage (the OrderEvaluation margin leg);
-            ``None`` ⇒ margin unknown ⇒ the eval rejects ``margin_distance``.
-        is_excluded: the §12.6 screen result (the OrderEvaluation exclusion leg);
-            ``None`` ⇒ fail-safe excluded.
-        stop_loss_atr_mult: the protective-stop multiplier threaded into
-            ``build_order`` (Req 11.3).
-        assemble / decide / build_order / get_positions / admit / assess: the
-            injected deps (the loop wires the real ``gate.admit`` / ``gate.assess``;
-            tests hand spies wrapping the real pure survival functions).
+        universe / leverage / is_excluded: the ``OrderEvaluation`` legs.
+        stop_loss_atr_mult: the protective-stop multiplier (Req 11.3).
+        assess_directive: the Phase-1 directive (already persisted by the loop) —
+            surfaced verbatim on the outcome so the same transition flows downstream.
+        assemble / decide / build_order / get_positions / admit: the injected deps.
 
     Returns:
-        An :class:`OrchestrationOutcome` (the assess directive + the op-state-derived
-        permit + the admitted daemon order / admit verdict / declined flag /
-        first-reject constraint).
+        An :class:`OrchestrationOutcome` (the threaded assess directive + the
+        op-state-derived permit + the admitted daemon order / admit verdict /
+        declined flag / first-reject constraint).
     """
-    # ----- Step 1: Survive standing-monitor (assess) — EVERY tick (Req 1.2). --
-    # Runs first, even when the permit is later denied — the Survive gate's
-    # standing monitor is never skipped (it emits the op-state transition the loop
-    # persists before any act, persist-then-act Req 5.1).
-    assess_directive = assess(account, op_state, survival_params, clock)
-
-    # ----- Step 2: derive "new exposure permitted" from op-state (Req 2.1). ---
+    # ----- derive "new exposure permitted" from op-state (Req 2.1). ----------
     permitted = new_exposure_permitted(op_state)
 
-    # ----- Step 3: candidate → decide → order_builder → admit. ----------------
+    # ----- candidate → decide → order_builder → admit. -----------------------
     # When new exposure is NOT permitted we still proceed *iff* a candidate could
     # reduce/close a held position (the true-exit path must reach admit, Req 7.2).
     # A blocked open with nothing to exit short-circuits here (no decision
@@ -453,6 +466,115 @@ def orchestrate_tick(
         declined=False,
         first_reject_constraint=first_reject,
         non_directional_reason=captured_reason["reason"],
+    )
+
+
+def orchestrate_tick(
+    *,
+    symbol: str,
+    epoch: EpochContext,
+    op_state: OperationalState,
+    account: AccountState,
+    survival_params: SurvivalParameters,
+    clock: ClockState,
+    feed: MarketFeed,
+    universe: AbstractSet[str],
+    leverage: Optional[float],
+    is_excluded: Optional[bool],
+    stop_loss_atr_mult: float,
+    assemble: Callable[..., Optional[Candidate]],
+    decide: Callable[..., ReactiveDecision],
+    build_order: Callable[..., Optional[ProposedOrder]],
+    get_positions: Callable[[], Sequence[Position]],
+    admit: Callable[
+        [
+            SurvivalProposedOrder,
+            AccountState,
+            OperationalState,
+            SurvivalParameters,
+            ClockState,
+            OrderEvaluation,
+        ],
+        AdmitDecision,
+    ],
+    assess: Callable[
+        [AccountState, OperationalState, SurvivalParameters, ClockState],
+        AssessDirective,
+    ],
+) -> OrchestrationOutcome:
+    """Run one §13 gate-orchestration walk (assess then edge path) and return its
+    structured outcome.
+
+    This is the **combined** walk — :func:`run_assess` (Phase 1) immediately
+    followed by :func:`run_edge_path` (Phase 2), with **no persist seam between
+    them**. It is the inner-ring-testable surface (the orchestrator unit test
+    drives it directly with synthetic state + the REAL pure ``admit`` / ``assess``,
+    P14) and the shape a caller uses when it does **not** own the durable
+    persist-then-act seam (e.g. a dry-run harness).
+
+    The **loop** (task 4.4) does **not** call this combined form on its live path —
+    it calls :func:`run_assess`, **durably persists** the resulting op-state
+    transition + events (Req 5.1), then calls :func:`run_edge_path`, so the
+    op-state transition is committed before any directive/admit acts. The two
+    forms are behaviorally identical when no kill-switch is engaged mid-tick;
+    the split exists purely to give the loop a seam to persist *between* the
+    standing monitor and the act (persist-then-act).
+
+    The deps are injected (the loop wires the real ``candidate.assemble`` /
+    ``signal_model.decide`` / ``order_builder.build_order`` / ``broker.get_positions``
+    / ``gate.admit`` / ``gate.assess``).
+
+    Args:
+        symbol: the ticker under evaluation.
+        epoch: the pinned-param epoch (P3 — supplies the reactive snapshot).
+        op_state: the **freshly-read** operational state (Req 5.2).
+        account: the broker-assembled survival ``AccountState`` fed to
+            ``assess`` / ``admit``. Its ``.positions`` are **survival**
+            ``Position``; the ``order_builder`` consumes the **broker**
+            ``Position`` from ``get_positions`` (the two types share fields but are
+            distinct — G4), so both seams are threaded.
+        survival_params: the pinned ``SurvivalParameters`` (survival namespace).
+        clock: the ``ClockState``.
+        feed: the fast-clock ``MarketFeed`` (threaded into ``assemble``).
+        universe / leverage / is_excluded: the ``OrderEvaluation`` legs.
+        stop_loss_atr_mult: the protective-stop multiplier (Req 11.3).
+        assemble / decide / build_order / get_positions / admit / assess: the
+            injected deps.
+
+    Returns:
+        An :class:`OrchestrationOutcome`.
+    """
+    # ----- Step 1 (Phase 1): Survive standing-monitor (assess) — Req 1.2. ----
+    assess_directive = run_assess(
+        op_state=op_state,
+        account=account,
+        survival_params=survival_params,
+        clock=clock,
+        assess=assess,
+    )
+
+    # ----- Step 2 + 3 (Phase 2): permit → candidate → decide → build → admit. -
+    # No persist seam here — the combined form acts immediately. The LOOP inserts
+    # the durable persist of `assess_directive.next_op_state` between these phases
+    # (persist-then-act, Req 5.1).
+    return run_edge_path(
+        symbol=symbol,
+        epoch=epoch,
+        op_state=op_state,
+        account=account,
+        survival_params=survival_params,
+        clock=clock,
+        feed=feed,
+        universe=universe,
+        leverage=leverage,
+        is_excluded=is_excluded,
+        stop_loss_atr_mult=stop_loss_atr_mult,
+        assess_directive=assess_directive,
+        assemble=assemble,
+        decide=decide,
+        build_order=build_order,
+        get_positions=get_positions,
+        admit=admit,
     )
 
 

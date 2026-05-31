@@ -206,6 +206,7 @@ class _LoopDeps:
         assess_directive: Optional[AssessDirective] = None,
         kill_switch_command: bool = False,
         decide_raises: bool = False,
+        persist_raises: bool = False,
     ):
         self.calls: list[str] = []
         self._candidate = candidate
@@ -221,6 +222,12 @@ class _LoopDeps:
         self.submitted: list[ProposedOrder] = []
         self.de_risk_submitted: list[tuple[str, str]] = []
         self.recorded_failures: list[str] = []
+        # The persist-then-act seam: records each persisted op-state transition in
+        # the single ordered call log so the test can assert the persist write
+        # happens BEFORE admit (Req 5.1). ``persist_raises`` makes the durable
+        # persist fail (the persist-then-act hard gate).
+        self.persisted: list[AssessDirective] = []
+        self._persist_raises = persist_raises
 
     # -- the fresh op-state read (Req 5.2) -----------------------------------
     def read_op_state(self) -> OperationalState:
@@ -278,6 +285,15 @@ class _LoopDeps:
             return self._assess_directive
         return survival_gate.assess(state, op_state, params, clock)
 
+    # -- persist-then-act (Req 5.1): durably persist the op-state transition --
+    # BEFORE the edge path admit/submit. Records the call in the single ordered
+    # call log so the test can assert persist precedes admit.
+    def persist_op_state(self, directive: AssessDirective):
+        self.calls.append("persist_op_state")
+        if self._persist_raises:
+            raise RuntimeError("synthetic op-state persist failure")
+        self.persisted.append(directive)
+
     # -- paper submit (the lifecycle driver wires this) ----------------------
     def submit_order(self, order: ProposedOrder):
         self.calls.append("submit_order")
@@ -318,6 +334,7 @@ def _run_cycle(deps: _LoopDeps):
         get_positions=deps.get_positions,
         admit=deps.admit,
         assess=deps.assess,
+        persist_op_state=deps.persist_op_state,
         submit_order=deps.submit_order,
         execute_de_risk=deps.execute_de_risk,
         record_failure=deps.record_failure,
@@ -554,6 +571,97 @@ def test_assess_de_risk_directives_execute_on_a_healthy_cycle():
 
     _run_cycle(deps)
 
+    assert ("FLATTEN", "*") in deps.de_risk_submitted
+
+
+# --------------------------------------------------------------------------- #
+# 4b. Persist-then-act (Req 5.1): the durable op-state transition is committed   #
+#     BEFORE any admit/submit, and a persist FAILURE is a hard gate that skips   #
+#     the edge path without blocking a true exit (fail toward minimum exposure). #
+# --------------------------------------------------------------------------- #
+
+
+def test_persist_op_state_precedes_admit_and_submit_on_a_healthy_open():
+    """On a healthy permitted-open cycle the durable op-state transition is
+    persisted BEFORE the per-order admit and the open submit (persist-then-act,
+    Req 5.1) — a just-engaged kill switch / safe-mode escalation can never be
+    bypassed by an in-flight admit because the transition is committed first.
+
+    The single ordered call log proves the seam: ``persist_op_state`` is recorded
+    strictly before ``admit`` and before ``submit_order``.
+    """
+    deps = _LoopDeps(
+        candidate=_candidate("LONG"),
+        decision=_decision("LONG", sizing_hint=0.5),
+        order=_daemon_order(volume=0.5),
+        op_state=_op_state(),
+        params=_survival_params(),
+        clock=_clock(),
+        account=_account_state(),
+    )
+
+    outcome = _run_cycle(deps)
+
+    # The open really cleared (so admit + submit are present in the call log) —
+    # the ordering assertion would be vacuous on a blocked/HOLD cycle.
+    assert outcome.admitted_order is not None
+    assert deps.submitted != []
+    assert "admit" in deps.calls
+    assert "submit_order" in deps.calls
+    # The durable persist write happens BEFORE the edge path's admit AND before
+    # the open submit (persist-then-act, Req 5.1).
+    assert deps.calls.index("persist_op_state") < deps.calls.index("admit")
+    assert deps.calls.index("persist_op_state") < deps.calls.index("submit_order")
+    # And the directive was actually handed to the persist seam (the recorded
+    # transition is the Phase-1 assess directive, not an empty write).
+    assert deps.persisted != []
+
+
+def test_persist_failure_is_a_hard_gate_but_a_true_exit_still_flows():
+    """A persist-then-act FAILURE is a hard gate (Req 5.1): on a would-be open the
+    edge path is skipped entirely — nothing is admitted or submitted — yet a
+    de-risk FLATTEN/REDUCE directive from assess STILL flows (Req 1.5/7.2). This
+    is fail-toward-minimum-exposure: a transition that could not be durably
+    recorded must not be bypassed by an in-flight open, but a true exit is never
+    blocked by the failure.
+    """
+    # assess emits an account-wide FLATTEN directive (a de-risk action that must
+    # ALWAYS flow, even when the persist of the transition itself failed).
+    flatten_directive = AssessDirective(
+        next_op_state=_op_state(grade="FLATTEN"),
+        reduce_directives=[
+            ReduceDirective(
+                kind="FLATTEN", symbol=None, target_volume=None, reason="margin"
+            )
+        ],
+        events=[],
+    )
+    deps = _LoopDeps(
+        candidate=_candidate("LONG"),
+        decision=_decision("LONG", sizing_hint=0.5),
+        order=_daemon_order(volume=0.5),  # a would-be open
+        op_state=_op_state(),
+        params=_survival_params(),
+        clock=_clock(),
+        account=_account_state(),
+        assess_directive=flatten_directive,
+        persist_raises=True,  # the durable op-state persist fails (hard gate)
+    )
+
+    outcome = _run_cycle(deps)
+
+    # Hard gate: the edge path is skipped — nothing admitted, nothing submitted,
+    # and admit was never even reached (the persist failure short-circuits before
+    # any per-order admit).
+    assert deps.submitted == []
+    assert outcome.admitted_order is None
+    assert "admit" not in deps.calls
+    # The failure is recorded (Req 1.5 — the fail-toward-minimum-exposure path).
+    assert outcome.failed is True
+    assert deps.recorded_failures != []
+    # Yet the de-risk FLATTEN directive STILL flows — a true exit is never blocked
+    # by the persist failure (Req 1.5/7.2 — fail toward minimum exposure).
+    assert "execute_de_risk" in deps.calls
     assert ("FLATTEN", "*") in deps.de_risk_submitted
 
 
