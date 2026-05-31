@@ -136,6 +136,11 @@ VALID_ARTIFACT_TYPES = (
     # post-hybrid-loop in _registry so it carries NO WS-6 hybrid runner —
     # gate NAME is intervention_audit_shape, artifact_type is the short form).
     "intervention_audit",
+    # walkforward-tuning-loop tuner-action-audit envelope (presence-only HG-41;
+    # registered post-hybrid-loop in _registry so it carries NO WS-6 hybrid runner
+    # — gate NAME is tuner_action_audit_shape, artifact_type is the spec-pinned
+    # full "tuner_action_audit_envelope").
+    "tuner_action_audit_envelope",
 )
 
 # Invariant: VALID_ARTIFACT_TYPES and REGISTRY share the same key set. This is

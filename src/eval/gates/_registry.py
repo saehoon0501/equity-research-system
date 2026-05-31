@@ -61,6 +61,9 @@ from src.eval.gates.intangibles_adjustment_shape import (
 from src.eval.gates.intervention_audit_shape import (
     validate_intervention_audit_shape,
 )
+from src.eval.gates.tuner_action_audit_shape import (
+    validate_tuner_action_audit,
+)
 from src.eval.gates.catalyst_modifier_composition_check import (
     validate_catalyst_modifier_composition,
 )
@@ -84,6 +87,7 @@ from src.eval.gates._fingerprints import (
     fingerprint_sizing,
     fingerprint_strategic_memo,
     fingerprint_tactical_envelope,
+    fingerprint_tuner_action_audit,
 )
 from src.eval.gates._outcome import make_outcome, to_dict_safe
 
@@ -356,6 +360,33 @@ def _run_intervention_audit(env: dict[str, Any], ctx: GateContext):
     return outcome, "intervention_audit_shape", "pass" if shape.valid else "fail"
 
 
+def _run_tuner_action_audit(env: dict[str, Any], ctx: GateContext):
+    """Walkforward-tuning-loop tuner-action-audit shape gate (HG-41).
+
+    Mirrors ``_run_intervention_audit`` exactly: runs the presence-only validator
+    (P13) over the audit envelope and emits the gate outcome. Like
+    intervention_audit, this artifact is presence-only (NOT a WS-6 advisory-judge
+    artifact — ``_hybrid_gate._spine_for("tuner_action_audit_envelope")`` returns
+    None), so its REGISTRY entry is created AFTER the import-time hybrid for-loop
+    below (Resolution A): a hybrid runner appended here would fail-safe to FAIL and
+    drag a valid audit invalid.
+
+    Naming split (mirrors reversion/tactical/intervention): the gate NAME passed
+    to ``make_outcome`` and the GATE_IDS key is the ``_shape``-suffixed
+    ``tuner_action_audit_shape`` (so ``GATE_IDS["tuner_action_audit_shape"]`` =
+    HG-41); the REGISTRY *artifact_type* it is registered under is the
+    spec-pinned ``tuner_action_audit_envelope``.
+    """
+    shape = validate_tuner_action_audit(env)
+    outcome = make_outcome(
+        "tuner_action_audit_shape",
+        shape.valid,
+        to_dict_safe(shape),
+        fingerprint_tuner_action_audit(shape),
+    )
+    return outcome, "tuner_action_audit_shape", "pass" if shape.valid else "fail"
+
+
 # --------------------------------------------------------------------------- #
 # The registry: artifact_type -> ordered list of gate runners.
 # Order matches the pre-refactor _validate_* bodies exactly so the resulting
@@ -447,6 +478,20 @@ for _artifact_type in list(REGISTRY.keys()):
 # is the design-correct seam, not a workaround (see ``_run_intervention_audit``).
 # --------------------------------------------------------------------------- #
 REGISTRY["intervention_audit"] = [_run_intervention_audit]
+
+
+# --------------------------------------------------------------------------- #
+# Walkforward-tuning-loop tuner-action-audit artifact (register POST hybrid
+# loop, same rationale as intervention_audit above). This artifact is
+# presence-only (P13), NOT a WS-6 advisory-judge artifact:
+# ``_hybrid_gate._spine_for("tuner_action_audit_envelope")`` returns None.
+# Registering it AFTER the loop means NO spine-less hybrid runner is appended —
+# a hybrid runner would fail-safe to HYBRID_FAIL and drag a VALID audit invalid.
+# The spec pins the artifact_type string exactly: "tuner_action_audit_envelope"
+# (design §Allowed Dependencies — _registry.py edit). This is a data-only edit:
+# one new REGISTRY key mapping to the single presence-only runner above.
+# --------------------------------------------------------------------------- #
+REGISTRY["tuner_action_audit_envelope"] = [_run_tuner_action_audit]
 
 
 __all__ = ["GateContext", "GateRunner", "REGISTRY"]
