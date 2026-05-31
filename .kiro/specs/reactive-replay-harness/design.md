@@ -89,7 +89,7 @@ Key decisions (not restated from the diagram): decisions are **daily** (driven b
 | Compute leaf | Python 3.11 (`src/reactive/replay/`) | the backtest engine | pure relative to inputs; type-hinted; inner-ring testable |
 | Driven cores | landed reactive + (DESIGNED) survival + landed broker paper sim | decisions, survival, fills | imported, never reimplemented |
 | Data access | new direct Massive REST client (`httpx`) + landed FRED | point-in-time historical inputs | `gate_client.py` transport pattern; `adjusted=false` |
-| Storage (read-only) | Postgres `decision_process_trace` + `counterfactual_ledger` | champion baseline for fidelity | `_dsn()` + `conn=None`; no writes |
+| Storage (read-only) | Postgres `decision_process_trace` (`kind=fill` rows) + `run_parameters_snapshot` | champion fill-rows baseline for fidelity; `counterfactual_ledger` NOT read (slow-layer sector-excess, §16.1) | `_dsn()` + `conn=None`; no writes |
 | Test | pytest unit + `integration_live` | inner-ring (stub cores) + live Massive smoke | per `tests/conftest.py` marker |
 
 ## File Structure Plan
