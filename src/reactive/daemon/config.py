@@ -33,6 +33,21 @@ _DEFAULT_EVAL_CADENCE_SECONDS = 1.0
 _DEFAULT_INTAKE_POLL_CADENCE_SECONDS = 1.0
 _DEFAULT_STOP_LOSS_ATR_MULT = 2.0
 
+# Single-symbol v0.1 target (no watchlist rotation — one symbol per process).
+_DEFAULT_SYMBOL = "AAPL"
+
+# The OrderEvaluation universe allow-list (S&P 500 ∩ Gate-441 — a v0.1 config
+# allow-list, ``evaluation.build_order_evaluation`` leg b). The default pins the
+# single target symbol so a v0.1 paper run is in-universe by construction; an
+# absent / blank ``DAEMON_UNIVERSE`` falls back to {symbol}. Comma-separated.
+_DEFAULT_INSTRUMENT_LEVERAGE = 5.0
+
+# The §12.6 catalyst/quality exclusion default posture (``evaluation`` leg c).
+# v0.1 fail-safe: ``True`` = excluded (reject ``entry_exclusion`` when exclusion
+# is enabled). The live screen wiring is a tracked follow-on; the daemon admits
+# past this leg only when an affirmative ``is_excluded=False`` is configured.
+_DEFAULT_IS_EXCLUDED = True
+
 # Fast-clock market-feed provider (the massive.com / Polygon-compatible feed,
 # §14.10). The daemon reads the same provider keys ``src/mcp/massive`` uses, but
 # accesses the feed directly — the concrete client is a later task (3.6); here
@@ -73,6 +88,30 @@ def _env_float(name: str, default: float) -> float:
     if raw is None or raw.strip() == "":
         return default
     return float(raw)
+
+
+def _env_str(name: str, default: str) -> str:
+    """Parse a non-empty str env var; absent/blank → ``default``."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip()
+
+
+def _env_universe(name: str, default_symbol: str) -> frozenset[str]:
+    """Parse a comma-separated allow-list env var into an upper-cased frozenset.
+
+    Absent / blank → ``{default_symbol}`` (so a v0.1 single-symbol paper run is
+    in-universe by construction). Tokens are stripped + upper-cased + de-duped;
+    empty tokens are dropped. An allow-list that parses to nothing falls back to
+    the default symbol (never an empty universe, which would reject every open at
+    ``evaluation`` leg b — the daemon would do no work).
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return frozenset({default_symbol.upper()})
+    tokens = frozenset(t.strip().upper() for t in raw.split(",") if t.strip())
+    return tokens or frozenset({default_symbol.upper()})
 
 
 @dataclass(frozen=True)
@@ -118,6 +157,33 @@ class DaemonConfig:
     # owned connection opens from it (db.py) without a second env read.
     dsn: str
 
+    # ----- venue-handle / OrderEvaluation by-value fields (plan item #10) ----- #
+    # These carry dataclass defaults (the prior fields do not) so existing
+    # ``DaemonConfig(...)`` constructions that predate them keep constructing; the
+    # paper-safe defaults are equivalent to what ``from_env`` resolves with no env
+    # overrides. All pinned by value at the boundary (P2).
+
+    # The single v0.1 evaluation target (no watchlist rotation — one symbol per
+    # process). Pinned by value at startup; the loop runs every tick against it.
+    symbol: str = _DEFAULT_SYMBOL
+
+    # The OrderEvaluation universe allow-list (S&P 500 ∩ Gate-441) — the v0.1
+    # config allow-list ``evaluation.build_order_evaluation`` checks symbol
+    # membership against (leg b). Pinned by value (P2); a frozenset so the frozen
+    # config stays hashable. Default pins the single target symbol (in-universe by
+    # construction).
+    universe: frozenset[str] = frozenset({_DEFAULT_SYMBOL})
+
+    # The broker-instrument leverage (the ``evaluation`` margin-delta factor,
+    # leg a) — a v0.1 config value pinned by value (the live per-symbol broker
+    # instrument-spec fetch is a tracked follow-on).
+    instrument_leverage: float = _DEFAULT_INSTRUMENT_LEVERAGE
+
+    # The §12.6 catalyst/quality exclusion default posture (``evaluation`` leg c).
+    # v0.1 fail-safe ``True`` (excluded); set ``DAEMON_IS_EXCLUDED=0`` to
+    # affirmatively clear the single configured symbol past the exclusion leg.
+    is_excluded: bool = _DEFAULT_IS_EXCLUDED
+
     @classmethod
     def from_env(cls) -> "DaemonConfig":
         """Construct the config from env — a pure read, opens NO connection.
@@ -126,6 +192,7 @@ class DaemonConfig:
         once, at daemon startup. The DSN is resolved (which requires the
         ``POSTGRES_*`` vars) but no connection is opened — that is ``db.py``.
         """
+        symbol = _env_str("DAEMON_SYMBOL", _DEFAULT_SYMBOL).upper()
         return cls(
             paper=_env_bool("DAEMON_PAPER", default=True),
             assess_max_latency_seconds=_env_float(
@@ -149,5 +216,11 @@ class DaemonConfig:
             market_feed_rest_url=os.environ.get(
                 "MASSIVE_REST_URL", _DEFAULT_MARKET_FEED_REST_URL
             ),
+            symbol=symbol,
+            universe=_env_universe("DAEMON_UNIVERSE", symbol),
+            instrument_leverage=_env_float(
+                "DAEMON_INSTRUMENT_LEVERAGE", _DEFAULT_INSTRUMENT_LEVERAGE
+            ),
+            is_excluded=_env_bool("DAEMON_IS_EXCLUDED", default=_DEFAULT_IS_EXCLUDED),
             dsn=_dsn(),
         )

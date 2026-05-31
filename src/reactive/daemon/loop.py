@@ -61,9 +61,13 @@ callable** (``poll_commands`` / ``read_op_state`` / ``assemble`` / ``decide`` /
 — including the **persist-then-act ordering** (the op-state transition is persisted
 before admit/submit) — is exercised with synthetic state + the REAL pure
 ``survival.admit`` / ``assess`` (no DB, no MCP, no LLM). :func:`build_and_run`
-wires the real deps against the owned connection, including the **live**
-``survival_gate_state`` / ``survival_gate_events`` persist (the broker / market
-feed venue handles stay deferred — see the module's ``build_and_run`` note).
+wires the real deps against the owned connection: the **live**
+``survival_gate_state`` / ``survival_gate_events`` persist **and** the broker /
+market-feed venue handles (``feed.MassiveRestFeed`` + the ``broker_seam``
+``submit_decision`` / ``get_positions`` / ``get_account_assets`` readouts), driving
+real PAPER ticks end-to-end (PAPER-ONLY by construction — every submit pins the
+default ``RuntimeMode()`` so ``live_transmit_allowed()`` is False; see the
+``build_and_run`` note).
 
 Pure-leaf control (P1): stdlib + the daemon-owned components only — no MCP, no
 LLM dispatch, no decision logic of its own (it orchestrates + emits, Req 10).
@@ -111,6 +115,7 @@ __all__ = [
     "run_cycle",
     "run",
     "persist_op_state_transition",
+    "read_op_state_fresh",
     "build_and_run",
 ]
 
@@ -574,23 +579,129 @@ def run(
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# Live op-state read (Req 5.2) — fresh ``survival_gate_state`` read each tick.   #
+# --------------------------------------------------------------------------- #
+#
+# The standing-monitor op-state is read FRESH every tick from the monotonic
+# ``survival_gate_state`` singleton (scope='default', migration 049) — never a
+# pinned copy (Req 5.2). On a fresh DB the singleton row does not yet exist (the
+# first persist-then-act write seeds it); the read then returns the safe-default
+# permissive op-state (kill_switch off, grade NONE), which the very-first persist
+# seeds durably. This is the same op-state the deterministic kill-switch reflex
+# keys off (``orchestrator.new_exposure_permitted`` reads it fresh each tick).
+
+_SELECT_GATE_STATE_SQL = """
+    SELECT safe_mode_grade, kill_switch_engaged, entered_at, triggered_by_event_id
+    FROM survival_gate_state
+    WHERE scope = 'default'
+"""
+
+
+def read_op_state_fresh(conn: Any) -> OperationalState:
+    """Read the current operational state FRESH from ``survival_gate_state`` (Req 5.2).
+
+    A single SELECT of the monotonic singleton (``scope='default'``) inside a
+    short transaction, mapped to a survival ``OperationalState``. When the row does
+    not yet exist (a fresh DB before the first persist-then-act write seeds it),
+    returns the **safe-default permissive** op-state (kill-switch off, grade NONE):
+    the first standing-monitor transition then seeds the durable row. This is the
+    op-state the loop reads each tick *after* the intake poll, so a just-issued
+    kill-switch is observed on the same tick (the out-of-process command channel is
+    a no-op in v0.1, but a directly-written ``survival_gate_state`` tighten — e.g.
+    from a prior tick's persist — is still picked up fresh).
+    """
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute(_SELECT_GATE_STATE_SQL)
+            row = cur.fetchone()
+
+    if row is None:
+        # Fresh DB: no singleton yet. Safe-default permissive op-state — the first
+        # persist-then-act write seeds the durable row.
+        return OperationalState(
+            kill_switch_engaged=False,
+            safe_mode_grade="NONE",
+            entered_at=None,
+            triggered_by=None,
+        )
+
+    safe_mode_grade, kill_switch_engaged, entered_at, triggered_by_event_id = row
+    return OperationalState(
+        kill_switch_engaged=bool(kill_switch_engaged),
+        safe_mode_grade=safe_mode_grade,
+        entered_at=entered_at,
+        triggered_by=(
+            str(triggered_by_event_id) if triggered_by_event_id is not None else None
+        ),
+    )
+
+
+def _noop_poll_commands(op_state_holder: Any) -> None:
+    """The v0.1 NO-OP command-intake poll (locked decision).
+
+    v0.1 wires **no** out-of-process SQL ``IntakeTransport``: the command channel
+    is a no-op. This is NOT the kill-switch reflex — the deterministic op-state
+    kill-switch reflex still works unchanged (the loop reads ``survival_gate_state``
+    fresh each tick via :func:`read_op_state_fresh` and derives
+    ``new_exposure_permitted`` from it). Only the out-of-process command transport
+    is the no-op; a real ``IntakeTransport`` is a tracked follow-on.
+    """
+    return None
+
+
 def build_and_run(
     *,
     code_version: str = "execution-daemon-v0.1",
     param_version: str = "bootstrap",
+    config: Any = None,
+    conn: Any = None,
+    feed: Any = None,
+    submit_decision: Any = None,
+    get_positions: Any = None,
+    get_account_assets: Any = None,
+    account_activated: Any = None,
+    should_continue: Optional[Callable[[], bool]] = None,
+    margin_material_pending: Optional[Callable[[], bool]] = None,
 ) -> int:
-    """Build the owned connection + config, pin the epoch, wire the **live DB**
-    persist-then-act path, and run the persistent loop.
+    """Build the owned connection + config, pin the epoch, wire the **live DB
+    persist-then-act path + the broker/feed venue handles**, and run the
+    persistent loop.
 
     This is the entrypoint the process (``python -m src.reactive.daemon``) calls.
     It opens the daemon's single owned psycopg3 connection (``db.DaemonConnection``)
     from the env-resolved ``DaemonConfig`` (``config._dsn()``), mints the startup
     epoch (``params.resolve_epoch`` against the **live** ``parameters_active``,
-    writing the ``execution_daemon_epoch`` row), and builds the **live**
-    ``persist_op_state`` writer (``persist_op_state_transition`` partially applied
-    with the owned conn + the epoch ``run_id``) — so the persist-then-act op-state
-    write (Req 5.1) is wired against the real ``survival_gate_state`` /
-    ``survival_gate_events`` and exercised by the integration smoke.
+    writing the ``execution_daemon_epoch`` row), wires the **live**
+    ``persist_op_state`` writer (``persist_op_state_transition`` bound to the owned
+    conn + epoch ``run_id``), then binds the **venue handles** and drives the loop:
+
+      * **market feed** — ``feed.MassiveRestFeed(config)`` (the concrete 3-leg
+        fast-clock ``MarketFeed``; §14.10, accessed directly, not via MCP).
+      * **broker** — ``broker.submit_decision`` / ``broker.get_positions`` /
+        ``broker.get_account_assets`` via the daemon's single ``broker_seam``.
+      * **survival params** — ``survival.params.resolve`` of the **pinned**
+        ``epoch.pinned_params.survival_snapshot`` (a by-value resolve of the pin,
+        NOT a live re-read — P2-safe).
+      * **op-state** — read FRESH each tick from ``survival_gate_state`` (Req 5.2).
+      * **AccountState + ClockState** — assembled FRESH each tick from the broker
+        readouts via ``account_state`` (Req 5.2 freshness; Req 10.2 input assembly,
+        not a survival recompute).
+
+    **PAPER-ONLY, hard-pinned (locked decision).** Every ``submit_decision`` (the
+    open lifecycle + the de-risk de-risk path) is driven under the **default**
+    ``RuntimeMode()`` — ``paper_enabled=True`` + all four live clearances ``False``
+    — so the broker routes to the paper simulator and ``live_transmit_allowed()``
+    is False **by construction**. This function constructs no ``RuntimeMode`` with
+    any live clearance; v0.1 has no reachable live transmit path.
+
+    **SINGLE-SYMBOL (v0.1).** One ``config.symbol`` target, no watchlist rotation.
+
+    **COMMAND-INTAKE = NO-OP (v0.1).** ``poll_commands`` is a no-op
+    (:func:`_noop_poll_commands`) — no out-of-process SQL ``IntakeTransport`` is
+    wired. The deterministic op-state kill-switch reflex is unchanged (op-state read
+    fresh each tick + ``new_exposure_permitted``); only the command channel is a
+    no-op.
 
     Restart-safe: the connection lifecycle is a context manager (opened here,
     closed on exit), the epoch is re-minted on each process start, and all durable
@@ -598,22 +709,20 @@ def build_and_run(
     and resumes from the persisted op-state (no in-memory state survives a restart,
     by design — the daemon is a leaf executor, Req 10).
 
-    **Deferred — narrowed to ONLY the broker/feed venue handles.** The DB persist
-    path above is **live** (it opens the owned conn, writes the epoch row, and the
-    persist-then-act writer is constructed against the real survival tables). What
-    remains deferred is the **live broker session + market-feed venue connection**
-    (the ``broker.submit_decision`` / ``broker.get_positions`` venue handles + the
-    fast-clock ``MarketFeed``), which need Gate / massive credentials and an
-    ``integration_live`` venue bring-up. The loop LOGIC (single-eval, intake-first,
-    cadence, persist-then-act ordering, fail-toward-minimum) is unit-tested via
-    :func:`run_cycle` / :func:`should_run_now` / :func:`run` against synthetic deps
-    + the live persist via the integration suite; this function is the production
-    wiring of those tested pieces, with the venue handles the last live seam.
-
     Args:
         code_version / param_version: the epoch identity stamped onto the pinned
             params + the trace correlation keys (P3). v0.1 bootstrap defaults until
             the tuner publishes a promoted version.
+        config / conn / feed / submit_decision / get_positions /
+        get_account_assets / account_activated / should_continue /
+        margin_material_pending: **injection seams** (P14) — all ``None`` in
+            production (the real config / owned conn / ``MassiveRestFeed`` / broker
+            seam / a forever-True ``should_continue`` are constructed here). The
+            ``integration_live`` bounded-drive test injects a mock-transport feed +
+            broker + a 1-2-tick-bounded ``should_continue`` so the production wiring
+            is exercised end-to-end with no live venue. When a live ``conn`` is
+            injected the caller owns its lifecycle (this function does not close an
+            injected conn); a ``None`` conn opens (and closes) the owned one.
 
     Returns:
         A process exit code (0 on a clean shutdown).
@@ -625,52 +734,244 @@ def build_and_run(
     # connection — db.py owns the connection lifecycle).
     from functools import partial
 
+    from src.reactive.daemon import account_state as account_state_mod
+    from src.reactive.daemon import broker_seam
+    from src.reactive.daemon import candidate as candidate_mod
+    from src.reactive.daemon import lifecycle as lifecycle_mod
+    from src.reactive.daemon import order_builder as order_builder_mod
     from src.reactive.daemon import params as params_mod
     from src.reactive.daemon.config import DaemonConfig
     from src.reactive.daemon.db import DaemonConnection
+    from src.reactive.daemon.feed import MassiveRestFeed
+    from src.reactive.daemon.orchestrator import (
+        PaperSendGuard,
+        drive_paper_lifecycle,
+    )
+    from src.reactive import signal_model
+    from src.survival import gate as survival_gate
+    from src.survival import params as survival_params_mod
 
-    config = DaemonConfig.from_env()
+    config = config if config is not None else DaemonConfig.from_env()
 
-    # ----- LIVE DB path: open the owned conn, pin the epoch, wire persist. ----
-    # The connection lifecycle is a context manager (opened here, closed on exit).
-    # The epoch mint is a real ``parameters_active`` REPEATABLE-READ read + an
-    # ``execution_daemon_epoch`` INSERT (a live DB write), so the DB persist path
-    # is genuinely exercised here, not faked.
-    with DaemonConnection(config) as conn:
-        epoch = params_mod.resolve_epoch(
-            conn,
+    # The venue handles — injectable for the integration_live bounded drive, else
+    # the production seam objects. PAPER-ONLY: the paper RuntimeMode() is pinned at
+    # every submit below (never constructed with a live clearance).
+    feed = feed if feed is not None else MassiveRestFeed(config)
+    submit_decision = (
+        submit_decision if submit_decision is not None else broker_seam.submit_decision
+    )
+    get_positions = (
+        get_positions if get_positions is not None else broker_seam.get_positions
+    )
+    get_account_assets = (
+        get_account_assets
+        if get_account_assets is not None
+        else broker_seam.get_account_assets
+    )
+    account_activated = (
+        account_activated
+        if account_activated is not None
+        else broker_seam.account_activated
+    )
+
+    def _run_with_conn(conn: Any) -> int:
+        return _drive(
+            conn=conn,
+            config=config,
             code_version=code_version,
             param_version=param_version,
+            feed=feed,
+            submit_decision=submit_decision,
+            get_positions=get_positions,
+            get_account_assets=get_account_assets,
+            account_activated=account_activated,
+            should_continue=should_continue,
+            margin_material_pending=margin_material_pending,
+            params_mod=params_mod,
+            account_state_mod=account_state_mod,
+            candidate_mod=candidate_mod,
+            lifecycle_mod=lifecycle_mod,
+            order_builder_mod=order_builder_mod,
+            signal_model=signal_model,
+            survival_gate=survival_gate,
+            survival_params_mod=survival_params_mod,
+            drive_paper_lifecycle=drive_paper_lifecycle,
+            PaperSendGuard=PaperSendGuard,
+            partial=partial,
         )
 
-        # The live persist-then-act writer (Req 5.1): the callable the loop runs
-        # to durably persist the op-state transition BEFORE the per-order admit.
-        # Bound to the owned conn + the epoch run_id; passed into ``run_cycle`` as
-        # its ``persist_op_state`` seam when the loop drives. This is the live DB
-        # wiring the task closes — the persist path is real and exercised.
-        persist_op_state = partial(  # noqa: F841 — wired into run_cycle at the venue seam
-            _persist_op_state_for_epoch, conn, epoch.run_id
+    # When a live ``conn`` is injected the caller owns its lifecycle; otherwise the
+    # owned connection is opened + closed here (restart-safe context manager).
+    if conn is not None:
+        return _run_with_conn(conn)
+    with DaemonConnection(config) as owned_conn:
+        return _run_with_conn(owned_conn)
+
+
+def _drive(
+    *,
+    conn: Any,
+    config: Any,
+    code_version: str,
+    param_version: str,
+    feed: Any,
+    submit_decision: Any,
+    get_positions: Any,
+    get_account_assets: Any,
+    account_activated: Any,
+    should_continue: Optional[Callable[[], bool]],
+    margin_material_pending: Optional[Callable[[], bool]],
+    params_mod: Any,
+    account_state_mod: Any,
+    candidate_mod: Any,
+    lifecycle_mod: Any,
+    order_builder_mod: Any,
+    signal_model: Any,
+    survival_gate: Any,
+    survival_params_mod: Any,
+    drive_paper_lifecycle: Any,
+    PaperSendGuard: Any,
+    partial: Any,
+) -> int:
+    """Pin the epoch, wire every real dep against ``conn``, and run the loop.
+
+    The single place the venue handles + the live DB persist + the survival pure
+    core are wired into the loop's injected-callable seam (so the wiring is exactly
+    what the inner-ring ``run_cycle`` test exercises, only with the REAL deps). The
+    epoch mint is a live ``parameters_active`` REPEATABLE-READ read + an
+    ``execution_daemon_epoch`` INSERT.
+    """
+    # The paper RuntimeMode source (Req 3.1 paper-only — default ``RuntimeMode()``
+    # is paper-on + all live clearances safe-off, ``live_transmit_allowed()`` False
+    # by construction). Imported here so ``_drive`` pins it at every submit.
+    from src.reactive.daemon import broker_seam
+
+    # ----- pin the epoch (live parameters_active read + epoch-row write). -----
+    epoch = params_mod.resolve_epoch(
+        conn, code_version=code_version, param_version=param_version
+    )
+
+    # ----- the live persist-then-act writer (Req 5.1). ------------------------
+    persist_op_state = partial(_persist_op_state_for_epoch, conn, epoch.run_id)
+
+    # ----- survival params: by-value resolve of the PINNED snapshot (P2). -----
+    # NOT a live re-read of parameters_active — the pinned ``survival_snapshot``
+    # carried on the epoch (resolved once under REPEATABLE READ at the pin) is
+    # resolved by value into ``SurvivalParameters`` here, so the survival walk runs
+    # against the pinned ground truth, never mid-run live state.
+    survival_params = survival_params_mod.resolve(epoch.pinned_params.survival_snapshot)
+
+    # ----- the paper double-send guard (one across all ticks, Req 3.4). -------
+    paper_guard = PaperSendGuard()
+
+    def _submit_order(order: Any) -> Any:
+        """Drive an admitted daemon order through the PAPER lifecycle (Req 3).
+
+        PAPER-ONLY: the default ``RuntimeMode()`` is pinned (``paper_enabled=True``
+        ⇒ ``live_transmit_allowed()`` False by construction) so the broker routes
+        to the paper simulator — there is no reachable live POST.
+        """
+        return drive_paper_lifecycle(
+            order,
+            submit_decision=submit_decision,
+            guard=paper_guard,
+            runtime_mode=broker_seam.RuntimeMode(),
         )
 
-        # ----- DEFERRED: ONLY the broker/feed venue handles. ------------------
-        # The DB persist path (epoch pin + persist-then-act writer) is LIVE above.
-        # What remains is the live broker session + market-feed venue connection —
-        # the ``broker.submit_decision`` / ``broker.get_positions`` venue handles
-        # and the fast-clock ``MarketFeed`` — which need Gate / massive credentials
-        # and an integration_live venue bring-up. Narrowed NotImplementedError so
-        # the deferred seam is ONLY the venue handles, not the DB path.
-        raise NotImplementedError(
-            "loop.build_and_run: the live DB persist-then-act path is wired and "
-            f"exercised (epoch={epoch.run_id} pinned against parameters_active; "
-            "persist_op_state writes survival_gate_state/_events). DEFERRED to the "
-            "integration_live venue bring-up: ONLY the live broker session + "
-            "market-feed venue handles (broker.submit_decision / get_positions + "
-            "the massive MarketFeed; need Gate / massive creds). Wire the real "
-            "candidate.assemble (feed) / signal_model.decide / order_builder / "
-            "broker readouts / paper-lifecycle / lifecycle.execute_de_risk and "
-            "drive run() here once the venue handles are available "
-            f"(paper={config.paper})."
+    def _execute_de_risk(directives: Any, account: Any) -> Any:
+        """Execute the assess de-risk directives (FLATTEN/REDUCE) — PAPER-ONLY.
+
+        The post-flatten re-check reads the FRESH broker book; the de-risk submit
+        is pinned to the paper ``RuntimeMode()`` (no live path).
+        """
+        post_account = _assemble_account()
+        return lifecycle_mod.execute_de_risk_directives(
+            directives=directives,
+            broker_positions=list(get_positions()),
+            post_flatten_account=post_account,
+            submit_decision=submit_decision,
+            runtime_mode=broker_seam.RuntimeMode(),
         )
+
+    def _record_failure(reason: str) -> None:
+        """Record a fail-toward-minimum-exposure event (Req 1.5) to the event queue."""
+        from src.reactive.daemon.event_queue import emit_event
+
+        emit_event(
+            run_id=epoch.run_id,
+            event_type="lifecycle",
+            payload={"event_type": "cycle_failure", "detail": reason},
+            conn=conn,
+        )
+
+    def _assemble_account() -> Any:
+        """Assemble a FRESH survival ``AccountState`` from the broker readouts.
+
+        Req 5.2 freshness: a fresh ``get_account_assets`` + ``get_positions`` +
+        activation readout each call, projected via ``account_state`` (Req 10.2
+        input assembly, not a survival recompute). A broker readout failure raises
+        here → ``run_cycle``'s edge-path try/except fails toward minimum exposure.
+        """
+        assets = get_account_assets()
+        broker_positions = list(get_positions())
+        activated = account_activated()
+        return account_state_mod.build_account_state(
+            assets, broker_positions, activated=activated
+        )
+
+    def run_one_cycle() -> CycleOutcome:
+        """One full evaluation cycle with the REAL deps (Req 5.2 freshness).
+
+        FRESH each tick: the survival ``AccountState`` (broker readouts) +
+        ``ClockState`` are assembled here (never pinned), then ``run_cycle`` drives
+        the persist-then-act ordering + fail-toward-minimum exactly as the
+        inner-ring test exercises — only with the live deps.
+        """
+        account = _assemble_account()
+        clock = account_state_mod.build_clock_state()
+        return run_cycle(
+            symbol=config.symbol,
+            epoch=epoch,
+            survival_params=survival_params,
+            clock=clock,
+            account=account,
+            feed=feed,
+            universe=config.universe,
+            leverage=config.instrument_leverage,
+            is_excluded=config.is_excluded,
+            stop_loss_atr_mult=config.stop_loss_atr_mult,
+            op_state_holder={},  # v0.1 no-op intake: nothing mutates this holder
+            poll_commands=_noop_poll_commands,
+            read_op_state=lambda: read_op_state_fresh(conn),
+            assemble=candidate_mod.assemble,
+            decide=signal_model.decide,
+            build_order=order_builder_mod.build_order,
+            get_positions=lambda: list(get_positions()),
+            admit=survival_gate.admit,
+            assess=survival_gate.assess,
+            persist_op_state=persist_op_state,
+            submit_order=_submit_order,
+            execute_de_risk=_execute_de_risk,
+            record_failure=_record_failure,
+        )
+
+    # ----- drive the persistent loop. ----------------------------------------
+    # Production: a forever-True ``should_continue`` (a real daemon runs until a
+    # shutdown signal); the integration_live test injects a 1-2-tick bound. The
+    # margin-material trigger defaults False (the v0.1 no-op intake never sets it).
+    run(
+        run_one_cycle=run_one_cycle,
+        cadence_seconds=config.eval_cadence_seconds,
+        margin_material_pending=(
+            margin_material_pending
+            if margin_material_pending is not None
+            else (lambda: False)
+        ),
+        should_continue=(
+            should_continue if should_continue is not None else (lambda: True)
+        ),
+    )
+    return 0
 
 
 def _persist_op_state_for_epoch(

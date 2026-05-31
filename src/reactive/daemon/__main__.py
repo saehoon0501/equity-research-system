@@ -12,13 +12,15 @@ The persistent execution daemon's process entrypoint. Two paths:
     re-minted per start; all durable state is in the append-only DB tables).
 
 The live drive (``build_and_run``) needs a running Postgres (a live
-``parameters_active`` to pin, a broker session, the market feed) — an
-``integration_live`` bring-up, **not** an inner-ring unit (P14). The loop LOGIC
-(single-eval, intake-first, cadence, fail-toward-minimum-exposure) is unit-tested
-in ``tests/unit/reactive/daemon/test_loop.py`` against synthetic deps; this
-entrypoint is the production wiring of those tested pieces. Until a DB is up,
-``build_and_run`` raises a clear ``NotImplementedError`` naming the deferred live
-seam rather than pretending to run.
+``parameters_active`` to pin, the ``execution_daemon_epoch`` write, the
+``survival_gate_state`` persist) **plus** the broker session + market feed (now
+wired — the venue handles drive real PAPER ticks end-to-end, PAPER-ONLY by
+construction). It is an ``integration_live`` bring-up, **not** an inner-ring unit
+(P14). The loop LOGIC (single-eval, intake-first, cadence, persist-then-act,
+fail-toward-minimum-exposure) is unit-tested in
+``tests/unit/reactive/daemon/test_loop.py`` against synthetic deps; this
+entrypoint is the production wiring of those tested pieces. With no DB reachable
+the drive surfaces the connection error rather than pretending to run.
 """
 
 from __future__ import annotations

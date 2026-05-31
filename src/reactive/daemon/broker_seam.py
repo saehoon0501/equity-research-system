@@ -54,6 +54,7 @@ import importlib
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Optional
 
 # ``broker_seam.py`` lives at <repo>/src/reactive/daemon/broker_seam.py:
 #   parents[0] = .../src/reactive/daemon
@@ -110,9 +111,14 @@ _core = _import_broker_module("core")
 # Leaf venue functions (Req 3 paper lifecycle / Req 10 obtained-from-dependency):
 submit_decision = _core.submit_decision
 get_positions = _core.get_positions
+# Account-level readout (the survival ``AccountState`` account scalars + the
+# mt5-account-derived activation flag — the loop assembles the fresh per-tick
+# survival ``AccountState`` from this + ``get_positions`` via ``account_state``).
+get_account_assets = _core.get_account_assets
 
 # Value objects (Req 11 order construction; Req 10 no self-computed venue types):
 Position = _models.Position
+AccountAssets = _models.AccountAssets  # the account-level readout shape
 Direction = _models.Direction  # broker str-Enum venue side (LONG / SHORT)
 OrderIntent = _models.OrderIntent
 OrderResult = _models.OrderResult  # the terminal-outcome carrier (Req 3 lifecycle)
@@ -125,10 +131,38 @@ Label = _models.Label
 # (``live_transmit_allowed()`` is False while paper is on, by construction).
 RuntimeMode = _config.RuntimeMode
 
+
+def account_activated(*, clients: Optional[Any] = None) -> bool:
+    """Read the broker account-activation flag (the survival
+    ``AccountState.activated`` source — broker mt5-account ``status``).
+
+    Delegates to the broker leaf's own ``_resolve_account_active`` (the documented
+    source of truth: mt5-account venue ``status``, only ``3`` = active), under a
+    conservative **paper** ``RuntimeMode`` (the safe-default fallback when the
+    venue read omits ``status``). The loop assembles the per-tick survival
+    ``AccountState`` from this + ``get_account_assets`` + ``get_positions`` via
+    ``account_state.build_account_state`` — the activation flag is a genuine venue
+    readout, never invented daemon-side (Req 10.2).
+
+    Args:
+        clients: an optional broker ``ReadoutClients`` (a mock-transport-backed
+            holder in the integration test); ``None`` uses the broker's production
+            memoized clients (``default_clients``).
+
+    Returns:
+        ``True`` iff the venue mt5-account status reads active; conservatively
+        ``False`` on an omitted status under the paper default.
+    """
+    c = clients if clients is not None else _core.default_clients()
+    return _core._resolve_account_active(c, runtime_mode=_config.RuntimeMode())
+
 __all__ = [
     "submit_decision",
     "get_positions",
+    "get_account_assets",
+    "account_activated",
     "Position",
+    "AccountAssets",
     "Direction",
     "OrderIntent",
     "OrderResult",
