@@ -42,6 +42,13 @@ GATE_IDS: dict[str, str] = {
     # GATE_IDS key is the _shape-suffixed form (mirrors reversion/tactical);
     # the REGISTRY artifact_type stays the short "intervention_audit".
     "intervention_audit_shape": "HG-39",
+    # walkforward-tuning-loop tuner-action-audit shape gate. HG-40 is the WS-6
+    # hybrid gate (the highest assigned); HG-41 is the next free monotonic slot
+    # (HG-1..HG-40 all assigned per the repo-wide HG-NN scan; HG-17 is a legacy
+    # gap left undisturbed). Gate NAME / GATE_IDS key is the _shape-suffixed form
+    # (mirrors reversion/tactical/intervention); the REGISTRY artifact_type is
+    # the spec-pinned "tuner_action_audit_envelope".
+    "tuner_action_audit_shape": "HG-41",
 }
 
 
